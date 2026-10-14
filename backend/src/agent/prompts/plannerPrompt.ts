@@ -66,7 +66,6 @@ export const TestCaseSchema = z.object({
   id: z.string(),
   title: z.string(),
   description: z.string(),
-  targetPage: z.string(), // The page path targeted (e.g., "/login")
   steps: z.array(PlanStepSchema).min(1, 'Each test case must have at least one step'),
 });
 export type TestCase = z.infer<typeof TestCaseSchema>;
@@ -100,7 +99,6 @@ The JSON object must conform exactly to this structure:
       "id": "tc-1",
       "title": "Short title of test case",
       "description": "Short description of the user journey being tested",
-      "targetPage": "/path-to-page",
       "steps": [
         {
           "action": "click|fill|navigate|assert_visible|assert_text|assert_url|select|press|hover",
@@ -137,8 +135,9 @@ labels, or UI copy that is not in the App Map.
 9. FORM SUBMISSION WITHOUT BUTTON: When a form has no submit button \
 (submitButtonId is null), submit it by adding a press step with value "Enter" \
 targeting the last filled input element.
-10. NAVIGATION URLS: When using navigate, provide an absolute URL or a path \
-relative to the application base URL (e.g., "/about").`;
+10. NAVIGATION: Every test automatically starts on the crawled page. Do NOT add \
+a leading navigate step. Use navigate ONLY if a step explicitly leaves the current \
+page, using an absolute URL found in discoveredLinks.`;
 
 export function buildPlannerUserPrompt(appMapJson: string): string {
   return `Here is the App Map JSON of the target application. Analyze it and \
@@ -153,7 +152,6 @@ Remember to output exactly a JSON object conforming to the schema:
       "id": "tc-1",
       "title": "Title of test case",
       "description": "Short description of target journey",
-      "targetPage": "/path",
       "steps": [
         {
           "action": "click|fill|navigate|assert_visible|assert_text|assert_url|select|press|hover",

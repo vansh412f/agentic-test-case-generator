@@ -49,6 +49,19 @@ function validateAndNormalizePlan(
     const title = tc.title;
     tc.id = `tc-${idx + 1}`;
 
+    // Strip redundant leading navigate to crawled page if emitted
+    if (
+      tc.steps.length > 1 &&
+      tc.steps[0].action === 'navigate' &&
+      tc.steps[0].value &&
+      (tc.steps[0].value === '/' ||
+        tc.steps[0].value === appMapUrl ||
+        tc.steps[0].value.replace(/\/$/, '') === appMapUrl.replace(/\/$/, '') ||
+        new URL(tc.steps[0].value, appMapUrl).href.replace(/\/$/, '') === appMapUrl.replace(/\/$/, ''))
+    ) {
+      tc.steps.shift();
+    }
+
     for (const step of tc.steps) {
       if (step.action === 'navigate' && step.value) {
         if (!step.value.startsWith('http://') && !step.value.startsWith('https://')) {
@@ -111,6 +124,8 @@ export async function planTests(appMap: AppMap): Promise<TestPlan> {
   if (firstResult.ok) return firstResult.plan;
 
   // Self-repair (one attempt)
+  console.warn(`[Planner] Attempt 1 failed (${firstResult.kind}):`, JSON.stringify(firstResult, null, 2));
+
   const repairMessages: LlmMessage[] = [
     ...messages,
     { role: 'assistant', content: response.content },

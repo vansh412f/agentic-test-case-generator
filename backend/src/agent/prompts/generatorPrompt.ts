@@ -59,7 +59,6 @@ Test Case:
   "id": "tc-1",
   "title": "User can add a todo item",
   "description": "Types a todo, presses Enter, verifies the item appears",
-  "targetPage": "/",
   "steps": [
     { "action": "fill", "elementId": "elem-1", "value": "Buy groceries", "description": "Type todo text" },
     { "action": "press", "elementId": "elem-1", "value": "Enter", "description": "Submit via Enter key" },

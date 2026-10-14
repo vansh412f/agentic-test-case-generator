@@ -11,17 +11,14 @@ async function main() {
     console.log(`--- App Map ---`);
     console.log(`Interactive elements: ${result.appMap.elements.length}`);
 
-    console.log(`\n--- Test Plan ---`);
-    console.log(`Test cases: ${result.testPlan.testCases.length}`);
-    for (const tc of result.testPlan.testCases) {
-      console.log(`  [${tc.id}] ${tc.title} (${tc.steps.length} steps) → ${tc.targetPage}`);
-    }
+    console.log(`\n--- Test Plan JSON ---`);
+    console.log(JSON.stringify(result.testPlan, null, 2));
 
     console.log(`\n--- Generated Tests ---`);
     console.log(`Files: ${result.generatedTests.length}`);
     for (const gt of result.generatedTests) {
-      console.log(`\n  ${gt.filename} (${gt.code.length} chars)`);
-      console.log(`  Preview: ${gt.code.slice(0, 150)}...`);
+      console.log(`\n=== ${gt.filename} ===`);
+      console.log(gt.code);
     }
 
     console.log(`\n Pipeline completed successfully.`);

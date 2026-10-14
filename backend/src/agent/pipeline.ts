@@ -14,17 +14,6 @@ export interface PipelineResult {
   generatedTests: GeneratedTest[];
 }
 
-function buildTargetUrl(baseUrl: string, targetPage: string): string {
-  if (targetPage.startsWith('http://') || targetPage.startsWith('https://')) {
-    return targetPage;
-  }
-  try {
-    return new URL(targetPage, baseUrl).href;
-  } catch {
-    return baseUrl;
-  }
-}
-
 function projectElementScope(elements: InteractiveElement[]): ScopedElement[] {
   return elements.map(({ id, type, text, selectors }) => ({
     id,
@@ -53,9 +42,7 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
       appMap.elements.filter((elem) => referencedIds.has(elem.id)),
     );
 
-    const targetUrl = buildTargetUrl(appMap.url, testCase.targetPage);
-
-    const generated = await generateTest(testCase, elementsInScope, targetUrl);
+    const generated = await generateTest(testCase, elementsInScope, appMap.url);
     generatedTests.push(generated);
   }
 
