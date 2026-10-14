@@ -1,5 +1,5 @@
 import type { TestCase } from './plannerPrompt.ts';
-import type { InteractiveElement } from '../../crawler/types.ts';
+import type { ScopedElement } from '../types.ts';
 
 const BACKTICK = '`';
 const FENCE = BACKTICK.repeat(3);
@@ -19,23 +19,29 @@ no explanations, no comments outside the code.
 1. Import \`test\` and \`expect\` from \`@playwright/test\`.
 2. Use ONE \`test()\` block per file, matching the test case's title.
 3. Start every test with \`await page.goto(<targetUrl>)\`.
-4. For each step, resolve the element's selector using this priority hierarchy:
-   - Prefer \`page.getByTestId()\` if \`selectors.getByTestId\` is present
-   - Else \`page.getByRole()\` if \`selectors.getByRole\` is present (use the \
-role + name/text as the accessible name)
-   - Else \`page.getByPlaceholder()\` if \`selectors.getByPlaceholder\` is present
-   - Else \`page.getByLabel()\` if \`selectors.getByLabel\` is present
-   - Else \`page.getByText()\` if \`selectors.getByText\` is present
-   - Else fallback to \`page.locator()\` with \`selectors.css\`
+4. SELECTOR RESOLUTION: Each element's selectors object contains complete Playwright \
+locator expressions (not raw values). Use the first non-null field in this \
+priority order, prefixed with \`page.\` verbatim:
+   - selectors.getByTestId → \`page.<getByTestId expression>\`
+   - selectors.getByRole → \`page.<getByRole expression>\`
+   - selectors.getByPlaceholder → \`page.<getByPlaceholder expression>\`
+   - selectors.getByLabel → \`page.<getByLabel expression>\`
+   - selectors.getByText → \`page.<getByText expression>\`
+   - selectors.css → \`page.locator(selectors.css)\`
+   Example: if selectors.getByRole is \`getByRole("button", { name: "Submit" })\`, \
+emit: \`await page.getByRole("button", { name: "Submit" }).click();\`
 
 5. Action mapping:
    - \`click\` → \`await locator.click()\`
    - \`fill\` → \`await locator.fill(value)\`
    - \`select\` → \`await locator.selectOption(value)\`
    - \`hover\` → \`await locator.hover()\`
-   - \`navigate\` → \`await page.goto(value)\` (value is the URL path)
-   - \`assert_visible\` → \`await expect(locator).toBeVisible()\`
+   - \`press\` → \`await locator.press(value)\`
+   - \`navigate\` → \`await page.goto(value)\` (value is an absolute URL)
+   - \`assert_visible\` → with elementId: \`await expect(locator).toBeVisible()\`; \
+with elementId null: \`await expect(page.getByText(value)).toBeVisible()\`
    - \`assert_text\` → \`await expect(locator).toContainText(value)\`
+   - \`assert_url\` → \`await expect(page).toHaveURL(url => url.href.includes(value))\`
 
 6. All actions must be awaited.
 7. Use \`const\` for locator variables when reused.
@@ -46,43 +52,36 @@ no \`page.waitForTimeout()\`.
 
 Given this input:
 
-Target URL: http://localhost:3000/login
+Target URL: http://localhost:3000/
 
 Test Case:
 {
   "id": "tc-1",
-  "title": "User can log in with valid credentials",
-  "description": "Verifies the standard login flow with correct email and password",
-  "targetPage": "/login",
+  "title": "User can add a todo item",
+  "description": "Types a todo, presses Enter, verifies the item appears",
+  "targetPage": "/",
   "steps": [
-    { "action": "fill", "elementId": "elem-2", "value": "test@example.com", "description": "Enter email" },
-    { "action": "fill", "elementId": "elem-3", "value": "SecurePass123", "description": "Enter password" },
-    { "action": "click", "elementId": "elem-4", "value": null, "description": "Submit login form" },
-    { "action": "assert_visible", "elementId": "elem-5", "value": null, "description": "Dashboard greeting is visible" }
+    { "action": "fill", "elementId": "elem-1", "value": "Buy groceries", "description": "Type todo text" },
+    { "action": "press", "elementId": "elem-1", "value": "Enter", "description": "Submit via Enter key" },
+    { "action": "assert_visible", "elementId": null, "value": "Buy groceries", "description": "New todo is visible" },
+    { "action": "assert_url", "elementId": null, "value": "localhost:3000", "description": "Still on the home page" }
   ]
 }
 
 Elements in scope:
 [
   {
-    "id": "elem-2",
+    "id": "elem-1",
     "type": "input",
-    "selectors": { "getByLabel": "Email", "getByPlaceholder": "you@example.com", "css": "#email" }
-  },
-  {
-    "id": "elem-3",
-    "type": "input",
-    "selectors": { "getByLabel": "Password", "css": "#password" }
-  },
-  {
-    "id": "elem-4",
-    "type": "button",
-    "selectors": { "getByRole": "button", "getByText": "Sign in", "css": "button[type='submit']" }
-  },
-  {
-    "id": "elem-5",
-    "type": "text",
-    "selectors": { "getByText": "Welcome back", "css": ".dashboard-greeting" }
+    "text": null,
+    "selectors": {
+      "getByTestId": null,
+      "getByRole": "getByRole(\\"textbox\\", { name: \\"What needs to be done?\\" })",
+      "getByPlaceholder": "getByPlaceholder(\\"What needs to be done?\\")",
+      "getByLabel": null,
+      "getByText": null,
+      "css": ".new-todo"
+    }
   }
 ]
 
@@ -91,20 +90,21 @@ Your response:
 ${FENCE}typescript
 import { test, expect } from '@playwright/test';
 
-test('User can log in with valid credentials', async ({ page }) => {
-  await page.goto('http://localhost:3000/login');
+test('User can add a todo item', async ({ page }) => {
+  await page.goto('http://localhost:3000/');
 
-  await page.getByLabel('Email').fill('test@example.com');
-  await page.getByLabel('Password').fill('SecurePass123');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  const todoInput = page.getByRole('textbox', { name: 'What needs to be done?' });
+  await todoInput.fill('Buy groceries');
+  await todoInput.press('Enter');
 
-  await expect(page.getByText('Welcome back')).toBeVisible();
+  await expect(page.getByText('Buy groceries')).toBeVisible();
+  await expect(page).toHaveURL(url => url.href.includes('localhost:3000'));
 });
 ${FENCE}`;
 
 export function buildGeneratorUserPrompt(args: {
   testCase: TestCase;
-  elementsInScope: InteractiveElement[];
+  elementsInScope: ScopedElement[];
   targetUrl: string;
 }): string {
   return `Target URL: ${args.targetUrl}
