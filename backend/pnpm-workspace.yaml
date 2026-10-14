@@ -1,2 +1,6 @@
+packages:
+  - '.'
+  - 'playwright-runner'
+
 allowBuilds:
   esbuild: false

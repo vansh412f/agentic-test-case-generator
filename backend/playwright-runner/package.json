@@ -1,0 +1,11 @@
+{
+  "name": "playwright-runner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
