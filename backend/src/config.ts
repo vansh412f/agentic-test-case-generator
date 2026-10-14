@@ -15,7 +15,7 @@ const configSchema = z.object({
   NAVIGATION_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   NETWORK_IDLE_WAIT_MS: z.coerce.number().int().nonnegative().default(3000),
   GROQ_API_KEY: z.string().optional(),
-  GEMINI_API_KEY: z.string().min(1).optional(),
+  GEMINI_API_KEY: z.string().optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -73,4 +73,4 @@ if (missingProviders.length > 0) {
   }
 }
 
-export { activeProviders };
+export { activeProviders, missingProviders };
