@@ -3,7 +3,7 @@ import { LlmError } from '../../llm/types.ts';
 import type { LlmMessage } from '../../llm/types.ts';
 import { GENERATOR_SYSTEM_PROMPT, buildGeneratorUserPrompt } from '../prompts/generatorPrompt.ts';
 import type { TestCase } from '../prompts/plannerPrompt.ts';
-import type { InteractiveElement } from '../../crawler/types.ts';
+import type { ScopedElement } from '../types.ts';
 
 export interface GeneratedTest {
   filename: string;
@@ -15,7 +15,7 @@ const FENCE_REGEX = /```(?:typescript|ts)?\s*\n([\s\S]*?)\n```/;
 
 export async function generateTest(
   testCase: TestCase,
-  elementsInScope: InteractiveElement[],
+  elementsInScope: ScopedElement[],
   targetUrl: string,
 ): Promise<GeneratedTest> {
   const messages: LlmMessage[] = [
