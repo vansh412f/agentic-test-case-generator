@@ -1,13 +1,9 @@
 import { z } from 'zod';
 
 export const PlanStepActionSchema = z.enum([
-  'click',
-  'fill',
-  'navigate',
-  'assert_visible',
-  'assert_text',
-  'select',
-  'hover',
+  'click', 'fill', 'navigate',
+  'assert_visible', 'assert_text', 'assert_url',
+  'select', 'press', 'hover',
 ]);
 export type PlanStepAction = z.infer<typeof PlanStepActionSchema>;
 
@@ -16,6 +12,46 @@ export const PlanStepSchema = z.object({
   elementId: z.string().nullable(), // Must match an element ID from the App Map, or null
   value: z.string().nullable(),     // Text to fill, text to assert, or URL path
   description: z.string(),          // Human-readable action description
+}).superRefine((step, ctx) => {
+  const { action, elementId, value } = step;
+
+  const requireElement = () => {
+    if (!elementId) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${action} requires elementId`, path: ['elementId'] });
+  };
+  const requireValue = () => {
+    if (!value) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${action} requires value`, path: ['value'] });
+  };
+
+  switch (action) {
+    case 'click':
+    case 'hover':
+      requireElement();
+      break;
+    case 'fill':
+    case 'select':
+    case 'press':
+      requireElement();
+      requireValue();
+      break;
+    case 'navigate':
+      requireValue();
+      if (value && !value.startsWith('http://') && !value.startsWith('https://')) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'navigate value must be an absolute URL', path: ['value'] });
+      }
+      break;
+    case 'assert_visible':
+      if (!elementId && !value) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'assert_visible requires at least one of elementId or value', path: ['elementId'] });
+      }
+      break;
+    case 'assert_text':
+      requireElement();
+      requireValue();
+      break;
+    case 'assert_url':
+      requireValue();
+      break;
+  }
 });
 export type PlanStep = z.infer<typeof PlanStepSchema>;
 
@@ -60,7 +96,7 @@ The JSON object must conform exactly to this structure:
       "targetPage": "/path-to-page",
       "steps": [
         {
-          "action": "click|fill|navigate|assert_visible|assert_text|select|hover",
+          "action": "click|fill|navigate|assert_visible|assert_text|assert_url|select|press|hover",
           "elementId": "elem-N or null",
           "value": "string value or null",
           "description": "Human readable description of this step"
@@ -75,13 +111,28 @@ The JSON object must conform exactly to this structure:
 the App Map (e.g., "elem-3"). Do NOT invent element IDs.
 2. If an action does not target a specific element (e.g., a navigate step), \
 set elementId to null.
-3. Every test case MUST end with an assertion step (assert_visible or \
-assert_text) that validates the objective of the test.
+3. Every test case MUST end with an assertion step (assert_visible, \
+assert_text, or assert_url) that validates the objective of the test.
 4. Prioritize user journeys: form submissions, login/signup flows, critical \
 button interactions, navigation. Ignore static decorative elements.
 5. Keep each test case focused on a single user objective.
 6. value must be null when the action does not require a value \
-(e.g., click, hover, assert_visible on an element).`;
+(e.g., click, hover, assert_visible on an element).
+7. SNAPSHOT CAVEAT: The App Map is a pre-interaction snapshot. Elements that appear \
+only after an action (toast messages, newly-added list items, modals, success \
+banners) are NOT in the App Map. To assert on post-action content, use \
+assert_visible with elementId set to null and the expected text in value.
+8. TEXT PROVENANCE: The value in any assertion step must come from one of these \
+sources only: (a) text you typed in a prior fill step, (b) text already present \
+in the App Map (element text, labels, placeholders), or (c) a URL path derived \
+from an element's href. Never invent application messages, success text, error \
+labels, or UI copy that is not in the App Map.
+9. FORM SUBMISSION WITHOUT BUTTON: When a form has no submit button \
+(submitButtonId is null), submit it by adding a press step with value "Enter" \
+targeting the last filled input element.
+10. ABSOLUTE URLS: The value of a navigate step must be an absolute URL starting \
+with http:// or https://. Construct it from the target page's base URL and the \
+desired path.`;
 
 export function buildPlannerUserPrompt(appMapJson: string): string {
   return `Here is the App Map JSON of the target application. Analyze it and \
@@ -99,7 +150,7 @@ Remember to output exactly a JSON object conforming to the schema:
       "targetPage": "/path",
       "steps": [
         {
-          "action": "click|fill|navigate|assert_visible|assert_text|select|hover",
+          "action": "click|fill|navigate|assert_visible|assert_text|assert_url|select|press|hover",
           "elementId": "elem-id-or-null",
           "value": "string-value-or-null",
           "description": "Human readable action step"
