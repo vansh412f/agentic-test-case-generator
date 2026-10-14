@@ -33,10 +33,10 @@ app.use((req: Request, res: Response) => {
 
 // Centralized Error Handling Middleware
 app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('[Error]', err);
   const status = typeof err?.status === 'number' ? err.status : (typeof err?.statusCode === 'number' ? err.statusCode : 500);
 
   if (status < 500) {
+    console.warn(`[Request error] ${status}: ${err.message}`);
     res.status(status).json({
       error: 'INVALID_REQUEST',
       message: err.message || 'Invalid request body',
@@ -44,6 +44,7 @@ app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, r
     return;
   }
 
+  console.error('[Error]', err);
   res.status(500).json({
     error: 'INTERNAL_ERROR',
     message: config.NODE_ENV === 'production' ? 'An internal error occurred.' : err.message,

@@ -17,7 +17,7 @@ type ValidationResult =
   | { ok: false; kind: 'syntax' | 'schema'; detail: string }
   | { ok: false; kind: 'references'; detail: string; plan: TestPlan; badCaseIndexes: Set<number> };
 
-function validatePlanResponse(
+function validateAndNormalizePlan(
   content: string,
   knownIds: Set<string>,
   appMapUrl: string,
@@ -42,9 +42,11 @@ function validatePlanResponse(
   // - Resolve relative navigate URLs against appMap.url
   // - Check elementId references against knownIds
   const badCaseIndexes = new Set<number>();
-  const invalidRefs: Array<{ testCaseId: string; badIds: string[] }> = [];
+  const invalidRefs: Array<{ position: number; llmId: string; title: string; badIds: string[] }> = [];
 
   result.data.testCases.forEach((tc, idx) => {
+    const llmId = tc.id;
+    const title = tc.title;
     tc.id = `tc-${idx + 1}`;
 
     for (const step of tc.steps) {
@@ -64,13 +66,16 @@ function validatePlanResponse(
       .filter((id): id is string => id !== null && !knownIds.has(id));
     if (badIds.length > 0) {
       badCaseIndexes.add(idx);
-      invalidRefs.push({ testCaseId: tc.id, badIds: [...new Set(badIds)] });
+      invalidRefs.push({ position: idx + 1, llmId, title, badIds: [...new Set(badIds)] });
     }
   });
 
   if (invalidRefs.length > 0) {
     const detail = invalidRefs
-      .map((r) => `Test case ${r.testCaseId} references unknown elements: ${r.badIds.join(', ')}`)
+      .map(
+        (r) =>
+          `Test case #${r.position} "${r.title}" (your id: "${r.llmId}") references element IDs that do not exist in the App Map: ${r.badIds.join(', ')}. Use only IDs present in the App Map, or set elementId to null for text/URL assertions.`,
+      )
       .join('\n');
     return { ok: false, kind: 'references', detail, plan: result.data, badCaseIndexes };
   }
@@ -102,7 +107,7 @@ export async function planTests(appMap: AppMap): Promise<TestPlan> {
 
   // First attempt
   const response = await callLlm({ messages, jsonMode: true, maxTokens: 4000 });
-  const firstResult = validatePlanResponse(response.content, knownIds, appMap.url);
+  const firstResult = validateAndNormalizePlan(response.content, knownIds, appMap.url);
   if (firstResult.ok) return firstResult.plan;
 
   // Self-repair (one attempt)
@@ -116,7 +121,7 @@ export async function planTests(appMap: AppMap): Promise<TestPlan> {
   ];
 
   const repairResponse = await callLlm({ messages: repairMessages, jsonMode: true, maxTokens: 4000 });
-  const repairResult = validatePlanResponse(repairResponse.content, knownIds, appMap.url);
+  const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url);
   if (repairResult.ok) return repairResult.plan;
 
   // Graceful degradation for reference-only errors after repair

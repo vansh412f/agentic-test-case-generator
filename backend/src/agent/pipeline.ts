@@ -53,7 +53,7 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
       appMap.elements.filter((elem) => referencedIds.has(elem.id)),
     );
 
-    const targetUrl = buildTargetUrl(url, testCase.targetPage);
+    const targetUrl = buildTargetUrl(appMap.url, testCase.targetPage);
 
     const generated = await generateTest(testCase, elementsInScope, targetUrl);
     generatedTests.push(generated);
