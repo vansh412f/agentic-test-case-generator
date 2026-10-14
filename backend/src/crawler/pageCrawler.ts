@@ -66,20 +66,25 @@ export async function crawlPage(url: string) {
     }
 
     // Extract elements and forms from the live DOM 
-    const [elementsResult, forms] = await Promise.all([
-      page.evaluate(extractElements, {
-        maxElements: config.MAX_ELEMENTS_PER_PAGE,
-      }),
-      page.evaluate(extractForms),
-    ]);
-    const title = await page.title();
+    try {
+      const [elementsResult, forms] = await Promise.all([
+        page.evaluate(extractElements, {
+          maxElements: config.MAX_ELEMENTS_PER_PAGE,
+        }),
+        page.evaluate(extractForms),
+      ]);
+      const title = await page.title();
 
-    // Build and validate the App Map 
-    return buildAppMap({
-      url: page.url(),
-      viewport: VIEWPORT,
-      extraction: { title, ...elementsResult, forms },
-    });
+      // Build and validate the App Map 
+      return buildAppMap({
+        url: page.url(),
+        viewport: VIEWPORT,
+        extraction: { title, ...elementsResult, forms },
+      });
+    } catch (err) {
+      if (err instanceof CrawlError) throw err;
+      throw new CrawlError('EXTRACTION_FAILED', 'Failed to extract or build App Map', err);
+    }
   } finally {
     await browser.close();
   }
