@@ -14,11 +14,13 @@ function formatZodErrors(error: z.ZodError): string {
 
 type ValidationResult =
   | { ok: true; plan: TestPlan }
-  | { ok: false; kind: 'syntax' | 'schema' | 'references'; detail: string };
+  | { ok: false; kind: 'syntax' | 'schema'; detail: string }
+  | { ok: false; kind: 'references'; detail: string; plan: TestPlan; badCaseIndexes: Set<number> };
 
 function validatePlanResponse(
   content: string,
   knownIds: Set<string>,
+  appMapUrl: string,
 ): ValidationResult {
   // 1. Parse JSON
   let parsed: unknown;
@@ -35,22 +37,42 @@ function validatePlanResponse(
     return { ok: false, kind: 'schema', detail: formatZodErrors(result.error) };
   }
 
-  // 3. Reference validation — every non-null elementId must exist in the App Map
+  // 3. Post-parse normalization:
+  // - Assign sequential IDs (tc-1, tc-2, ...) so LLM duplicates never cause overwrites
+  // - Resolve relative navigate URLs against appMap.url
+  // - Check elementId references against knownIds
+  const badCaseIndexes = new Set<number>();
   const invalidRefs: Array<{ testCaseId: string; badIds: string[] }> = [];
-  for (const tc of result.data.testCases) {
+
+  result.data.testCases.forEach((tc, idx) => {
+    tc.id = `tc-${idx + 1}`;
+
+    for (const step of tc.steps) {
+      if (step.action === 'navigate' && step.value) {
+        if (!step.value.startsWith('http://') && !step.value.startsWith('https://')) {
+          try {
+            step.value = new URL(step.value, appMapUrl).href;
+          } catch {
+            // Keep original if URL parsing fails
+          }
+        }
+      }
+    }
+
     const badIds = tc.steps
       .map((s) => s.elementId)
       .filter((id): id is string => id !== null && !knownIds.has(id));
     if (badIds.length > 0) {
+      badCaseIndexes.add(idx);
       invalidRefs.push({ testCaseId: tc.id, badIds: [...new Set(badIds)] });
     }
-  }
+  });
 
   if (invalidRefs.length > 0) {
     const detail = invalidRefs
       .map((r) => `Test case ${r.testCaseId} references unknown elements: ${r.badIds.join(', ')}`)
       .join('\n');
-    return { ok: false, kind: 'references', detail };
+    return { ok: false, kind: 'references', detail, plan: result.data, badCaseIndexes };
   }
 
   return { ok: true, plan: result.data };
@@ -64,9 +86,23 @@ export async function planTests(appMap: AppMap): Promise<TestPlan> {
     { role: 'user', content: buildPlannerUserPrompt(appMapJson) },
   ];
 
+  const salvagePlan = (res: Extract<ValidationResult, { kind: 'references' }>): TestPlan | null => {
+    const validCases = res.plan.testCases.filter((_, idx) => !res.badCaseIndexes.has(idx));
+    if (validCases.length > 0) {
+      validCases.forEach((tc, idx) => {
+        tc.id = `tc-${idx + 1}`;
+      });
+      console.warn(
+        `[Planner] Dropped ${res.badCaseIndexes.size} test case(s) with hallucinated element IDs: ${res.detail}`,
+      );
+      return { testCases: validCases };
+    }
+    return null;
+  };
+
   // First attempt
   const response = await callLlm({ messages, jsonMode: true, maxTokens: 4000 });
-  const firstResult = validatePlanResponse(response.content, knownIds);
+  const firstResult = validatePlanResponse(response.content, knownIds, appMap.url);
   if (firstResult.ok) return firstResult.plan;
 
   // Self-repair (one attempt)
@@ -80,24 +116,19 @@ export async function planTests(appMap: AppMap): Promise<TestPlan> {
   ];
 
   const repairResponse = await callLlm({ messages: repairMessages, jsonMode: true, maxTokens: 4000 });
-  const repairResult = validatePlanResponse(repairResponse.content, knownIds);
+  const repairResult = validatePlanResponse(repairResponse.content, knownIds, appMap.url);
   if (repairResult.ok) return repairResult.plan;
 
   // Graceful degradation for reference-only errors after repair
   if (repairResult.kind === 'references') {
-    const parsed: unknown = JSON.parse(repairResponse.content);
-    const schemaResult = TestPlanSchema.safeParse(parsed);
-    if (schemaResult.success) {
-      const validCases = schemaResult.data.testCases.filter((tc) =>
-        tc.steps.every((s) => !s.elementId || knownIds.has(s.elementId)),
-      );
-      if (validCases.length > 0) {
-        console.warn(
-          `[Planner] Dropped ${schemaResult.data.testCases.length - validCases.length} test case(s) with hallucinated element IDs: ${repairResult.detail}`,
-        );
-        return { testCases: validCases };
-      }
-    }
+    const salvaged = salvagePlan(repairResult);
+    if (salvaged) return salvaged;
+  }
+
+  // Fallback: If repair failed structurally but firstResult was only references, salvage from firstResult
+  if (firstResult.kind === 'references') {
+    const salvaged = salvagePlan(firstResult);
+    if (salvaged) return salvaged;
   }
 
   throw new LlmError('BAD_RESPONSE', 'Planner failed after self-repair attempt', {

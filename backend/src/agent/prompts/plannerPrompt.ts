@@ -21,6 +21,11 @@ export const PlanStepSchema = z.object({
   const requireValue = () => {
     if (!value) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${action} requires value`, path: ['value'] });
   };
+  const requireFillValue = () => {
+    if (value === null || value === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'fill requires value (can be empty string "")', path: ['value'] });
+    }
+  };
 
   switch (action) {
     case 'click':
@@ -28,6 +33,9 @@ export const PlanStepSchema = z.object({
       requireElement();
       break;
     case 'fill':
+      requireElement();
+      requireFillValue();
+      break;
     case 'select':
     case 'press':
       requireElement();
@@ -35,9 +43,6 @@ export const PlanStepSchema = z.object({
       break;
     case 'navigate':
       requireValue();
-      if (value && !value.startsWith('http://') && !value.startsWith('https://')) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'navigate value must be an absolute URL', path: ['value'] });
-      }
       break;
     case 'assert_visible':
       if (!elementId && !value) {
@@ -51,6 +56,8 @@ export const PlanStepSchema = z.object({
     case 'assert_url':
       requireValue();
       break;
+    default:
+      action satisfies never;
   }
 });
 export type PlanStep = z.infer<typeof PlanStepSchema>;
@@ -130,9 +137,8 @@ labels, or UI copy that is not in the App Map.
 9. FORM SUBMISSION WITHOUT BUTTON: When a form has no submit button \
 (submitButtonId is null), submit it by adding a press step with value "Enter" \
 targeting the last filled input element.
-10. ABSOLUTE URLS: The value of a navigate step must be an absolute URL starting \
-with http:// or https://. Construct it from the target page's base URL and the \
-desired path.`;
+10. NAVIGATION URLS: When using navigate, provide an absolute URL or a path \
+relative to the application base URL (e.g., "/about").`;
 
 export function buildPlannerUserPrompt(appMapJson: string): string {
   return `Here is the App Map JSON of the target application. Analyze it and \
