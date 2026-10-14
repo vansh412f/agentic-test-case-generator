@@ -26,20 +26,17 @@ app.use('/api', apiRouter);
 // 404 Fallback Handler for unknown routes
 app.use((req: Request, res: Response) => {
   res.status(404).json({
-    error: 'Not Found',
-    message: `Route ${req.method} ${req.url} does not exist.`,
+    error: 'NOT_FOUND',
+    message: `Route ${req.method} ${req.originalUrl} does not exist.`,
   });
 });
 
 // Centralized Error Handling Middleware
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('Unhandled server error:', err);
-
+  console.error('[Error]', err);
   res.status(500).json({
-    error: 'Internal Server Error',
-    message: config.NODE_ENV === 'production' 
-      ? 'An unexpected error occurred.' 
-      : err.message,
+    error: 'INTERNAL_ERROR',
+    message: config.NODE_ENV === 'production' ? 'An internal error occurred.' : err.message,
   });
 });
 
