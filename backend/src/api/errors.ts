@@ -2,6 +2,8 @@ import { CrawlError } from '../crawler/crawlErrors.ts';
 import type { CrawlErrorCode } from '../crawler/crawlErrors.ts';
 import { LlmError } from '../llm/types.ts';
 import type { LlmErrorCode } from '../llm/types.ts';
+import { RunnerError } from '../runner/errors.ts';
+import type { RunnerErrorCode } from '../runner/errors.ts';
 
 const CRAWL_ERROR_STATUS: Record<CrawlErrorCode, number> = {
   INVALID_URL: 400,
@@ -17,6 +19,13 @@ const LLM_ERROR_STATUS: Record<LlmErrorCode, number> = {
   BAD_RESPONSE: 502,
   PROVIDER_UNAVAILABLE: 503,
   ALL_PROVIDERS_FAILED: 503,
+};
+
+export const RUNNER_ERROR_STATUS: Record<RunnerErrorCode, number> = {
+  EXECUTION_TIMEOUT: 504,
+  BROWSER_ERROR: 500,
+  NO_RESULTS: 500,
+  PARSE_ERROR: 500,
 };
 
 export interface HttpErrorResponse {
@@ -38,6 +47,12 @@ export function toHttpError(err: unknown): HttpErrorResponse | null {
   if (err instanceof LlmError) {
     return {
       status: LLM_ERROR_STATUS[err.code],
+      body: { error: err.code, message: err.message },
+    };
+  }
+  if (err instanceof RunnerError) {
+    return {
+      status: RUNNER_ERROR_STATUS[err.code],
       body: { error: err.code, message: err.message },
     };
   }

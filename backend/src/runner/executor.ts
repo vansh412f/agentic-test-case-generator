@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import {
@@ -7,12 +8,16 @@ import {
   RUNNER_TESTS_DIR,
   EXECUTION_TIMEOUT_MS,
 } from './config.ts';
+import { RunnerError } from './errors.ts';
+
+export type FailureClass = 'finding' | 'locator' | 'timeout' | 'other';
 
 export interface TestCaseResult {
   testCaseId: string; // "tc-1" (derived from filename "tc-1.spec.ts")
   passed: boolean;
   durationMs: number;
   error?: string; // trimmed to last 30 lines, only present when passed=false
+  failureClass?: FailureClass;
 }
 
 export interface ExecutionResult {
@@ -28,6 +33,7 @@ interface PlaywrightJsonResult {
     stack?: string;
     value?: string;
   };
+  errors?: Array<{ message?: string }>;
 }
 
 interface PlaywrightJsonTest {
@@ -53,6 +59,31 @@ interface PlaywrightJsonReport {
     flaky?: number;
     skipped?: number;
   };
+}
+
+export function stripAnsi(s: string): string {
+  return s.replace(/\u001b\[[0-9;]*m/g, '');
+}
+
+const LOCATOR_REGEX = /element\(s\) not found|strict mode violation/;
+const TIMEOUT_REGEX = /waiting for|Timeout/;
+
+export function classifyExecutionError(message: string): FailureClass {
+  const hasExpected = message.includes('Expected:');
+  const hasReceived = message.includes('Received:');
+  const matchesLocator = LOCATOR_REGEX.test(message);
+  const matchesTimeout = TIMEOUT_REGEX.test(message);
+
+  if (hasExpected && hasReceived && !matchesLocator && !matchesTimeout) {
+    return 'finding';
+  }
+  if (matchesLocator) {
+    return 'locator';
+  }
+  if (matchesTimeout) {
+    return 'timeout';
+  }
+  return 'other';
 }
 
 function getTestCaseId(filenameOrTitle: string): string {
@@ -85,95 +116,78 @@ export async function executeTests(
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
   const resultsPath = path.join(RUNNER_DIR, 'results.json');
 
-  // 1. Write files to disk
-  await fs.mkdir(runDir, { recursive: true });
-  for (const file of files) {
-    const filePath = path.join(runDir, file.filename);
-    await fs.writeFile(filePath, file.code, 'utf-8');
-  }
-
-  // Ensure stale results.json from previous runs is removed
   try {
-    await fs.rm(resultsPath, { force: true });
-  } catch {
-    // Ignore
-  }
+    if (!fsSync.existsSync(PLAYWRIGHT_CLI)) {
+      throw new RunnerError('BROWSER_ERROR', `Playwright CLI not found at ${PLAYWRIGHT_CLI}`);
+    }
 
-  try {
+    // 1. Write files to disk
+    await fs.mkdir(runDir, { recursive: true });
+    for (const file of files) {
+      const filePath = path.join(runDir, file.filename);
+      await fs.writeFile(filePath, file.code, 'utf-8');
+    }
+
+    // Ensure stale results.json from previous runs is removed
+    try {
+      await fs.rm(resultsPath, { force: true });
+    } catch {
+      // Ignore
+    }
+
     // 2. Invoke Playwright CLI (use forward slashes for filter regex compatibility)
     const testArg = path.posix.join('tests', runId.replace(/\\/g, '/'));
-    let processError: Error | null = null;
 
-    try {
-      await new Promise<void>((resolve, reject) => {
-        execFile(
-          process.execPath,
-          [PLAYWRIGHT_CLI, 'test', testArg],
-          { cwd: RUNNER_DIR, timeout: EXECUTION_TIMEOUT_MS },
-          (err) => {
-            if (err) {
-              const errnoErr = err as NodeJS.ErrnoException;
-              if (err.killed || err.signal === 'SIGTERM') {
-                reject(new Error(`Execution timed out after ${EXECUTION_TIMEOUT_MS}ms`));
-                return;
-              }
-              if (typeof errnoErr.code === 'string') {
-                reject(err);
-                return;
-              }
-              // Normal test failure exit code (e.g. 1)
-              resolve();
-            } else {
-              resolve();
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        process.execPath,
+        [PLAYWRIGHT_CLI, 'test', testArg],
+        { cwd: RUNNER_DIR, timeout: EXECUTION_TIMEOUT_MS },
+        (err) => {
+          if (err) {
+            const errnoErr = err as NodeJS.ErrnoException;
+            if (err.killed || err.signal === 'SIGTERM') {
+              reject(
+                new RunnerError(
+                  'EXECUTION_TIMEOUT',
+                  `Execution timed out after ${EXECUTION_TIMEOUT_MS}ms`,
+                  err,
+                ),
+              );
+              return;
             }
-          },
-        );
-      });
-    } catch (err) {
-      processError = err instanceof Error ? err : new Error(String(err));
-    }
-
-    if (processError) {
-      return {
-        success: false,
-        results: files.map((f) => ({
-          testCaseId: getTestCaseId(f.filename),
-          passed: false,
-          durationMs: 0,
-          error: processError.message,
-        })),
-      };
-    }
+            if (typeof errnoErr.code === 'string') {
+              reject(
+                new RunnerError(
+                  'BROWSER_ERROR',
+                  `Failed to spawn Playwright runner: ${err.message}`,
+                  err,
+                ),
+              );
+              return;
+            }
+            // Normal test failure exit code (e.g. 1)
+            resolve();
+          } else {
+            resolve();
+          }
+        },
+      );
+    });
 
     // 3. Read and parse JSON reporter output
     let rawJson: string;
     try {
       rawJson = await fs.readFile(resultsPath, 'utf-8');
-    } catch {
-      return {
-        success: false,
-        results: files.map((f) => ({
-          testCaseId: getTestCaseId(f.filename),
-          passed: false,
-          durationMs: 0,
-          error: 'Playwright produced no results file',
-        })),
-      };
+    } catch (err) {
+      throw new RunnerError('NO_RESULTS', 'Playwright produced no results file', err);
     }
 
     let report: PlaywrightJsonReport;
     try {
       report = JSON.parse(rawJson) as PlaywrightJsonReport;
-    } catch {
-      return {
-        success: false,
-        results: files.map((f) => ({
-          testCaseId: getTestCaseId(f.filename),
-          passed: false,
-          durationMs: 0,
-          error: 'Failed to parse Playwright results',
-        })),
-      };
+    } catch (err) {
+      throw new RunnerError('PARSE_ERROR', 'Failed to parse Playwright results', err);
     }
 
     const results: TestCaseResult[] = [];
@@ -196,24 +210,47 @@ export async function executeTests(
             }
             if (res.status !== 'passed') {
               passed = false;
+              const fallback =
+                res.status === 'timedOut'
+                  ? 'Test timed out'
+                  : `Test failed with status ${res.status}`;
+              const rawError =
+                (res.errors ?? [])
+                  .map((e) => e.message)
+                  .filter(Boolean)
+                  .join('\n\n') ||
+                res.error?.message ||
+                fallback;
+              const errorText = stripAnsi(rawError);
+
+              if (errorText.includes('browserType.launch')) {
+                throw new RunnerError('BROWSER_ERROR', errorText);
+              }
+
               if (!firstErrorMessage) {
-                firstErrorMessage =
-                  res.error?.message ||
-                  (res.status === 'timedOut'
-                    ? 'Test timed out'
-                    : `Test failed with status ${res.status}`);
+                firstErrorMessage = errorText;
               }
             }
           }
         }
       }
 
-      results.push({
-        testCaseId,
-        passed,
-        durationMs,
-        ...(passed ? {} : { error: trimError(firstErrorMessage || 'Test failed') }),
-      });
+      if (passed) {
+        results.push({
+          testCaseId,
+          passed: true,
+          durationMs,
+        });
+      } else {
+        const errorText = firstErrorMessage || 'Test failed';
+        results.push({
+          testCaseId,
+          passed: false,
+          durationMs,
+          error: trimError(errorText),
+          failureClass: classifyExecutionError(errorText),
+        });
+      }
     }
 
     // Ensure all expected files have a result entry
@@ -226,6 +263,7 @@ export async function executeTests(
           passed: false,
           durationMs: 0,
           error: 'Test case was not reported by Playwright',
+          failureClass: 'other',
         });
       }
     }
@@ -233,9 +271,14 @@ export async function executeTests(
     const success = results.length > 0 && results.every((r) => r.passed);
     return { success, results };
   } finally {
-    // 5. Cleanup results.json
+    // 5. Cleanup results.json and tests/<runId>/
     try {
       await fs.rm(resultsPath, { force: true });
+    } catch {
+      // Ignore cleanup error
+    }
+    try {
+      await fs.rm(runDir, { recursive: true, force: true });
     } catch {
       // Ignore cleanup error
     }

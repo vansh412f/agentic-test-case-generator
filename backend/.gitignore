@@ -19,5 +19,9 @@ logs/*
 .DS_Store
 Thumbs.db
 
-scratch/*
-!scratch/testPipeline.ts
+# Playwright Runner
+playwright-runner/test-results/
+playwright-runner/results.json
+playwright-runner/tsconfig.run-*.json
+playwright-runner/tests/*
+!playwright-runner/tests/.gitkeep

@@ -4,9 +4,9 @@ import { crawlPage } from '../crawler/pageCrawler.ts';
 import { planTests } from './steps/planner.ts';
 import { generateTest } from './steps/generator.ts';
 import type { GeneratedTest } from './steps/generator.ts';
-import { correctTest } from './steps/corrector.ts';
+import { correctTest, correctionPreservesAssertions } from './steps/corrector.ts';
 import { validateTestCode } from '../runner/validator.ts';
-import { executeTests } from '../runner/executor.ts';
+import { executeTests, type FailureClass } from '../runner/executor.ts';
 import { RUNNER_TESTS_DIR } from '../runner/config.ts';
 import type { AppMap, InteractiveElement } from '../crawler/types.ts';
 import type { TestPlan } from './prompts/plannerPrompt.ts';
@@ -21,6 +21,8 @@ export interface TestAttempt {
   validationErrors?: string[];
   executionPassed?: boolean; // undefined if validation failed (never executed)
   executionError?: string; // trimmed error from executor
+  failureClass?: FailureClass;
+  durationMs?: number;
   corrected: boolean; // true if this attempt was produced by the corrector
 }
 
@@ -75,7 +77,7 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
       let currentCode = initialGen.code;
       const attempts: TestAttempt[] = [];
       const maxCorrections = 2;
-      let finalStatus: 'passed' | 'failed' | 'gave_up' | undefined;
+      let finalStatus: 'passed' | 'failed' | 'gave_up' = 'gave_up';
 
       for (let attempt = 1; attempt <= 1 + maxCorrections; attempt++) {
         const isCorrected = attempt > 1;
@@ -101,8 +103,14 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
             const errorText = validationResult.errors.join('\n');
             const correction = await correctTest(currentCode, errorText, elementsInScope);
             if (correction.code) {
-              currentCode = correction.code;
-              continue;
+              if (!correctionPreservesAssertions(currentCode, correction.code)) {
+                console.warn(
+                  `[Runner] ${testCase.id} | correction rejected: assertions altered`,
+                );
+              } else {
+                currentCode = correction.code;
+                continue;
+              }
             }
           }
 
@@ -118,6 +126,7 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
 
         const execPassed = Boolean(testCaseResult?.passed);
         const execError = testCaseResult?.error;
+        const failureClass = testCaseResult?.failureClass;
 
         attempts.push({
           attemptNumber: attempt,
@@ -125,6 +134,10 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
           validationPassed: true,
           executionPassed: execPassed,
           ...(execError ? { executionError: execError } : {}),
+          ...(failureClass ? { failureClass } : {}),
+          ...(typeof testCaseResult?.durationMs === 'number'
+            ? { durationMs: testCaseResult.durationMs }
+            : {}),
           corrected: isCorrected,
         });
 
@@ -141,6 +154,11 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
           `[Runner] ${testCase.id} | attempt ${attempt}${isCorrected ? ' | corrected' : ''} | validate: PASS | execute: FAIL (${firstErr})`,
         );
 
+        if (failureClass === 'finding') {
+          finalStatus = 'failed';
+          break;
+        }
+
         if (attempt <= maxCorrections) {
           const correction = await correctTest(
             currentCode,
@@ -148,17 +166,19 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
             elementsInScope,
           );
           if (correction.code) {
-            currentCode = correction.code;
-            continue;
+            if (!correctionPreservesAssertions(currentCode, correction.code)) {
+              console.warn(
+                `[Runner] ${testCase.id} | correction rejected: assertions altered`,
+              );
+            } else {
+              currentCode = correction.code;
+              continue;
+            }
           }
         }
 
         finalStatus = 'gave_up';
         break;
-      }
-
-      if (!finalStatus) {
-        finalStatus = attempts.some((a) => a.executionPassed) ? 'passed' : 'gave_up';
       }
 
       generatedTests.push({
