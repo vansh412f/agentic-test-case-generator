@@ -1,11 +1,11 @@
 import {
-  AlertTriangle,
-  CheckCircle2,
-  FileInput,
-  Link2,
-  MousePointerClick,
+  CheckCircle,
+  CursorClick,
+  Link,
   Play,
-} from 'lucide-react';
+  Textbox,
+  Warning,
+} from '@phosphor-icons/react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { AppMap } from '@/types/api';
@@ -62,7 +62,7 @@ export function CrawlPreview({
         <dl className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-panel border bg-background p-4">
             <dt className="flex items-center gap-2 text-caption uppercase tracking-wide text-muted-foreground">
-              <MousePointerClick aria-hidden="true" className="h-4 w-4" />
+              <CursorClick aria-hidden="true" className="h-4 w-4" />
               Interactive elements
             </dt>
             <dd className="mt-2 font-mono text-heading-2 font-bold">
@@ -75,7 +75,7 @@ export function CrawlPreview({
 
           <div className="rounded-panel border bg-background p-4">
             <dt className="flex items-center gap-2 text-caption uppercase tracking-wide text-muted-foreground">
-              <FileInput aria-hidden="true" className="h-4 w-4" />
+              <Textbox aria-hidden="true" className="h-4 w-4" />
               Forms detected
             </dt>
             <dd className="mt-2 font-mono text-heading-2 font-bold">
@@ -85,7 +85,7 @@ export function CrawlPreview({
 
           <div className="rounded-panel border bg-background p-4">
             <dt className="flex items-center gap-2 text-caption uppercase tracking-wide text-muted-foreground">
-              <Link2 aria-hidden="true" className="h-4 w-4" />
+              <Link aria-hidden="true" className="h-4 w-4" />
               Internal pages found
             </dt>
             <dd className="mt-2 font-mono text-heading-2 font-bold">
@@ -96,7 +96,7 @@ export function CrawlPreview({
 
         {appMap.isTruncated ? (
           <p className="mt-4 flex gap-2 rounded-panel border border-warning/40 bg-warning/10 p-4 text-small text-warning">
-            <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+            <Warning aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
             The element cap was reached. Tests will be generated from the
             highest-priority visible elements retained in this App Map.
           </p>
@@ -126,7 +126,7 @@ export function CrawlPreview({
                 Main crawled page
               </span>
             </span>
-            <CheckCircle2 aria-hidden="true" className="h-5 w-5 text-success" />
+            <CheckCircle aria-hidden="true" className="h-5 w-5 text-success" />
           </label>
 
           {appMap.discoveredLinks.length === 0 ? (
