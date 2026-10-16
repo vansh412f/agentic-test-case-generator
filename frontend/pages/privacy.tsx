@@ -4,7 +4,7 @@ const sections = [
   {
     title: 'Information processed',
     body: [
-      'Autonomous Test Suite Generator processes the target URLs you submit, the structure of the web pages you ask it to crawl, generated Playwright test code, execution results, correction history, token-usage metadata, and downloadable reports.',
+      'Agentic Test Case Generator processes the target URLs you submit, the structure of the web pages you ask it to crawl, generated Playwright test code, execution results, correction history, token-usage metadata, and downloadable reports.',
       'You should only submit applications, staging environments, and accounts that you own or are authorized to test.',
     ],
   },
@@ -55,9 +55,9 @@ export default function PrivacyPage() {
   return (
     <>
       <Seo
-        description="How Autonomous Test Suite Generator processes target URLs, application maps, generated tests, reports, and AI requests."
+        description="How Agentic Test Case Generator processes target URLs, application maps, generated tests, reports, and AI requests."
         path="/privacy"
-        title="Privacy Policy — Autonomous Test Suite Generator"
+        title="Privacy Policy — Agentic Test Case Generator"
       />
 
       <article className="mx-auto max-w-reading py-section-sm">
@@ -72,7 +72,7 @@ export default function PrivacyPage() {
         </p>
 
         <p className="mt-6 text-body text-muted-foreground">
-          This policy explains what information the Autonomous Test Suite
+          This policy explains what information the Agentic Test Case
           Generator processes when you crawl an application, generate tests,
           execute them, and download reports or test projects.
         </p>
