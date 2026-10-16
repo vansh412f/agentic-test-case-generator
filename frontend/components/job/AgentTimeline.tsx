@@ -1,20 +1,20 @@
 import {
-  Bot,
-  CheckCircle2,
-  Globe2,
+  CheckCircle,
+  Globe,
   ListChecks,
   PlayCircle,
+  Robot,
   ShieldCheck,
   Wrench,
   XCircle,
-} from 'lucide-react';
+} from '@phosphor-icons/react';
 import { formatDurationMs, formatTime } from '@/lib/utils';
 import type { AgentStep, StepType } from '@/types/api';
 
-const iconByStep: Record<StepType, typeof Globe2> = {
-  crawl: Globe2,
+const iconByStep: Record<StepType, typeof Globe> = {
+  crawl: Globe,
   plan: ListChecks,
-  generate: Bot,
+  generate: Robot,
   validate: ShieldCheck,
   execute: PlayCircle,
   correct: Wrench,
@@ -58,7 +58,7 @@ export function AgentTimeline({ steps }: AgentTimelineProps) {
                 {failed ? (
                   <XCircle aria-hidden="true" className="h-4 w-4 text-danger" />
                 ) : (
-                  <CheckCircle2 aria-hidden="true" className="h-4 w-4 text-success" />
+                  <CheckCircle aria-hidden="true" className="h-4 w-4 text-success" />
                 )}
                 <time className="font-mono text-caption text-muted-foreground">
                   {formatTime(step.createdAt)}
