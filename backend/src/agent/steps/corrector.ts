@@ -14,40 +14,7 @@ export interface CorrectionResult {
 
 const FENCE_REGEX = /```(?:typescript|ts)?\s*\n([\s\S]*?)\n```/;
 
-export function correctionPreservesAssertions(before: string, after: string): boolean {
-  const beforeExpectCount = (before.match(/expect\(/g) ?? []).length;
-  const afterExpectCount = (after.match(/expect\(/g) ?? []).length;
-  if (beforeExpectCount !== afterExpectCount) {
-    return false;
-  }
-
-  const beforeExpectLines = before.split(/\r?\n/).filter((l) => l.includes('expect('));
-  const afterExpectLines = after.split(/\r?\n/).filter((l) => l.includes('expect('));
-
-  const STRING_LITERAL_REGEX = /'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g;
-
-  for (const line of beforeExpectLines) {
-    let match: RegExpExecArray | null;
-    while ((match = STRING_LITERAL_REGEX.exec(line)) !== null) {
-      const raw = match[0];
-      const content = match[1] ?? match[2] ?? match[3] ?? '';
-
-      const found = afterExpectLines.some(
-        (afterLine) =>
-          afterLine.includes(raw) ||
-          afterLine.includes(`'${content}'`) ||
-          afterLine.includes(`"${content}"`) ||
-          afterLine.includes(`\`${content}\``),
-      );
-
-      if (!found) {
-        return false;
-      }
-    }
-  }
-
-  return true;
-}
+export { correctionPreservesAssertions } from '../assertionGuard.ts';
 
 export async function correctTest(
   failingCode: string,
