@@ -1,9 +1,8 @@
+import { ArrowCounterClockwise, Sparkle, Warning } from '@phosphor-icons/react';
+import Link from 'next/link';
 import { useState } from 'react';
 import useSWR from 'swr';
-import { EmptyState } from '@/components/common/EmptyState';
-import { ErrorState } from '@/components/common/ErrorState';
 import { Seo } from '@/components/common/Seo';
-import { JobsListSkeleton } from '@/components/common/Skeletons';
 import { JobsPagination } from '@/components/jobs/JobsPagination';
 import { JobsTable } from '@/components/jobs/JobsTable';
 import { fetcher, apiBase } from '@/lib/api';
@@ -31,58 +30,58 @@ export default function JobsPage() {
         title="Test History — Agentic Test Case Generator"
       />
 
-      <section className="py-section-sm">
-        <p className="font-mono text-caption uppercase tracking-widest text-brand-strong dark:text-brand">
-          Generation history
-        </p>
-        <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="text-heading-1 font-bold">Test History</h1>
-            <p className="mt-3 max-w-reading text-body text-muted-foreground">
-              Every crawl, generated suite, correction attempt, and real
-              application finding — preserved as a job.
-            </p>
+      <main className="page-main">
+        <div className="page-title">
+          <p className="eyebrow">RUN HISTORY</p>
+          <h1>Previous generation jobs</h1>
+          <p>Track every test run and inspect agent decisions.</p>
+        </div>
+
+        {isLoading && data === undefined ? (
+          <div className="history-skeleton">
+            {[1, 2, 3, 4].map((n) => (
+              <div key={n} />
+            ))}
           </div>
+        ) : error !== undefined && data === undefined ? (
+          <div className="error-banner" role="alert">
+            <span>
+              <Warning aria-hidden="true" className="h-5 w-5" />
+            </span>
+            <div>
+              <strong>We couldn’t load your job history</strong>
+              <p>The service may be temporarily unavailable. Your jobs are safe.</p>
+            </div>
+            <button onClick={() => void mutate()} type="button">
+              <ArrowCounterClockwise aria-hidden="true" className="h-3.5 w-3.5" /> Retry
+            </button>
+          </div>
+        ) : data === undefined || data.jobs.length === 0 ? (
+          <div className="empty-state">
+            <span>
+              <Sparkle aria-hidden="true" className="h-7 w-7" />
+            </span>
+            <h2>No jobs yet</h2>
+            <p>Your generated test suites will appear here once you crawl your first app.</p>
+            <Link className="primary-button" href="/">
+              Generate your first suite
+            </Link>
+          </div>
+        ) : (
+          <>
+            <div aria-busy={isValidating}>
+              <JobsTable jobs={data.jobs} />
+            </div>
 
-          {data ? (
-            <p aria-live="polite" className="font-mono text-caption text-muted-foreground">
-              {data.total} jobs · page {data.page} of {Math.max(1, data.totalPages)}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="mt-8">
-          {isLoading && data === undefined ? (
-            <JobsListSkeleton />
-          ) : error !== undefined && data === undefined ? (
-            <ErrorState
-              description="The backend did not return the job history. Check that the API is running, then retry."
-              onRetry={() => void mutate()}
-              title="Could not load test history"
+            <JobsPagination
+              disabled={isValidating}
+              onPageChange={setPage}
+              page={data.page}
+              totalPages={data.totalPages}
             />
-          ) : data === undefined || data.jobs.length === 0 ? (
-            <EmptyState
-              actionHref="/"
-              actionLabel="Generate Your First Test Suite"
-              description="No generation jobs have been recorded yet. Crawl a localhost or staging application to create the first suite."
-              title="No test jobs yet"
-            />
-          ) : (
-            <>
-              <div aria-busy={isValidating}>
-                <JobsTable jobs={data.jobs} />
-              </div>
-
-              <JobsPagination
-                disabled={isValidating}
-                onPageChange={setPage}
-                page={data.page}
-                totalPages={data.totalPages}
-              />
-            </>
-          )}
-        </div>
-      </section>
+          </>
+        )}
+      </main>
     </>
   );
 }

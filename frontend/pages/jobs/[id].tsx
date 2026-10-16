@@ -1,16 +1,20 @@
 import type { GetServerSideProps } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import {
+  ArrowCounterClockwise,
+  ArrowSquareOut,
+  Check,
+  DownloadSimple,
+  Globe,
+} from '@phosphor-icons/react';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { Seo } from '@/components/common/Seo';
-import { AgentTimeline } from '@/components/job/AgentTimeline';
-import { JobActions } from '@/components/job/JobActions';
-import { JobStatusHeader } from '@/components/job/JobStatusHeader';
+import { StatusBadge } from '@/components/common/StatusBadge';
 import { TestResultCard } from '@/components/job/TestResultCard';
-import { TokenUsage } from '@/components/job/TokenUsage';
 import { useJobPolling } from '@/hooks/useJobPolling';
 import { ApiError } from '@/lib/api';
-import { formatJobShortId } from '@/lib/utils';
+import { formatJobDuration, isTerminalJobStatus } from '@/lib/utils';
 import type { JobDetail } from '@/types/api';
 
 interface JobPageProps {
@@ -44,7 +48,6 @@ export const getServerSideProps: GetServerSideProps<JobPageProps> = async ({
       };
     }
 
-    // Server fetch boundary for the backend's documented job contract.
     const initialJob = (await response.json()) as JobDetail;
 
     return {
@@ -63,6 +66,15 @@ export const getServerSideProps: GetServerSideProps<JobPageProps> = async ({
   }
 };
 
+function cleanDomain(urlStr: string): string {
+  try {
+    const parsed = new URL(urlStr);
+    return parsed.host + (parsed.pathname === '/' ? '' : parsed.pathname);
+  } catch {
+    return urlStr.replace(/^https?:\/\//, '');
+  }
+}
+
 function JobDetailContent({ initialJob, jobId }: JobPageProps) {
   const {
     data: job,
@@ -72,122 +84,231 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
   } = useJobPolling(jobId, initialJob ?? undefined);
 
   if (job === undefined) {
-    return (
-      <section className="py-section-sm">
-        <h1 className="text-heading-1 font-bold">Loading test results…</h1>
+    const isNotFound =
+      (error instanceof ApiError && error.status === 404) ||
+      (initialJob === null && (error !== undefined || !isLoading));
 
-        {error || !isLoading ? (
-          <div className="panel mt-6 max-w-reading p-6" role="alert">
-            <h2 className="text-card-title font-bold">
-              {error instanceof ApiError && error.status === 404
-                ? 'Job not found'
-                : 'Job data is unavailable'}
-            </h2>
-            <p className="mt-2 text-body text-muted-foreground">
-              {error instanceof ApiError && error.status === 404
-                ? 'This job ID does not exist in the active environment. If this job was generated using Local Agent mode, verify you are connected to the local agent.'
-                : 'The backend could not return this job. It may still be starting, or the API may be offline.'}
+    if (isNotFound) {
+      return (
+        <main className="page-main">
+          <div className="not-found">
+            <span>
+              <Globe aria-hidden="true" className="h-7 w-7" />
+            </span>
+            <p className="eyebrow">JOB NOT FOUND</p>
+            <h1>This job lives on another backend</h1>
+            <p>
+              It may have been created while your local Agentic backend was running.
+              Reconnect that backend and refresh, or return to your hosted job history.
             </p>
-            <button
-              className="mt-5 min-h-11 rounded-control bg-brand px-5 font-semibold text-brand-foreground transition-opacity hover:opacity-90"
-              onClick={() => void mutate()}
-              type="button"
-            >
-              Retry Loading Job
+            <div className="flex justify-center gap-3">
+              <Link className="secondary-button" href="/jobs">
+                Back to history
+              </Link>
+              <button
+                className="primary-button"
+                onClick={() => void mutate()}
+                type="button"
+              >
+                <ArrowCounterClockwise aria-hidden="true" className="h-3.5 w-3.5" /> Retry
+              </button>
+            </div>
+          </div>
+        </main>
+      );
+    }
+
+    if (error || !isLoading) {
+      return (
+        <main className="page-main">
+          <div className="error-banner" role="alert">
+            <span>
+              <Globe aria-hidden="true" className="h-5 w-5" />
+            </span>
+            <div>
+              <strong>Could not load job details</strong>
+              <p>The backend could not return this job. It may still be starting, or the API may be offline.</p>
+            </div>
+            <button onClick={() => void mutate()} type="button">
+              <ArrowCounterClockwise aria-hidden="true" className="h-3.5 w-3.5" /> Retry
             </button>
           </div>
-        ) : (
-          <div aria-label="Loading job details" className="mt-6 space-y-4" role="status">
-            <div className="skeleton-line h-36 w-full" />
-            <div className="skeleton-line h-72 w-full" />
-          </div>
-        )}
-      </section>
+        </main>
+      );
+    }
+
+    return (
+      <main className="page-main">
+        <div className="history-skeleton">
+          {[1, 2, 3, 4].map((n) => (
+            <div key={n} />
+          ))}
+        </div>
+      </main>
     );
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
+  const durationStr = formatJobDuration(job.createdAt, job.completedAt);
+  const passedCount = job.generatedTests.filter(
+    (t) => t.finalStatus === 'passed',
+  ).length;
+  const failedCount = job.generatedTests.filter(
+    (t) => t.finalStatus === 'failed',
+  ).length;
+  const correctedCount = job.generatedTests.filter((t) =>
+    t.executionResults.some((r) => r.corrected),
+  ).length;
+
+  const passRate =
+    job.generatedTests.length > 0
+      ? `${Math.round((passedCount / job.generatedTests.length) * 100)}%`
+      : '—';
+
+  const totalTokens =
+    job.costEstimate?.totalTokens ??
+    job.agentSteps.reduce(
+      (sum, s) => sum + (s.promptTokens ?? 0) + (s.completionTokens ?? 0),
+      0,
+    );
+  const tokensStr = totalTokens > 0 ? totalTokens.toLocaleString() : '—';
+  const estCostStr =
+    job.costEstimate?.totalUsd !== undefined && job.costEstimate.totalUsd > 0
+      ? `$${job.costEstimate.totalUsd.toFixed(4)}`
+      : 'free';
 
   return (
     <>
       <Seo
         description={`Playwright generation results, attempts, corrections, token usage, and confidence for ${job.targetUrl}.`}
-        jsonLd={{
-          '@context': 'https://schema.org',
-          '@type': 'BreadcrumbList',
-          itemListElement: [
-            {
-              '@type': 'ListItem',
-              position: 1,
-              name: 'Home',
-              item: `${siteUrl}/`,
-            },
-            {
-              '@type': 'ListItem',
-              position: 2,
-              name: 'Jobs',
-              item: `${siteUrl}/jobs`,
-            },
-            {
-              '@type': 'ListItem',
-              position: 3,
-              name: job.id,
-              item: `${siteUrl}/jobs/${job.id}`,
-            },
-          ],
-        }}
         path={`/jobs/${job.id}`}
         title={`Test Results for ${job.targetUrl} — Agentic Test Case Generator`}
       />
 
-      <nav aria-label="Breadcrumb" className="py-6">
-        <ol className="flex flex-wrap items-center gap-2 font-mono text-caption text-muted-foreground">
-          <li>
-            <Link className="rounded-control hover:text-foreground" href="/">
-              Home
-            </Link>
-          </li>
-          <li aria-hidden="true">/</li>
-          <li>
-            <Link className="rounded-control hover:text-foreground" href="/jobs">
-              Jobs
-            </Link>
-          </li>
-          <li aria-hidden="true">/</li>
-          <li aria-current="page" className="max-w-56 truncate text-foreground" title={job.id}>
-            {formatJobShortId(job.id)}
-          </li>
-        </ol>
-      </nav>
+      <main className="page-main detail-page">
+        <Link className="back-link" href="/jobs">
+          ← All jobs
+        </Link>
 
-      <JobStatusHeader job={job} />
-
-      <div className="grid items-start gap-6 py-6 lg:grid-cols-job-detail">
-        <section aria-labelledby="test-results-title" className="space-y-6">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <p className="font-mono text-caption uppercase tracking-widest text-muted-foreground">
-                Generated suite
-              </p>
-              <h2 className="mt-2 text-heading-2 font-bold" id="test-results-title">
-                Test results
-              </h2>
+        <section className="job-hero">
+          <div>
+            <div className="job-title-line">
+              <StatusBadge status={job.status} />
+              <span>#{job.id.slice(0, 8)}</span>
             </div>
-            <p className="font-mono text-caption text-muted-foreground">
-              {job.generatedTests.length} tests
-            </p>
+            <h1>{cleanDomain(job.targetUrl)}</h1>
+            <a href={job.targetUrl} rel="noreferrer" target="_blank">
+              {job.targetUrl} <ArrowSquareOut aria-hidden="true" className="h-3 w-3" />
+            </a>
+          </div>
+
+          <div className="job-actions">
+            {isTerminalJobStatus(job.status) ? (
+              <a
+                className="secondary-button"
+                href={`/api/jobs/${job.id}/report.html`}
+                rel="noreferrer"
+                target="_blank"
+              >
+                <DownloadSimple aria-hidden="true" className="h-4 w-4" /> Download Report
+              </a>
+            ) : null}
+
+            {job.generatedTests.length > 0 ? (
+              <a
+                className="primary-button"
+                download
+                href={`/api/jobs/${job.id}/export.zip`}
+              >
+                <DownloadSimple aria-hidden="true" className="h-4 w-4" /> Export Playwright Project (.zip)
+              </a>
+            ) : null}
+          </div>
+        </section>
+
+        <div className="summary-grid">
+          <div>
+            <strong>{passRate}</strong>
+            <span>PASS RATE</span>
+          </div>
+          <div>
+            <strong>{durationStr}</strong>
+            <span>DURATION</span>
+          </div>
+          <div>
+            <strong>{tokensStr}</strong>
+            <span>TOKENS</span>
+          </div>
+          <div>
+            <strong>{estCostStr}</strong>
+            <span>EST. COST</span>
+          </div>
+        </div>
+
+        {job.agentSteps.length > 0 ? (
+          <section className="detail-section">
+            <div className="detail-heading">
+              <div>
+                <p className="eyebrow">AGENT TRACE</p>
+                <h2>Execution timeline</h2>
+              </div>
+              <span>
+                {job.agentSteps.length} steps · {durationStr} total
+              </span>
+            </div>
+
+            <div className="timeline">
+              {job.agentSteps.map((step, i) => {
+                const isCorrected = step.stepType === 'correct';
+                const duration = step.latencyMs
+                  ? `${Math.round(step.latencyMs / 1000)}s`
+                  : '—';
+                const tokens = (
+                  (step.promptTokens ?? 0) + (step.completionTokens ?? 0)
+                ).toLocaleString();
+
+                return (
+                  <div key={step.id || i}>
+                    <span className={isCorrected ? 'corrected' : ''}>
+                      {isCorrected ? (
+                        <ArrowCounterClockwise aria-hidden="true" className="h-3 w-3" />
+                      ) : (
+                        <Check aria-hidden="true" className="h-3 w-3" />
+                      )}
+                    </span>
+                    <strong>
+                      {step.stepType.charAt(0).toUpperCase() + step.stepType.slice(1)}
+                    </strong>
+                    <small>
+                      {duration}
+                      <br />
+                      {tokens} tokens
+                    </small>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
+        <section className="detail-section cases">
+          <div className="detail-heading">
+            <div>
+              <p className="eyebrow">GENERATED TESTS</p>
+              <h2>{job.generatedTests.length} test cases</h2>
+            </div>
+            <div className="result-pills">
+              <span>{passedCount} passed</span>
+              <span>
+                {failedCount} {failedCount === 1 ? 'finding' : 'findings'}
+              </span>
+              <span>{correctedCount} corrected</span>
+            </div>
           </div>
 
           {job.generatedTests.length === 0 ? (
-            <div className="panel p-6">
-              <h3 className="text-card-title font-bold">
-                No generated tests yet
-              </h3>
-              <p className="mt-2 text-body text-muted-foreground">
-                Tests appear here as each test case completes generation,
-                validation, and execution.
-              </p>
-            </div>
+            <p className="mt-6 text-small text-muted-foreground">
+              Tests will appear here as each test case completes generation and execution.
+            </p>
           ) : (
             job.generatedTests.map((test) => (
               <TestResultCard
@@ -200,36 +321,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             ))
           )}
         </section>
-
-        <aside className="space-y-6 lg:sticky lg:top-24">
-          <section aria-labelledby="job-actions-title" className="panel p-5">
-            <h2 className="text-card-title font-bold" id="job-actions-title">
-              Deliverables
-            </h2>
-            <div className="mt-4">
-              <JobActions job={job} />
-            </div>
-          </section>
-
-          <section aria-labelledby="token-usage-title" className="panel p-5">
-            <h2 className="text-card-title font-bold" id="token-usage-title">
-              Token usage & cost
-            </h2>
-            <div className="mt-4">
-              <TokenUsage costEstimate={job.costEstimate} steps={job.agentSteps} />
-            </div>
-          </section>
-
-          <section aria-labelledby="agent-timeline-title" className="panel p-5">
-            <h2 className="text-card-title font-bold" id="agent-timeline-title">
-              Agent timeline
-            </h2>
-            <div className="mt-5">
-              <AgentTimeline steps={job.agentSteps} />
-            </div>
-          </section>
-        </aside>
-      </div>
+      </main>
     </>
   );
 }
