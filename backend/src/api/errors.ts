@@ -1,4 +1,10 @@
 import { CrawlError } from '../crawler/crawlErrors.ts';
+import { DatabaseError } from '../db/errors.ts';
+import type { DatabaseErrorCode } from '../db/errors.ts';
+import { ExportError } from '../export/errors.ts';
+import type { ExportErrorCode } from '../export/errors.ts';
+import { JobError } from './jobErrors.ts';
+import type { JobErrorCode } from './jobErrors.ts';
 import type { CrawlErrorCode } from '../crawler/crawlErrors.ts';
 import { LlmError } from '../llm/types.ts';
 import type { LlmErrorCode } from '../llm/types.ts';
@@ -28,6 +34,14 @@ export const RUNNER_ERROR_STATUS: Record<RunnerErrorCode, number> = {
   PARSE_ERROR: 500,
 };
 
+const DATABASE_ERROR_STATUS: Record<DatabaseErrorCode, number> = { DATABASE_UNAVAILABLE: 503 };
+const JOB_ERROR_STATUS: Record<JobErrorCode, number> = {
+  JOB_NOT_FOUND: 404, REPORT_NOT_READY: 409, EXPORT_NOT_READY: 409,
+};
+const EXPORT_ERROR_STATUS: Record<ExportErrorCode, number> = {
+  INVALID_EXPORT_FILE: 500, EXPORT_FAILED: 500,
+};
+
 export interface HttpErrorResponse {
   status: number;
   body: {
@@ -55,6 +69,15 @@ export function toHttpError(err: unknown): HttpErrorResponse | null {
       status: RUNNER_ERROR_STATUS[err.code],
       body: { error: err.code, message: err.message },
     };
+  }
+  if (err instanceof DatabaseError) {
+    return { status: DATABASE_ERROR_STATUS[err.code], body: { error: err.code, message: err.message } };
+  }
+  if (err instanceof JobError) {
+    return { status: JOB_ERROR_STATUS[err.code], body: { error: err.code, message: err.message } };
+  }
+  if (err instanceof ExportError) {
+    return { status: EXPORT_ERROR_STATUS[err.code], body: { error: err.code, message: err.message } };
   }
   return null;
 }
