@@ -14,6 +14,8 @@ const configSchema = z.object({
   MAX_ELEMENTS_PER_PAGE: z.coerce.number().int().positive().default(200),
   NAVIGATION_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   NETWORK_IDLE_WAIT_MS: z.coerce.number().int().nonnegative().default(3000),
+  DATABASE_URL: z.string().trim().min(1),
+  DIRECT_URL: z.string().trim().min(1),
   GROQ_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
 });
