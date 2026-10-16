@@ -1,4 +1,4 @@
-import { ArrowLeft, History } from 'lucide-react';
+import { ArrowLeft, ClockCounterClockwise } from '@phosphor-icons/react';
 import Link from 'next/link';
 import { Seo } from '@/components/common/Seo';
 import { Button } from '@/components/ui/button';
@@ -7,9 +7,9 @@ export default function NotFoundPage() {
   return (
     <>
       <Seo
-        description="The requested Autonomous Test Suite Generator page could not be found."
+        description="The requested Agentic Test Case Generator page could not be found."
         path="/404"
-        title="Page Not Found — Autonomous Test Suite Generator"
+        title="Page Not Found — Agentic Test Case Generator"
       />
 
       <section className="mx-auto max-w-reading py-section text-center">
@@ -36,7 +36,7 @@ export default function NotFoundPage() {
 
           <Button asChild size="lg" variant="outline">
             <Link href="/jobs">
-              <History aria-hidden="true" />
+              <ClockCounterClockwise aria-hidden="true" />
               View Test History
             </Link>
           </Button>
