@@ -2,6 +2,7 @@ import { ArrowRight, CheckCircle, Warning, XCircle } from '@phosphor-icons/react
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useReducer, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { Seo } from '@/components/common/Seo';
 import { CrawlPreview } from '@/components/home/CrawlPreview';
@@ -327,7 +328,11 @@ export default function HomePage() {
       />
 
       <section className="grid items-start gap-8 py-section-sm lg:grid-cols-how-desktop">
-        <div>
+        <motion.div
+          animate={{ opacity: 1, y: 0 }}
+          initial={{ opacity: 0, y: 20 }}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
+        >
           <p className="font-mono text-caption uppercase tracking-widest text-brand-strong dark:text-brand">
             Localhost and staging environments
           </p>
@@ -365,9 +370,15 @@ export default function HomePage() {
               onCrawl={handleCrawl}
             />
           </div>
-        </div>
+        </motion.div>
 
-        <HeroTerminal />
+        <motion.div
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          initial={{ opacity: 0, scale: 0.98, y: 16 }}
+          transition={{ delay: 0.15, duration: 0.55, ease: 'easeOut' }}
+        >
+          <HeroTerminal />
+        </motion.div>
       </section>
 
       <StatsBar />
@@ -414,7 +425,13 @@ export default function HomePage() {
       ) : null}
 
       {state.phase === 'batch-complete' && state.batch ? (
-        <section aria-labelledby="batch-results-title" className="panel mb-section-sm p-5 sm:p-6">
+        <motion.section
+          animate={{ opacity: 1, y: 0 }}
+          aria-labelledby="batch-results-title"
+          className="panel mb-section-sm p-5 sm:p-6"
+          initial={{ opacity: 0, y: 20 }}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
+        >
           <p className="font-mono text-caption uppercase tracking-widest text-brand-strong dark:text-brand">
             Batch complete
           </p>
@@ -456,11 +473,16 @@ export default function HomePage() {
               </div>
             ))}
           </div>
-        </section>
+        </motion.section>
       ) : null}
 
       {state.appMap && state.phase !== 'submitting' ? (
-        <div className="pb-section-sm">
+        <motion.div
+          animate={{ opacity: 1, y: 0 }}
+          className="pb-section-sm"
+          initial={{ opacity: 0, y: 20 }}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
+        >
           <CrawlPreview
             appMap={state.appMap}
             disabled={!hasCustomKeys && !altchaPayload}
@@ -473,7 +495,7 @@ export default function HomePage() {
             onToggleUrl={(url) => dispatch({ type: 'TOGGLE_URL', url })}
             selectedUrls={state.selectedUrls}
           />
-        </div>
+        </motion.div>
       ) : null}
 
       {state.appMap && state.phase !== 'submitting' && !hasCustomKeys ? (

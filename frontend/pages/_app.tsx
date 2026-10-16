@@ -2,6 +2,7 @@ import type { AppProps } from 'next/app';
 import { JetBrains_Mono, Space_Grotesk } from 'next/font/google';
 import Script from 'next/script';
 import { SWRConfig } from 'swr';
+import { MotionConfig } from 'framer-motion';
 import { Toaster } from 'sonner';
 import { Layout } from '@/components/layout/Layout';
 import { RouteFocusManager } from '@/components/layout/RouteFocusManager';
@@ -50,21 +51,23 @@ export default function App({ Component, pageProps }: AppProps) {
           shouldRetryOnError: false,
         }}
       >
-        <Layout>
-          <RouteFocusManager />
-          <Component {...pageProps} />
-        </Layout>
-        <Toaster
-          position="bottom-right"
-          richColors={false}
-          toastOptions={{
-            style: {
-              background: 'var(--surface-elevated)',
-              color: 'var(--foreground)',
-              borderColor: 'var(--border)',
-            },
-          }}
-        />
+        <MotionConfig reducedMotion="user">
+          <Layout>
+            <RouteFocusManager />
+            <Component {...pageProps} />
+          </Layout>
+          <Toaster
+            position="bottom-right"
+            richColors={false}
+            toastOptions={{
+              style: {
+                background: 'var(--surface-elevated)',
+                color: 'var(--foreground)',
+                borderColor: 'var(--border)',
+              },
+            }}
+          />
+        </MotionConfig>
       </SWRConfig>
     </div>
   );

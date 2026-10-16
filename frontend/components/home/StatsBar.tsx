@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
+import { motion } from 'framer-motion';
 import { Globe, FileCode, CheckCircle, ArrowCounterClockwise } from '@phosphor-icons/react';
 import { fetcher, apiBase } from '@/lib/api';
 
@@ -108,7 +109,13 @@ export function StatsBar() {
   ];
 
   return (
-    <div className="panel my-8 p-5 sm:p-6 border bg-surface-elevated/40">
+    <motion.div
+      className="panel my-8 p-5 sm:p-6 border bg-surface-elevated/40"
+      initial={{ opacity: 0, y: 20 }}
+      transition={{ duration: 0.5, ease: 'easeOut' }}
+      viewport={{ once: true, margin: '-80px' }}
+      whileInView={{ opacity: 1, y: 0 }}
+    >
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4 md:gap-6">
         {stats.map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="flex flex-col gap-1">
@@ -122,7 +129,7 @@ export function StatsBar() {
           </div>
         ))}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
