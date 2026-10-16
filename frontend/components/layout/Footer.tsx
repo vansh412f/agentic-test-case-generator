@@ -1,26 +1,32 @@
 import Link from 'next/link';
+import { Sparkle } from '@phosphor-icons/react';
 
 export function Footer() {
   return (
-    <footer className="border-t">
-      <div className="mx-auto flex w-full max-w-shell flex-col gap-4 px-gutter py-8 text-small text-muted-foreground md:flex-row md:items-center md:justify-between">
-        <p>
-          Agentic Test Case Generator — crawl, plan, generate, execute,
-          and self-correct.
-        </p>
-
-        <nav aria-label="Footer" className="flex flex-wrap gap-5">
-          <Link className="rounded-control hover:text-foreground" href="/">
-            Generate tests
-          </Link>
-          <Link className="rounded-control hover:text-foreground" href="/jobs">
-            Test history
-          </Link>
-          <Link className="rounded-control hover:text-foreground" href="/privacy">
-            Privacy policy
-          </Link>
-        </nav>
+    <footer className="reference-footer">
+      <Link className="brand" href="/">
+        <span className="logo-mark">
+          <Sparkle aria-hidden="true" className="h-3.5 w-3.5" weight="fill" />
+        </span>
+        <span>
+          Agentic<span>Test</span>
+        </span>
+      </Link>
+      <p>Playwright tests that fix themselves, not your expectations.</p>
+      <div>
+        <Link href="/#how-it-works">Documentation</Link>
+        <Link href="/privacy">Privacy</Link>
+        <a
+          href="https://github.com/vansh412f/agentic-test-case-generator"
+          rel="noreferrer"
+          target="_blank"
+        >
+          GitHub
+        </a>
       </div>
+      <small>© 2025 Agentic Test</small>
     </footer>
   );
 }
+
+export default Footer;

@@ -1,5 +1,5 @@
 import type { AppProps } from 'next/app';
-import { JetBrains_Mono, Space_Grotesk } from 'next/font/google';
+import { DM_Mono, Manrope } from 'next/font/google';
 import Script from 'next/script';
 import { SWRConfig } from 'swr';
 import { MotionConfig } from 'framer-motion';
@@ -9,14 +9,15 @@ import { RouteFocusManager } from '@/components/layout/RouteFocusManager';
 import { fetcher } from '@/lib/api';
 import '@/styles/globals.css';
 
-const sans = Space_Grotesk({
+const sans = Manrope({
   subsets: ['latin'],
   variable: '--font-sans',
   display: 'swap',
   preload: true,
 });
 
-const mono = JetBrains_Mono({
+const mono = DM_Mono({
+  weight: ['400', '500'],
   subsets: ['latin'],
   variable: '--font-mono',
   display: 'swap',
