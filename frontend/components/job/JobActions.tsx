@@ -1,4 +1,4 @@
-import { Download, FileText } from 'lucide-react';
+import { DownloadSimple, FileText } from '@phosphor-icons/react';
 import { Button } from '@/components/ui/button';
 import { isTerminalJobStatus } from '@/lib/utils';
 import type { JobDetail } from '@/types/api';
@@ -41,12 +41,12 @@ export function JobActions({ job }: JobActionsProps) {
       >
         {exportReady ? (
           <a download href={`/api/jobs/${job.id}/export.zip`}>
-            <Download aria-hidden="true" />
+            <DownloadSimple aria-hidden="true" />
             Export Test Project
           </a>
         ) : (
           <span>
-            <Download aria-hidden="true" />
+            <DownloadSimple aria-hidden="true" />
             Export Available After Generation
           </span>
         )}
