@@ -1,6 +1,6 @@
 import useSWR from 'swr';
 import type { SWRResponse } from 'swr';
-import { fetcher } from '@/lib/api';
+import { fetcher, apiBase } from '@/lib/api';
 import { isTerminalJobStatus } from '@/lib/utils';
 import type { JobDetail } from '@/types/api';
 
@@ -9,7 +9,7 @@ export function useJobPolling(
   fallbackData?: JobDetail,
 ): SWRResponse<JobDetail, Error> {
   return useSWR<JobDetail, Error>(
-    jobId === null ? null : `/api/jobs/${jobId}`,
+    jobId === null ? null : `${apiBase()}/api/jobs/${jobId}`,
     fetcher,
     {
       fallbackData,
