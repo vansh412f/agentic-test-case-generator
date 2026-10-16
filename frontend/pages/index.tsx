@@ -1,19 +1,30 @@
-import { AlertTriangle, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
+import { ArrowRight, CheckCircle, Warning, XCircle } from '@phosphor-icons/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
+import { toast } from 'sonner';
 import { Seo } from '@/components/common/Seo';
 import { CrawlPreview } from '@/components/home/CrawlPreview';
 import { HowItWorks } from '@/components/home/HowItWorks';
 import { PipelineProgress } from '@/components/home/PipelineProgress';
 import { UrlGenerateForm } from '@/components/home/UrlGenerateForm';
+import { LocalTargetPanel } from '@/components/home/LocalTargetPanel';
+import { StatsBar } from '@/components/home/StatsBar';
+import { QuotaExhaustedPanel } from '@/components/home/QuotaExhaustedPanel';
+import type { PowWidgetRef } from '@/components/home/PowWidget';
 import { useJobPolling } from '@/hooks/useJobPolling';
+import { classifyTarget, isTunnelUrl, getDeploymentMode } from '@/lib/targetUrl';
+
+const PowWidget = dynamic(() => import('@/components/home/PowWidget'), { ssr: false });
 import {
   ApiError,
   crawlPage,
   generateBatch,
   generateSingle,
   getJobs,
+  hasConfiguredKeys,
+  getApiMode,
 } from '@/lib/api';
 import type { AppMap, BatchResponse } from '@/types/api';
 
@@ -137,6 +148,30 @@ export default function HomePage() {
   const router = useRouter();
   const [state, dispatch] = useReducer(reducer, initialState);
   const { data: liveJob } = useJobPolling(state.jobId);
+  const powWidgetRef = useRef<PowWidgetRef>(null);
+  const [hasCustomKeys, setHasCustomKeys] = useState(false);
+  const [localTargetUrl, setLocalTargetUrl] = useState<string | null>(null);
+  const [quotaDetails, setQuotaDetails] = useState<{ limit?: number; resetsAt?: string } | null>(null);
+
+  useEffect(() => {
+    setHasCustomKeys(hasConfiguredKeys());
+  }, []);
+
+  // Cmd/Ctrl+K shortcut to focus and select the target URL input
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        const input = document.getElementById('target-url') as HTMLInputElement | null;
+        if (input) {
+          input.focus();
+          input.select();
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const busy =
     state.phase === 'crawling' ||
@@ -183,13 +218,34 @@ export default function HomePage() {
   }, [state.phase, state.jobId, state.startedAt, state.submittedUrls]);
 
   async function handleCrawl(url: string): Promise<void> {
+    const classified = classifyTarget(url);
+    const mode = getDeploymentMode();
+    const isLocalApi = getApiMode() === 'local-agent';
+
+    if (
+      mode === 'hosted' &&
+      !isLocalApi &&
+      (classified.kind === 'loopback' || classified.kind === 'private')
+    ) {
+      setLocalTargetUrl(url);
+      return;
+    }
+
+    setLocalTargetUrl(null);
     dispatch({ type: 'CRAWL_STARTED' });
 
     try {
       const appMap = await crawlPage(url);
+      toast.success(`App map discovered: ${appMap.elements.length} interactive elements.`);
       dispatch({ type: 'CRAWL_SUCCEEDED', appMap });
     } catch (error) {
-      dispatch({ type: 'FAILED', message: errorMessage(error) });
+      let msg = errorMessage(error);
+      if (isTunnelUrl(url)) {
+        msg +=
+          ' (Tunnel URLs stop working when the cloudflared terminal is closed, and change every time you restart it. Re-run the command and paste the new URL.)';
+      }
+      toast.error(msg);
+      dispatch({ type: 'FAILED', message: msg });
     }
   }
 
@@ -200,15 +256,38 @@ export default function HomePage() {
     dispatch({ type: 'GENERATION_STARTED', urls });
 
     try {
+      const altchaPayload = powWidgetRef.current?.getPayload() ?? undefined;
       if (urls.length === 1) {
-        const result = await generateSingle(urls[0] ?? '');
+        const result = await generateSingle(urls[0] ?? '', altchaPayload);
+        toast.success('Test suite generation completed successfully');
         await router.push(`/jobs/${result.jobId}`);
         return;
       }
 
-      const batch = await generateBatch(urls);
+      const batch = await generateBatch(urls, altchaPayload);
+      toast.success(`Batch completed: ${batch.summary.succeeded}/${batch.summary.total} jobs succeeded`);
       dispatch({ type: 'BATCH_SUCCEEDED', batch });
     } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.code === 'DAILY_QUOTA_EXHAUSTED') {
+          setQuotaDetails({
+            limit: error.details?.limit ?? 20,
+            resetsAt: error.details?.resetsAt,
+          });
+          toast.error('The free daily demo quota is exhausted. Add your own API key to continue.');
+        } else if (error.code === 'QUEUE_FULL') {
+          toast.error('The demo server is currently running at maximum capacity. Please retry shortly.');
+        } else if (error.code === 'RATE_LIMITED') {
+          const wait = error.details?.retryAfterSeconds ? ` Please retry in ${error.details.retryAfterSeconds}s.` : ' Please slow down.';
+          toast.error(`Rate limit reached.${wait}`);
+        } else if (error.code === 'POW_FAILED') {
+          toast.error('Bot verification failed. Please try again.');
+        } else {
+          toast.error(error.message || 'Generation failed.');
+        }
+      } else {
+        toast.error(error instanceof Error ? error.message : 'Generation failed.');
+      }
       dispatch({ type: 'FAILED', message: errorMessage(error) });
     }
   }
@@ -221,13 +300,13 @@ export default function HomePage() {
           {
             '@context': 'https://schema.org',
             '@type': 'Organization',
-            name: 'Autonomous Test Suite Generator',
+            name: 'Agentic Test Case Generator',
             url: process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000',
           },
           {
             '@context': 'https://schema.org',
             '@type': 'SoftwareApplication',
-            name: 'Autonomous Test Suite Generator',
+            name: 'Agentic Test Case Generator',
             applicationCategory: 'DeveloperApplication',
             operatingSystem: 'Web',
             description:
@@ -235,7 +314,7 @@ export default function HomePage() {
           },
         ]}
         path="/"
-        title="Autonomous Test Suite Generator — AI-Powered E2E Testing"
+        title="Agentic Test Case Generator — AI-Powered E2E Testing"
       />
 
       <section className="grid items-start gap-8 py-section-sm lg:grid-cols-how-desktop">
@@ -256,6 +335,17 @@ export default function HomePage() {
           </p>
 
           <div className="mt-8">
+            {localTargetUrl ? (
+              <LocalTargetPanel
+                onDismiss={() => setLocalTargetUrl(null)}
+                onTunnelUrlAccepted={(tunnelUrl) => {
+                  setLocalTargetUrl(null);
+                  void handleCrawl(tunnelUrl);
+                }}
+                targetUrl={localTargetUrl}
+              />
+            ) : null}
+
             <UrlGenerateForm
               busy={busy}
               busyLabel={
@@ -305,12 +395,22 @@ export default function HomePage() {
         </aside>
       </section>
 
-      {state.error ? (
+      <StatsBar />
+
+      {quotaDetails ? (
+        <QuotaExhaustedPanel
+          limit={quotaDetails.limit}
+          onDismiss={() => setQuotaDetails(null)}
+          resetsAt={quotaDetails.resetsAt}
+        />
+      ) : null}
+
+      {state.error && !quotaDetails ? (
         <div
           className="mb-8 flex gap-3 rounded-panel border border-danger/40 bg-danger/10 p-5"
           role="alert"
         >
-          <AlertTriangle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
+          <Warning aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
           <div>
             <h2 className="font-bold text-danger">Request failed</h2>
             <p className="mt-1 text-small">{state.error}</p>
@@ -355,7 +455,7 @@ export default function HomePage() {
               >
                 <div className="flex min-w-0 items-start gap-3">
                   {result.status === 'completed' ? (
-                    <CheckCircle2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-success" />
+                    <CheckCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-success" />
                   ) : (
                     <XCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
                   )}
@@ -397,6 +497,7 @@ export default function HomePage() {
         </div>
       ) : null}
 
+      {!hasCustomKeys ? <PowWidget ref={powWidgetRef} /> : null}
       <HowItWorks />
     </>
   );
