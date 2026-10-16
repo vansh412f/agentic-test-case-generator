@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { getJobById, listJobs } from '../db/jobs.ts';
+import { buildJobDetail } from '../agent/jobDetail.ts';
 import { generateHtmlReport } from '../report/htmlReport.ts';
 import { exportProject } from '../export/projectExporter.ts';
 import { JobError } from './jobErrors.ts';
@@ -55,7 +56,7 @@ router.get('/:id', async (req, res) => {
   try {
     const job = await getJobById(parsed.data.id);
     if (!job) throw new JobError('JOB_NOT_FOUND', 'Job not found.');
-    res.json(job);
+    res.json(buildJobDetail(job));
   } catch (error) {
     respondWithError(res, error);
   }
