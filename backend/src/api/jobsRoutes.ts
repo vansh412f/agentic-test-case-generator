@@ -41,7 +41,7 @@ router.get('/', async (req, res) => {
     return;
   }
   try {
-    res.json(await listJobs(parsed.data.page, parsed.data.limit));
+    res.json(await listJobs(parsed.data.page, parsed.data.limit, req.visitorId));
   } catch (error) {
     respondWithError(res, error);
   }
