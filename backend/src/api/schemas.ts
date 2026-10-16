@@ -11,9 +11,13 @@ export type CrawlRequest = z.infer<typeof CrawlRequestSchema>;
 // response shape) or { urls } (batch). Both branches are strict so a body
 // carrying both fields is rejected instead of silently dropping one.
 export const GenerateRequestSchema = z.union([
-  z.object({ url: z.string().trim().min(1, 'URL is required') }).strict(),
+  z.object({
+    url: z.string().trim().min(1, 'URL is required'),
+    altcha: z.string().optional(),
+  }).strict(),
   z.object({
     urls: z.array(z.string().trim().min(1, 'URL is required')).min(1).max(MAX_BATCH_URLS),
+    altcha: z.string().optional(),
   }).strict(),
 ]);
 
