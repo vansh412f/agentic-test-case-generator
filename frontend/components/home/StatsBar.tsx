@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { motion } from 'framer-motion';
-import { Globe, FileCode, CheckCircle, ArrowCounterClockwise } from '@phosphor-icons/react';
 import { fetcher, apiBase } from '@/lib/api';
 
 export interface LifetimeStats {
@@ -48,7 +47,6 @@ function AnimatedNumber({ value }: { value: number }) {
     const tick = (now: number) => {
       const elapsed = now - start;
       const progress = Math.min(1, elapsed / duration);
-      // easeOutExpo
       const ease = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
       setDisplayValue(Math.round(ease * value));
 
@@ -81,53 +79,37 @@ export function StatsBar() {
   // Fresh empty DB renders nothing (no vanity strip with all zeros)
   if (total === 0) return null;
 
-  const stats = [
-    {
-      label: 'URLs Crawled',
-      value: data.jobsRun,
-      icon: Globe,
-      color: 'text-info',
-    },
-    {
-      label: 'Test Cases Generated',
-      value: data.testCasesGenerated,
-      icon: FileCode,
-      color: 'text-brand',
-    },
-    {
-      label: 'Tests Passed E2E',
-      value: data.testsPassed,
-      icon: CheckCircle,
-      color: 'text-success',
-    },
-    {
-      label: 'Self-Corrections Applied',
-      value: data.correctionsApplied,
-      icon: ArrowCounterClockwise,
-      color: 'text-warning',
-    },
-  ];
-
   return (
     <motion.div
-      className="panel my-8 p-5 sm:p-6 border bg-surface-elevated/40"
+      className="stats-strip"
       initial={{ opacity: 0, y: 20 }}
       transition={{ duration: 0.5, ease: 'easeOut' }}
       viewport={{ once: true, margin: '-80px' }}
       whileInView={{ opacity: 1, y: 0 }}
     >
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4 md:gap-6">
-        {stats.map(({ label, value, icon: Icon, color }) => (
-          <div key={label} className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <Icon aria-hidden="true" className={`h-4 w-4 ${color}`} />
-              <span className="font-mono text-caption text-muted-foreground">{label}</span>
-            </div>
-            <p className="font-mono text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-              <AnimatedNumber value={value} />
-            </p>
-          </div>
-        ))}
+      <div>
+        <strong>
+          <AnimatedNumber value={data.jobsRun} />
+        </strong>
+        <span>jobs run</span>
+      </div>
+      <div>
+        <strong>
+          <AnimatedNumber value={data.testCasesGenerated} />
+        </strong>
+        <span>test cases</span>
+      </div>
+      <div>
+        <strong>
+          <AnimatedNumber value={data.testsPassed} />
+        </strong>
+        <span>tests passed</span>
+      </div>
+      <div>
+        <strong>
+          <AnimatedNumber value={data.correctionsApplied} />
+        </strong>
+        <span>auto-corrections</span>
       </div>
     </motion.div>
   );

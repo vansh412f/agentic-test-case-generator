@@ -327,61 +327,48 @@ export default function HomePage() {
         title="Agentic Test Case Generator — AI-Powered E2E Testing"
       />
 
-      <section className="grid items-start gap-8 py-section-sm lg:grid-cols-how-desktop">
-        <motion.div
-          animate={{ opacity: 1, y: 0 }}
-          initial={{ opacity: 0, y: 20 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
-        >
-          <p className="font-mono text-caption uppercase tracking-widest text-brand-strong dark:text-brand">
-            Localhost and staging environments
-          </p>
+      <section className="hero">
+        <div className="hero-copy">
+          <span className="overline">
+            <i /> PLAYWRIGHT TESTING, ON AUTOPILOT
+          </span>
 
-          <h1 className="mt-5 max-w-reading text-display font-bold text-balance">
-            Turn a running app into a tested app.
+          <h1>
+            Your app,
+            <br />
+            <em>tested by agents.</em>
           </h1>
 
-          <p className="mt-6 max-w-reading text-body text-muted-foreground">
-            Paste the URL of your application. An agent crawls the real UI,
-            plans valuable user journeys, generates Playwright specs,
-            executes them, and corrects mechanical failures without hiding
-            real bugs.
+          <p>
+            Paste a URL. Get production-ready Playwright tests that crawl, run, and self-correct—without hiding real bugs.
           </p>
 
-          <div className="mt-8">
-            {localTargetUrl ? (
-              <LocalTargetPanel
-                onDismiss={() => setLocalTargetUrl(null)}
-                onTunnelUrlAccepted={(tunnelUrl) => {
-                  setLocalTargetUrl(null);
-                  void handleCrawl(tunnelUrl);
-                }}
-                targetUrl={localTargetUrl}
-              />
-            ) : null}
+          <UrlGenerateForm
+            busy={busy}
+            busyLabel={
+              state.phase === 'crawling'
+                ? 'Crawling…'
+                : 'Pipeline Running…'
+            }
+            onCrawl={handleCrawl}
+          />
+        </div>
 
-            <UrlGenerateForm
-              busy={busy}
-              busyLabel={
-                state.phase === 'crawling'
-                  ? 'Crawling Application…'
-                  : 'Pipeline Running…'
-              }
-              onCrawl={handleCrawl}
-            />
-          </div>
-        </motion.div>
-
-        <motion.div
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          initial={{ opacity: 0, scale: 0.98, y: 16 }}
-          transition={{ delay: 0.15, duration: 0.55, ease: 'easeOut' }}
-        >
-          <HeroTerminal />
-        </motion.div>
+        <HeroTerminal />
       </section>
 
       <StatsBar />
+
+      {localTargetUrl ? (
+        <LocalTargetPanel
+          onDismiss={() => setLocalTargetUrl(null)}
+          onTunnelUrlAccepted={(tunnelUrl) => {
+            setLocalTargetUrl(null);
+            void handleCrawl(tunnelUrl);
+          }}
+          targetUrl={localTargetUrl}
+        />
+      ) : null}
 
       {quotaDetails ? (
         <QuotaExhaustedPanel
@@ -392,115 +379,101 @@ export default function HomePage() {
       ) : null}
 
       {state.error && !quotaDetails ? (
-        <div
-          className="mb-8 flex gap-3 rounded-panel border border-danger/40 bg-danger/10 p-5"
-          role="alert"
-        >
-          <Warning aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
+        <div className="error-banner mb-12" role="alert">
+          <span>
+            <Warning aria-hidden="true" className="h-5 w-5" />
+          </span>
           <div>
-            <h2 className="font-bold text-danger">Request failed</h2>
-            <p className="mt-1 text-small">{state.error}</p>
-            {state.jobId ? (
-              <Link
-                className="mt-3 inline-flex items-center gap-2 font-semibold underline"
-                href={`/jobs/${state.jobId}`}
-              >
-                Open the discovered job
-                <ArrowRight aria-hidden="true" className="h-4 w-4" />
-              </Link>
-            ) : null}
+            <strong>Request failed</strong>
+            <p>{state.error}</p>
           </div>
+          {state.jobId ? (
+            <Link
+              className="inline-flex items-center gap-1.5 font-bold"
+              href={`/jobs/${state.jobId}`}
+            >
+              Open discovered job
+              <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
+            </Link>
+          ) : null}
         </div>
+      ) : null}
+
+      {state.appMap && state.phase !== 'submitting' ? (
+        <CrawlPreview
+          appMap={state.appMap}
+          disabled={!hasCustomKeys && !altchaPayload}
+          generating={false}
+          onGenerate={() => void handleGenerate()}
+          onReset={() => {
+            setAltchaPayload(null);
+            dispatch({ type: 'RESET' });
+          }}
+          onToggleUrl={(url) => dispatch({ type: 'TOGGLE_URL', url })}
+          selectedUrls={state.selectedUrls}
+        />
       ) : null}
 
       {state.phase === 'submitting' ? (
-        <div className="pb-section-sm">
-          <PipelineProgress
-            job={liveJob}
-            jobId={state.jobId}
-            startedAt={state.startedAt}
-            submittedUrls={state.submittedUrls}
-          />
-        </div>
+        <PipelineProgress
+          job={liveJob}
+          jobId={state.jobId}
+          startedAt={state.startedAt}
+          submittedUrls={state.submittedUrls}
+        />
       ) : null}
 
       {state.phase === 'batch-complete' && state.batch ? (
-        <motion.section
-          animate={{ opacity: 1, y: 0 }}
+        <section
           aria-labelledby="batch-results-title"
-          className="panel mb-section-sm p-5 sm:p-6"
-          initial={{ opacity: 0, y: 20 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
+          className="app-map mb-12"
         >
-          <p className="font-mono text-caption uppercase tracking-widest text-brand-strong dark:text-brand">
-            Batch complete
-          </p>
-          <h2 className="mt-2 text-heading-2 font-bold" id="batch-results-title">
-            {state.batch.summary.succeeded} of {state.batch.summary.total} jobs completed
-          </h2>
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Batch complete</p>
+              <h2 id="batch-results-title">
+                {state.batch.summary.succeeded} of {state.batch.summary.total} jobs completed
+              </h2>
+            </div>
+          </div>
 
-          <div className="mt-6 divide-y">
+          <div className="page-list">
             {state.batch.results.map((result) => (
-              <div
-                className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"
-                key={result.url}
-              >
-                <div className="flex min-w-0 items-start gap-3">
+              <div className="page-row" key={result.url}>
+                <span className="page-icon">
                   {result.status === 'completed' ? (
-                    <CheckCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-success" />
+                    <CheckCircle aria-hidden="true" className="h-4 w-4 text-[#527318]" />
                   ) : (
-                    <XCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
+                    <XCircle aria-hidden="true" className="h-4 w-4 text-danger" />
                   )}
-                  <div className="min-w-0">
-                    <p className="break-all font-mono text-small">{result.url}</p>
-                    <p className="mt-1 text-caption text-muted-foreground">
-                      {result.status === 'completed'
-                        ? `${result.testCount} tests · ${result.passedCount} passed · ${result.failedCount} findings · ${result.gaveUpCount} gave up`
-                        : `${result.error.error}: ${result.error.message}`}
-                    </p>
-                  </div>
-                </div>
-
+                </span>
+                <span className="page-name">
+                  <strong>{result.url}</strong>
+                  <code>
+                    {result.status === 'completed'
+                      ? `${result.testCount} tests · ${result.passedCount} passed · ${result.failedCount} findings · ${result.gaveUpCount} gave up`
+                      : `${result.error.error}: ${result.error.message}`}
+                  </code>
+                </span>
                 {result.status === 'completed' ? (
                   <Link
-                    className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-control border px-4 font-semibold transition-colors hover:bg-muted"
+                    className="primary-button text-xs py-2 px-3"
                     href={`/jobs/${result.jobId}`}
                   >
                     Open job
-                    <ArrowRight aria-hidden="true" className="h-4 w-4" />
+                    <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
                   </Link>
                 ) : null}
               </div>
             ))}
           </div>
-        </motion.section>
-      ) : null}
-
-      {state.appMap && state.phase !== 'submitting' ? (
-        <motion.div
-          animate={{ opacity: 1, y: 0 }}
-          className="pb-section-sm"
-          initial={{ opacity: 0, y: 20 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
-        >
-          <CrawlPreview
-            appMap={state.appMap}
-            disabled={!hasCustomKeys && !altchaPayload}
-            generating={false}
-            onGenerate={() => void handleGenerate()}
-            onReset={() => {
-              setAltchaPayload(null);
-              dispatch({ type: 'RESET' });
-            }}
-            onToggleUrl={(url) => dispatch({ type: 'TOGGLE_URL', url })}
-            selectedUrls={state.selectedUrls}
-          />
-        </motion.div>
+        </section>
       ) : null}
 
       {state.appMap && state.phase !== 'submitting' && !hasCustomKeys ? (
         <PowWidget key={powEpoch} onPayload={setAltchaPayload} />
       ) : null}
+
       <HowItWorks />
     </>
   );

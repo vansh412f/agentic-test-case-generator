@@ -1,20 +1,17 @@
 import { useState } from 'react';
 import {
-  Terminal,
+  Globe,
   Copy,
   Check,
   Warning,
-  Link as LinkIcon,
-  Cpu,
+  ArrowRight,
   ArrowSquareOut,
   X,
   CircleNotch,
 } from '@phosphor-icons/react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { classifyTarget, extractTargetPort } from '@/lib/targetUrl';
-import { setApiMode, getApiMode } from '@/lib/api';
+import { setApiMode } from '@/lib/api';
 
 interface LocalTargetPanelProps {
   targetUrl: string;
@@ -31,28 +28,19 @@ export function LocalTargetPanel({
 }: LocalTargetPanelProps) {
   const [tunnelInput, setTunnelInput] = useState('');
   const [tunnelError, setTunnelError] = useState<string | null>(null);
-  const [copiedInstall, setCopiedInstall] = useState(false);
   const [copiedRun, setCopiedRun] = useState(false);
   const [connectingLocal, setConnectingLocal] = useState(false);
   const [localAgentNotice, setLocalAgentNotice] = useState<string | null>(null);
 
   const port = extractTargetPort(targetUrl, 3000);
-  const installCmd = 'winget install --id Cloudflare.cloudflared';
-  const runCmd = `cloudflared tunnel --url http://localhost:${port}`;
+  const command = `cloudflared tunnel --url http://localhost:${port}`;
 
-  const currentMode = getApiMode();
-
-  async function copyToClipboard(text: string, type: 'install' | 'run') {
+  async function copyToClipboard(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      if (type === 'install') {
-        setCopiedInstall(true);
-        setTimeout(() => setCopiedInstall(false), 2000);
-      } else {
-        setCopiedRun(true);
-        setTimeout(() => setCopiedRun(false), 2000);
-      }
-      toast.success('Copied to clipboard');
+      setCopiedRun(true);
+      setTimeout(() => setCopiedRun(false), 2000);
+      toast.success('Copied tunnel command to clipboard');
     } catch {
       toast.error('Failed to copy to clipboard');
     }
@@ -115,217 +103,91 @@ export function LocalTargetPanel({
   }
 
   return (
-    <div className="panel mb-8 border-warning/40 bg-warning/5 p-6 animate-in fade-in duration-200">
-      <div className="flex items-start justify-between gap-4 border-b border-warning/20 pb-4">
-        <div className="flex items-start gap-3">
-          <div className="rounded-full bg-warning/20 p-2 text-warning shrink-0">
-            <Warning aria-hidden="true" className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="text-card-title font-semibold text-foreground">
-              Localhost Target Detected ({targetUrl})
-            </h2>
-            <p className="mt-1 text-small text-muted-foreground">
-              This hosted demo runs on our server — it cannot reach your machine&apos;s localhost directly.
-            </p>
-          </div>
-        </div>
+    <section className="state-panel local-panel relative">
+      {onDismiss ? (
+        <button
+          aria-label="Dismiss panel"
+          className="absolute right-4 top-4 rounded p-1 text-[#748078] hover:bg-[#e8ece5] hover:text-[#17201b]"
+          onClick={onDismiss}
+          type="button"
+        >
+          <X aria-hidden="true" className="h-4 w-4" />
+        </button>
+      ) : null}
 
-        {onDismiss ? (
+      <div className="state-icon">
+        <Globe aria-hidden="true" className="h-6 w-6" />
+      </div>
+
+      <div className="state-copy">
+        <p className="eyebrow">Local target detected</p>
+        <h3>Your app is outside our reach</h3>
+        <p>
+          Our hosted agent can’t access localhost. Create a temporary public tunnel, then paste its URL below.
+        </p>
+
+        <div className="code-copy">
+          <code>{command}</code>
           <button
-            aria-label="Dismiss panel"
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={onDismiss}
+            aria-label="Copy tunnel command"
+            onClick={() => copyToClipboard(command)}
             type="button"
           >
-            <X aria-hidden="true" className="h-5 w-5" />
+            {copiedRun ? <Check className="h-4 w-4 text-[#a6e22e]" /> : <Copy className="h-4 w-4" />}
           </button>
+        </div>
+
+        <form className="inline-form" onSubmit={handleTunnelSubmit}>
+          <input
+            aria-describedby={tunnelError ? 'tunnel-error' : undefined}
+            onChange={(e) => setTunnelInput(e.target.value)}
+            placeholder="https://your-app.trycloudflare.com"
+            value={tunnelInput}
+          />
+          <button type="submit">
+            Use tunnel URL <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+        </form>
+
+        {tunnelError ? (
+          <p className="mt-2 text-small font-medium text-danger" id="tunnel-error" role="alert">
+            {tunnelError}
+          </p>
         ) : null}
-      </div>
 
-      {/* Option 1 — Tunnel Mode (Recommended) */}
-      <div className="mt-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-caption font-bold text-brand-foreground">
-            1
+        <div className="warning">
+          <Warning aria-hidden="true" className="h-4 w-4 shrink-0" />
+          <span>
+            <strong>Security note:</strong> This tunnel makes your local app public while it runs. Stop cloudflared when testing is complete.
           </span>
-          <h3 className="font-semibold text-small">
-            Option 1: Free Cloudflare Quick Tunnel (Recommended · Works Now)
-          </h3>
         </div>
 
-        <p className="text-small text-muted-foreground leading-relaxed pl-8">
-          Your app runs on your machine. A free Cloudflare tunnel gives it a temporary public URL that our crawler can reach.
-        </p>
-
-        <div className="pl-8 space-y-3">
-          {/* Step A: Install */}
-          <div>
-            <p className="text-caption font-medium text-muted-foreground mb-1">
-              Step A: Install cloudflared (Windows PowerShell):
-            </p>
-            <div className="flex items-center justify-between rounded-md border bg-surface-elevated px-3 py-2 font-mono text-caption">
-              <span className="truncate">{installCmd}</span>
-              <Button
-                className="h-7 px-2 shrink-0 ml-2"
-                onClick={() => void copyToClipboard(installCmd, 'install')}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                {copiedInstall ? (
-                  <Check aria-hidden="true" className="h-3.5 w-3.5 text-success" />
-                ) : (
-                  <Copy aria-hidden="true" className="h-3.5 w-3.5" />
-                )}
-                <span className="ml-1 text-caption">{copiedInstall ? 'Copied' : 'Copy'}</span>
-              </Button>
-            </div>
-            <p className="mt-1 text-caption text-muted-foreground">
-              or download cloudflared from cloudflare.com
-            </p>
-          </div>
-
-          {/* Step B: Run */}
-          <div>
-            <p className="text-caption font-medium text-muted-foreground mb-1">
-              Step B: Start tunnel pointing at your app&apos;s port:
-            </p>
-            <div className="flex items-center justify-between rounded-md border bg-surface-elevated px-3 py-2 font-mono text-caption">
-              <span className="truncate">{runCmd}</span>
-              <Button
-                className="h-7 px-2 shrink-0 ml-2"
-                onClick={() => void copyToClipboard(runCmd, 'run')}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                {copiedRun ? (
-                  <Check aria-hidden="true" className="h-3.5 w-3.5 text-success" />
-                ) : (
-                  <Copy aria-hidden="true" className="h-3.5 w-3.5" />
-                )}
-                <span className="ml-1 text-caption">{copiedRun ? 'Copied' : 'Copy'}</span>
-              </Button>
-            </div>
-            <p className="mt-1 text-caption text-muted-foreground">
-              Keep that terminal window open. Cloudflare will print a URL like{' '}
-              <span className="font-mono text-brand">https://random-words.trycloudflare.com</span> — paste it below.
-            </p>
-          </div>
-
-          {/* Step C: Paste & Proceed */}
-          <form className="mt-3 flex flex-col gap-2 sm:flex-row" onSubmit={handleTunnelSubmit}>
-            <div className="relative flex-1">
-              <LinkIcon
-                aria-hidden="true"
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-              />
-              <Input
-                className="pl-9 font-mono text-small"
-                onChange={(e) => {
-                  setTunnelInput(e.target.value);
-                  setTunnelError(null);
-                }}
-                placeholder="https://example-words.trycloudflare.com"
-                type="url"
-                value={tunnelInput}
-              />
-            </div>
-            <Button size="default" type="submit">
-              Use Tunnel URL
-            </Button>
-          </form>
-
-          {tunnelError ? (
-            <p className="text-small font-medium text-danger" role="alert">
-              {tunnelError}
-            </p>
-          ) : null}
-        </div>
-
-        {/* Security Warning */}
-        <div className="pl-8 pt-2">
-          <div className="rounded-md border border-warning/30 bg-warning/10 p-3 text-caption text-muted-foreground">
-            <span className="font-semibold text-warning">Security Note: </span>
-            While the tunnel is open, anyone with the URL can reach your local app.
-            Close the cloudflared terminal when you&apos;re done testing.
-            Never tunnel an app containing real credentials or production data.
-          </div>
-        </div>
-      </div>
-
-      {/* Option 2 — Local Agent Mode */}
-      <div className="mt-8 border-t border-warning/20 pt-6 space-y-3">
-        <div className="flex items-center gap-2">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-elevated text-caption font-bold text-muted-foreground border">
-            2
-          </span>
-          <h3 className="font-semibold text-small">
-            Option 2: Local Agent Mode (Direct localhost:4000)
-          </h3>
-        </div>
-
-        <p className="text-small text-muted-foreground leading-relaxed pl-8">
-          Run our backend engine locally (<code className="font-mono text-caption">pnpm dev</code> with{' '}
-          <code className="font-mono text-caption">LOCAL_AGENT_MODE=true</code>). The hosted web UI will route API
-          requests directly to your local machine.
-        </p>
-
-        <div className="pl-8 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Button
-            disabled={connectingLocal || currentMode === 'local-agent'}
-            onClick={() => void handleConnectLocalAgent()}
-            size="sm"
+        <p className="alternative">
+          Prefer not to expose it?{' '}
+          <button
+            disabled={connectingLocal}
+            onClick={handleConnectLocalAgent}
             type="button"
-            variant="outline"
           >
             {connectingLocal ? (
-              <CircleNotch aria-hidden="true" className="h-4 w-4 animate-spin mr-1.5" />
+              <>
+                <CircleNotch aria-hidden="true" className="h-3.5 w-3.5 animate-spin inline mr-1" />
+                Connecting...
+              </>
             ) : (
-              <Cpu aria-hidden="true" className="h-4 w-4 mr-1.5" />
+              <>
+                Run the Agentic backend locally <ArrowSquareOut aria-hidden="true" className="h-3.5 w-3.5 inline ml-0.5" />
+              </>
             )}
-            {currentMode === 'local-agent' ? 'Connected to Local Agent' : 'Connect to Local Agent'}
-          </Button>
-
-          {currentMode === 'local-agent' ? (
-            <Button
-              onClick={() => {
-                setApiMode('hosted');
-                toast.success('Switched back to Hosted API mode');
-                onModeChanged?.();
-              }}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              Disconnect
-            </Button>
-          ) : null}
-        </div>
+          </button>
+        </p>
 
         {localAgentNotice ? (
-          <p className="pl-8 text-caption text-danger" role="alert">
+          <p className="mt-2 text-caption text-danger" role="alert">
             {localAgentNotice}
           </p>
         ) : null}
       </div>
-
-      {/* Option 3 — Self-Host */}
-      <div className="mt-6 border-t border-warning/20 pt-4 pl-8 flex items-center justify-between text-caption text-muted-foreground">
-        <span>Option 3: Run the full stack locally with self-hosting.</span>
-        <a
-          className="inline-flex items-center gap-1 font-medium underline hover:text-foreground"
-          href="https://github.com/vansh412f/agentic-test-case-generator"
-          rel="noreferrer"
-          target="_blank"
-        >
-          View GitHub Repository
-          <ArrowSquareOut aria-hidden="true" className="h-3.5 w-3.5" />
-        </a>
-      </div>
-    </div>
+    </section>
   );
 }
-
-export default LocalTargetPanel;
