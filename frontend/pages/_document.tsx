@@ -19,6 +19,7 @@ export default function Document() {
   return (
     <Html lang="en" suppressHydrationWarning>
       <Head>
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         {verification ? (
           <meta content={verification} name="google-site-verification" />
         ) : null}
