@@ -1,10 +1,11 @@
-import { Download, ExternalLink, FileText } from 'lucide-react';
+import { ArrowSquareOut, DownloadSimple, FileText } from '@phosphor-icons/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import {
   formatDateTime,
   formatJobDuration,
+  formatJobShortId,
   isTerminalJobStatus,
 } from '@/lib/utils';
 import type { JobSummary } from '@/types/api';
@@ -55,8 +56,11 @@ export function JobsTable({ jobs }: JobsTableProps) {
                   >
                     {job.targetUrl}
                   </Link>
-                  <p className="mt-1 truncate font-mono text-caption text-muted-foreground">
-                    {job.id}
+                  <p
+                    className="mt-1 truncate font-mono text-caption text-muted-foreground"
+                    title={job.id}
+                  >
+                    {formatJobShortId(job.id)}
                   </p>
                 </td>
 
@@ -99,7 +103,7 @@ export function JobsTable({ jobs }: JobsTableProps) {
                         href={`/api/jobs/${job.id}/export.zip`}
                         onClick={(event) => event.stopPropagation()}
                       >
-                        <Download aria-hidden="true" className="h-4 w-4" />
+                        <DownloadSimple aria-hidden="true" className="h-4 w-4" />
                       </a>
                     ) : null}
                   </div>
@@ -114,7 +118,12 @@ export function JobsTable({ jobs }: JobsTableProps) {
         {jobs.map((job) => (
           <article className="panel p-5" key={job.id}>
             <div className="flex items-start justify-between gap-3">
-              <p className="break-all font-mono text-small font-bold">{job.targetUrl}</p>
+              <div>
+                <p className="break-all font-mono text-small font-bold">{job.targetUrl}</p>
+                <p className="mt-0.5 font-mono text-caption text-muted-foreground" title={job.id}>
+                  {formatJobShortId(job.id)}
+                </p>
+              </div>
               <StatusBadge status={job.status} />
             </div>
 
@@ -130,7 +139,7 @@ export function JobsTable({ jobs }: JobsTableProps) {
               href={`/jobs/${job.id}`}
             >
               Open Job Details
-              <ExternalLink aria-hidden="true" className="h-4 w-4" />
+              <ArrowSquareOut aria-hidden="true" className="h-4 w-4" />
             </Link>
           </article>
         ))}
