@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Globe2, Loader2, ScanSearch } from 'lucide-react';
+import { CircleNotch, Globe, MagnifyingGlassPlus } from '@phosphor-icons/react';
 import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -54,7 +54,7 @@ export function UrlGenerateForm({
 
       <div className="mt-5 flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">
-          <Globe2
+          <Globe
             aria-hidden="true"
             className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground"
           />
@@ -70,6 +70,9 @@ export function UrlGenerateForm({
             type="url"
             {...register('url')}
           />
+          <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 hidden sm:inline-flex items-center gap-0.5 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground select-none">
+            <span>⌘</span>K
+          </kbd>
         </div>
 
         <Button
@@ -79,9 +82,9 @@ export function UrlGenerateForm({
           type="submit"
         >
           {disabled ? (
-            <Loader2 aria-hidden="true" className="animate-spin" />
+            <CircleNotch aria-hidden="true" className="animate-spin" />
           ) : (
-            <ScanSearch aria-hidden="true" />
+            <MagnifyingGlassPlus aria-hidden="true" />
           )}
           {disabled ? busyLabel : 'Crawl Application'}
         </Button>
