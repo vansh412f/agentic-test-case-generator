@@ -6,7 +6,7 @@ import { Seo } from '@/components/common/Seo';
 import { JobsListSkeleton } from '@/components/common/Skeletons';
 import { JobsPagination } from '@/components/jobs/JobsPagination';
 import { JobsTable } from '@/components/jobs/JobsTable';
-import { fetcher } from '@/lib/api';
+import { fetcher, apiBase } from '@/lib/api';
 import type { JobsListResponse } from '@/types/api';
 
 const PAGE_SIZE = 20;
@@ -16,7 +16,7 @@ export default function JobsPage() {
 
   const { data, error, isLoading, isValidating, mutate } =
     useSWR<JobsListResponse, Error>(
-      `/api/jobs?page=${page}&limit=${PAGE_SIZE}`,
+      `${apiBase()}/api/jobs?page=${page}&limit=${PAGE_SIZE}`,
       fetcher,
       {
         keepPreviousData: true,
@@ -28,7 +28,7 @@ export default function JobsPage() {
       <Seo
         description="Review previous autonomous Playwright generation jobs, outcomes, findings, corrections, and exports."
         path="/jobs"
-        title="Test History — Autonomous Test Suite Generator"
+        title="Test History — Agentic Test Case Generator"
       />
 
       <section className="py-section-sm">
