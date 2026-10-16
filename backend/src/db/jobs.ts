@@ -5,8 +5,22 @@ import { prisma } from './client.ts';
 import { DatabaseError } from './errors.ts';
 import { toDatabaseJson } from './json.ts';
 
-export function createJob(input: { id: string; targetUrl: string }) {
-  return prisma.job.create({ data: { ...input, status: 'crawling', startedAt: new Date() } });
+export function createJob(input: {
+  id: string;
+  targetUrl: string;
+  visitorId?: string | null;
+  usedOwnKeys?: boolean;
+}) {
+  return prisma.job.create({
+    data: {
+      id: input.id,
+      targetUrl: input.targetUrl,
+      visitorId: input.visitorId ?? null,
+      usedOwnKeys: input.usedOwnKeys ?? false,
+      status: 'crawling',
+      startedAt: new Date(),
+    },
+  });
 }
 
 export function updateJobStatus(id: string, status: JobStatus) {
@@ -48,10 +62,12 @@ export async function getJobById(id: string) {
 
 export type LoadedJob = NonNullable<Awaited<ReturnType<typeof getJobById>>>;
 
-export async function listJobs(page: number, limit: number) {
+export async function listJobs(page: number, limit: number, visitorId?: string | null) {
   try {
+    const where = visitorId ? { visitorId } : { visitorId: '__none__' };
     const [rows, total] = await Promise.all([
       prisma.job.findMany({
+        where,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -60,7 +76,7 @@ export async function listJobs(page: number, limit: number) {
           _count: { select: { generatedTests: true } },
         },
       }),
-      prisma.job.count(),
+      prisma.job.count({ where }),
     ]);
     const counts = rows.length === 0 ? [] : await prisma.generatedTest.groupBy({
       by: ['jobId', 'finalStatus'],
@@ -72,6 +88,26 @@ export async function listJobs(page: number, limit: number) {
       return { ...job, testCount: _count.generatedTests, passedCount: count('passed'), failedCount: count('failed'), gaveUpCount: count('gave_up') };
     });
     return { jobs, total, page, totalPages: Math.ceil(total / limit) };
+  } catch (cause) {
+    throw new DatabaseError(cause);
+  }
+}
+
+export async function getLifetimeStats() {
+  try {
+    const [jobsRun, testCasesGenerated, testsPassed, correctionsApplied] = await Promise.all([
+      prisma.job.count(),
+      prisma.generatedTest.count(),
+      prisma.generatedTest.count({ where: { finalStatus: 'passed' } }),
+      prisma.executionResult.count({ where: { corrected: true } }),
+    ]);
+
+    return {
+      jobsRun,
+      testCasesGenerated,
+      testsPassed,
+      correctionsApplied,
+    };
   } catch (cause) {
     throw new DatabaseError(cause);
   }
