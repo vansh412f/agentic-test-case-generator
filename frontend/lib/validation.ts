@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { classifyTarget } from './targetUrl';
 
 export const targetUrlSchema = z.object({
   url: z
@@ -6,22 +7,12 @@ export const targetUrlSchema = z.object({
     .trim()
     .min(1, 'Enter the URL of the application you want to test.')
     .superRefine((value, context) => {
-      let parsed: URL;
+      const result = classifyTarget(value);
 
-      try {
-        parsed = new URL(value);
-      } catch {
+      if (result.kind === 'invalid') {
         context.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Enter a complete URL, including http:// or https://.',
-        });
-        return;
-      }
-
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Only http:// and https:// URLs are supported.',
+          message: 'Enter a valid URL (e.g. https://demo.playwright.dev/todomvc/ or http://localhost:3000).',
         });
       }
     }),
