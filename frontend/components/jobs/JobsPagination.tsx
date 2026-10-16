@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { CaretLeft, CaretRight } from '@phosphor-icons/react';
 import { Button } from '@/components/ui/button';
 
 interface JobsPaginationProps {
@@ -34,7 +34,7 @@ export function JobsPagination({
         type="button"
         variant="outline"
       >
-        <ChevronLeft aria-hidden="true" />
+        <CaretLeft aria-hidden="true" />
         Previous Jobs
       </Button>
 
@@ -68,7 +68,7 @@ export function JobsPagination({
         variant="outline"
       >
         Next Jobs
-        <ChevronRight aria-hidden="true" />
+        <CaretRight aria-hidden="true" />
       </Button>
     </nav>
   );
