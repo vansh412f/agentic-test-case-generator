@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum JobStatus {
+  pending
+  crawling
+  planning
+  generating
+  executing
+  completed
+  failed
+}
+
+enum StepType {
+  crawl
+  plan
+  generate
+  validate
+  execute
+  correct
+}
+
+enum StepStatus {
+  success
+  failure
+}
+
+enum TestStatus {
+  passed
+  failed
+  gave_up
+}
+
+enum FailureClass {
+  finding
+  locator
+  timeout
+  other
+}
+
+model Job {
+  id             String          @id @default(uuid()) @db.Uuid
+  targetUrl      String
+  status         JobStatus       @default(pending)
+  errorCode      String?
+  errorMessage   String?
+  appMap         Json?
+  testPlan       Json?
+  createdAt      DateTime        @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  agentSteps     AgentStep[]
+  generatedTests GeneratedTest[]
+
+  @@index([createdAt, id])
+}
+
+model AgentStep {
+  id               String     @id @default(uuid()) @db.Uuid
+  jobId            String     @db.Uuid
+  stepType         StepType
+  testCaseId       String?
+  attemptNumber    Int?
+  status           StepStatus
+  latencyMs        Int?
+  llmProvider      String?
+  llmModel         String?
+  promptTokens     Int?
+  completionTokens Int?
+  errorDetail      String?
+  createdAt        DateTime   @default(now())
+  job              Job        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+model GeneratedTest {
+  id               String            @id @default(uuid()) @db.Uuid
+  jobId            String            @db.Uuid
+  testCaseId       String
+  filename         String
+  finalCode        String
+  finalStatus      TestStatus
+  totalAttempts    Int
+  createdAt        DateTime          @default(now())
+  job              Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  executionResults ExecutionResult[]
+
+  @@index([jobId])
+  @@unique([jobId, testCaseId])
+  @@unique([jobId, filename])
+}
+
+model ExecutionResult {
+  id               String        @id @default(uuid()) @db.Uuid
+  generatedTestId  String        @db.Uuid
+  attemptNumber    Int
+  code             String
+  validationPassed Boolean
+  validationErrors Json?
+  executionPassed  Boolean?
+  executionError   String?
+  failureClass     FailureClass?
+  durationMs       Int?
+  corrected        Boolean
+  createdAt        DateTime      @default(now())
+  generatedTest    GeneratedTest @relation(fields: [generatedTestId], references: [id], onDelete: Cascade)
+
+  @@index([generatedTestId])
+  @@unique([generatedTestId, attemptNumber])
+}
