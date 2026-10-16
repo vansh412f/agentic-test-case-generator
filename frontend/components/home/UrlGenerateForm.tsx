@@ -46,10 +46,6 @@ export function UrlGenerateForm({
             a running application.
           </p>
         </div>
-
-        <span className="hidden rounded-full border px-3 py-1 font-mono text-caption text-muted-foreground sm:inline-flex">
-          http / https
-        </span>
       </div>
 
       <div className="mt-5 flex flex-col gap-3 sm:flex-row">
