@@ -1,13 +1,13 @@
 import {
-  Bot,
-  CheckCircle2,
+  CheckCircle,
   CircleDashed,
-  Globe2,
+  CircleNotch,
+  Globe,
   ListChecks,
-  Loader2,
   PlayCircle,
+  Robot,
   XCircle,
-} from 'lucide-react';
+} from '@phosphor-icons/react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -26,14 +26,14 @@ const phases: Array<{
   label: string;
   description: string;
   stepTypes: StepType[];
-  icon: typeof Globe2;
+  icon: typeof Globe;
 }> = [
   {
     id: 'crawling',
     label: 'Crawling',
     description: 'Mapping visible interactive elements',
     stepTypes: ['crawl'],
-    icon: Globe2,
+    icon: Globe,
   },
   {
     id: 'planning',
@@ -47,7 +47,7 @@ const phases: Array<{
     label: 'Generating & validating',
     description: 'Writing and type-checking Playwright specs',
     stepTypes: ['generate', 'validate', 'correct'],
-    icon: Bot,
+    icon: Robot,
   },
   {
     id: 'executing',
@@ -143,11 +143,11 @@ export function PipelineProgress({
 
               <span className="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-surface">
                 {state === 'complete' ? (
-                  <CheckCircle2 aria-hidden="true" className="h-5 w-5 text-success" />
+                  <CheckCircle aria-hidden="true" className="h-5 w-5 text-success" />
                 ) : state === 'failed' ? (
                   <XCircle aria-hidden="true" className="h-5 w-5 text-danger" />
                 ) : state === 'active' ? (
-                  <Loader2 aria-hidden="true" className="h-5 w-5 animate-spin text-info" />
+                  <CircleNotch aria-hidden="true" className="h-5 w-5 animate-spin text-info" />
                 ) : (
                   <CircleDashed aria-hidden="true" className="h-5 w-5 text-muted-foreground" />
                 )}
