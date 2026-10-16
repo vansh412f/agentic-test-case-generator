@@ -18,6 +18,7 @@ const configSchema = z.object({
   DIRECT_URL: z.string().trim().min(1),
   GROQ_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
+  POW_SECRET: z.string().min(16).optional(),
   VISITOR_SIGNING_SECRET: z.string().min(16).optional(),
   GENERATE_DAILY_LIMIT: z.coerce.number().int().positive().default(20),
   LOCAL_AGENT_MODE: z.string().default('false').transform((v) => v.toLowerCase() === 'true'),

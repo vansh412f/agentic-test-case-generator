@@ -8,7 +8,7 @@ export interface PowService {
 }
 
 function powSecret(): string {
-  if (process.env.POW_SECRET) return process.env.POW_SECRET;
+  if (config.POW_SECRET) return config.POW_SECRET;
   if (config.VISITOR_SIGNING_SECRET) return config.VISITOR_SIGNING_SECRET;
   return createHmac('sha256', config.DATABASE_URL).update('pow-v1').digest('hex');
 }

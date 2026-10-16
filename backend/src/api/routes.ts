@@ -14,7 +14,13 @@ import {
   byokValidateLimiter,
 } from './rateLimits.ts';
 import { powService } from '../security/pow.ts';
-import { jobsCreatedToday, nextUtcMidnight } from '../security/dailyQuota.ts';
+import {
+  jobsCreatedToday,
+  nextUtcMidnight,
+  tryReserve,
+  releaseReservation,
+  getReservedCount,
+} from '../security/dailyQuota.ts';
 import { pipelineGate, QueueFullError } from '../security/concurrencyGate.ts';
 import { withRequestLlmKeys, hasOwnKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
 import { z } from 'zod';
@@ -66,7 +72,7 @@ router.get('/stats', async (_req, res) => {
 router.get('/pow/challenge', powChallengeLimiter, async (_req, res) => {
   try {
     const challenge = await powService.createChallenge();
-    res.json({ challenge, ...(challenge && typeof challenge === 'object' ? challenge : {}) });
+    res.json(challenge);
   } catch (error) {
     res.status(500).json({
       error: 'INTERNAL_ERROR',
@@ -174,22 +180,12 @@ router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res
   };
   const usesOwnKeys = hasOwnKeys(req);
 
-  // Enforce ALTCHA proof-of-work if not using own keys
+  // 4. Daily quota check & reservation BEFORE consuming ALTCHA (skipped for BYOK)
   if (!usesOwnKeys) {
-    const payload = parsed.data.altcha;
-    if (!payload || !(await powService.verifyAndConsume(payload))) {
-      res.status(400).json({
-        error: 'POW_FAILED',
-        message: 'Bot verification failed. Please retry.',
-      });
-      return;
-    }
-  }
-
-  // 4. Daily quota check (skipped for BYOK)
-  if (!usesOwnKeys) {
-    const used = await jobsCreatedToday();
-    if (used + requested > config.GENERATE_DAILY_LIMIT) {
+    const admitted = await tryReserve(requested);
+    if (!admitted) {
+      const dbCount = await jobsCreatedToday();
+      const used = dbCount + getReservedCount();
       res.status(429).json({
         error: 'DAILY_QUOTA_EXHAUSTED',
         message: 'The free daily demo quota is exhausted.',
@@ -203,42 +199,61 @@ router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res
     }
   }
 
-  // 5. Concurrency gate wrapped in withRequestLlmKeys
+  // 5. Enforce ALTCHA proof-of-work if not using own keys (after quota check so users don't burn solves)
+  if (!usesOwnKeys) {
+    const payload = parsed.data.altcha;
+    if (!payload || !(await powService.verifyAndConsume(payload))) {
+      releaseReservation(requested);
+      res.status(400).json({
+        error: 'POW_FAILED',
+        message: 'Bot verification failed. Please retry.',
+      });
+      return;
+    }
+  }
+
+  // 6. Concurrency gate wrapped in withRequestLlmKeys, holding reservation until completion
   const pipelineOptions = { visitorId: req.visitorId, usedOwnKeys: usesOwnKeys };
 
   try {
-    await withRequestLlmKeys(requestKeys, async () => {
-      if ('urls' in parsed.data) {
-        res.json(
-          await runBatch(parsed.data.urls, async (url) => {
-            if (!pipelineGate.tryAcquire()) {
-              throw new QueueFullError();
-            }
-            try {
-              return await runPipeline(url, pipelineOptions);
-            } finally {
-              pipelineGate.release();
-            }
-          })
-        );
-        return;
-      }
+    try {
+      await withRequestLlmKeys(requestKeys, async () => {
+        if ('urls' in parsed.data) {
+          res.json(
+            await runBatch(parsed.data.urls, async (url) => {
+              if (!pipelineGate.tryAcquire()) {
+                throw new QueueFullError();
+              }
+              try {
+                return await runPipeline(url, pipelineOptions);
+              } finally {
+                pipelineGate.release();
+              }
+            })
+          );
+          return;
+        }
 
-      if (!pipelineGate.tryAcquire()) {
-        res.status(429).json({
-          error: 'QUEUE_FULL',
-          message: 'The execution queue is currently full. Please retry shortly.',
-        });
-        return;
-      }
+        if (!pipelineGate.tryAcquire()) {
+          res.status(429).json({
+            error: 'QUEUE_FULL',
+            message: 'The execution queue is currently full. Please retry shortly.',
+          });
+          return;
+        }
 
-      try {
-        const result = await runPipeline(parsed.data.url, pipelineOptions);
-        res.json(result);
-      } finally {
-        pipelineGate.release();
+        try {
+          const result = await runPipeline(parsed.data.url, pipelineOptions);
+          res.json(result);
+        } finally {
+          pipelineGate.release();
+        }
+      });
+    } finally {
+      if (!usesOwnKeys) {
+        releaseReservation(requested);
       }
-    });
+    }
   } catch (err) {
     const httpErr = toHttpError(err);
     if (httpErr) {
