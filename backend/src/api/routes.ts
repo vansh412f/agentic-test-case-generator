@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import jobsRouter from './jobsRoutes.ts';
-import { CrawlRequestSchema } from './schemas.ts';
+import { CrawlRequestSchema, GenerateRequestSchema } from './schemas.ts';
 import { crawlPage } from '../crawler/pageCrawler.ts';
 import { runPipeline } from '../agent/pipeline.ts';
+import { runBatch } from '../agent/batch.ts';
 import { toHttpError } from './errors.ts';
 
 const router = Router();
@@ -33,7 +34,7 @@ router.post('/crawl', async (req, res) => {
 });
 
 router.post('/generate', async (req, res) => {
-  const parsed = CrawlRequestSchema.safeParse(req.body);
+  const parsed = GenerateRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
       error: 'INVALID_REQUEST',
@@ -44,6 +45,12 @@ router.post('/generate', async (req, res) => {
   }
 
   try {
+    // Batch always responds 200 with per-URL outcomes (allSettled
+    // semantics); single mode keeps its original shape and error mapping.
+    if ('urls' in parsed.data) {
+      res.json(await runBatch(parsed.data.urls, (url) => runPipeline(url)));
+      return;
+    }
     const result = await runPipeline(parsed.data.url);
     res.json(result);
   } catch (err) {
