@@ -9,6 +9,8 @@ import { JobStatusHeader } from '@/components/job/JobStatusHeader';
 import { TestResultCard } from '@/components/job/TestResultCard';
 import { TokenUsage } from '@/components/job/TokenUsage';
 import { useJobPolling } from '@/hooks/useJobPolling';
+import { ApiError } from '@/lib/api';
+import { formatJobShortId } from '@/lib/utils';
 import type { JobDetail } from '@/types/api';
 
 interface JobPageProps {
@@ -32,10 +34,6 @@ export const getServerSideProps: GetServerSideProps<JobPageProps> = async ({
     const response = await fetch(`${backendUrl}/api/jobs/${jobId}`, {
       headers: { Accept: 'application/json' },
     });
-
-    if (response.status === 404) {
-      return { notFound: true };
-    }
 
     if (!response.ok) {
       return {
@@ -80,10 +78,15 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
 
         {error || !isLoading ? (
           <div className="panel mt-6 max-w-reading p-6" role="alert">
-            <h2 className="text-card-title font-bold">Job data is unavailable</h2>
+            <h2 className="text-card-title font-bold">
+              {error instanceof ApiError && error.status === 404
+                ? 'Job not found'
+                : 'Job data is unavailable'}
+            </h2>
             <p className="mt-2 text-body text-muted-foreground">
-              The backend could not return this job. It may still be starting,
-              or the API may be offline.
+              {error instanceof ApiError && error.status === 404
+                ? 'This job ID does not exist in the active environment. If this job was generated using Local Agent mode, verify you are connected to the local agent.'
+                : 'The backend could not return this job. It may still be starting, or the API may be offline.'}
             </p>
             <button
               className="mt-5 min-h-11 rounded-control bg-brand px-5 font-semibold text-brand-foreground transition-opacity hover:opacity-90"
@@ -134,7 +137,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           ],
         }}
         path={`/jobs/${job.id}`}
-        title={`Test Results for ${job.targetUrl} — Autonomous Test Suite Generator`}
+        title={`Test Results for ${job.targetUrl} — Agentic Test Case Generator`}
       />
 
       <nav aria-label="Breadcrumb" className="py-6">
@@ -151,8 +154,8 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             </Link>
           </li>
           <li aria-hidden="true">/</li>
-          <li aria-current="page" className="max-w-56 truncate text-foreground">
-            {job.id}
+          <li aria-current="page" className="max-w-56 truncate text-foreground" title={job.id}>
+            {formatJobShortId(job.id)}
           </li>
         </ol>
       </nav>
