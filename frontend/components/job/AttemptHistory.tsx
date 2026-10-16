@@ -1,4 +1,4 @@
-import { ChevronDown, Wrench } from 'lucide-react';
+import { CaretDown, Wrench } from '@phosphor-icons/react';
 import { useState } from 'react';
 import { DiffViewer } from '@/components/code/DiffViewer';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -58,7 +58,7 @@ export function AttemptHistory({ attempts }: AttemptHistoryProps) {
                 ) : null}
               </span>
 
-              <ChevronDown
+              <CaretDown
                 aria-hidden="true"
                 className={cn('h-5 w-5 transition-transform', expanded && 'rotate-180')}
               />
