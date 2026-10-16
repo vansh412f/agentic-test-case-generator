@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowSquareOut, ClockCounterClockwise, House, Key, Cpu, X } from '@phosphor-icons/react';
+import { ClockCounterClockwise, GithubLogo, House, Key, Cpu, X } from '@phosphor-icons/react';
 import Link from 'next/link';
 import clsx from 'clsx';
 import { toast } from 'sonner';
@@ -68,13 +68,6 @@ export function Header() {
               <span className="hidden sm:inline">History</span>
             </Link>
 
-            <Link
-              className="inline-flex min-h-11 items-center gap-2 rounded-control px-3 text-small font-medium transition-colors hover:bg-muted focus-visible:outline-none"
-              href="/#how-it-works"
-            >
-              <span className="hidden sm:inline">How It Works</span>
-            </Link>
-
             {apiMode === 'local-agent' ? (
               <span className="inline-flex min-h-11 items-center gap-1.5 rounded-control px-2.5 text-small font-medium bg-info/10 border border-info/40 text-info">
                 <Cpu aria-hidden="true" className="h-4 w-4" />
@@ -107,13 +100,14 @@ export function Header() {
             </button>
 
             <a
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-control px-3 text-small font-medium transition-colors hover:bg-muted focus-visible:outline-none text-muted-foreground hover:text-foreground"
+              aria-label="GitHub repository"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               href="https://github.com/vansh412f/agentic-test-case-generator"
               rel="noreferrer"
               target="_blank"
+              title="GitHub repository"
             >
-              <span className="hidden sm:inline">GitHub</span>
-              <ArrowSquareOut aria-hidden="true" className="h-3.5 w-3.5" />
+              <GithubLogo aria-hidden="true" className="h-5 w-5" />
             </a>
 
             <ThemeToggle />
