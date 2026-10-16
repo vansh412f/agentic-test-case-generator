@@ -59,7 +59,7 @@ export function generateHtmlReport(job: LoadedJob): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>Test report — ${h(job.id)}</title>
+  <title>Agentic Test Case Generator — ${h(job.id)}</title>
   <style>${prismCss}
   :root{color-scheme:dark}body{margin:0 auto;padding:32px;max-width:1200px;background:#101722;color:#dce5f2;font:15px/1.6 system-ui,sans-serif}
   h1,h2,h3{line-height:1.25}section,article{padding:22px;margin:18px 0;background:#192333;border:1px solid #30415b;border-radius:10px}
@@ -68,7 +68,7 @@ export function generateHtmlReport(job: LoadedJob): string {
   table{width:100%;border-collapse:collapse;display:block;overflow:auto}th,td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #30415b}
   td pre{margin:0;padding:0;background:none}.diff{font:13px/1.6 monospace}.muted{color:#a5b5ca}
   </style></head><body>
-  <header><h1>Autonomous Test Suite Generator</h1><p>Job ${h(job.id)}</p><p>Target: ${h(job.targetUrl)}</p>
+  <header><h1>Agentic Test Case Generator</h1><p>Job ${h(job.id)}</p><p>Target: ${h(job.targetUrl)}</p>
   <p>Status: ${badge(job.status)} · Start: ${h(job.startedAt?.toISOString() ?? '—')} · End: ${h(job.completedAt?.toISOString() ?? '—')} · Duration: ${duration}</p>
   ${job.errorMessage ? `<pre>${h(job.errorCode)}: ${h(job.errorMessage)}</pre>` : ''}</header>
   <section><h2>App Map Summary</h2>${map.success ? `<p>Interactive elements: ${map.data.totalElementsFound} found / ${map.data.elements.length} retained · Forms: ${map.data.forms.length} · Discovered links: ${map.data.discoveredLinks.length}</p>` : '<p>App Map unavailable.</p>'}</section>
