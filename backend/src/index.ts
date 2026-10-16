@@ -1,15 +1,52 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { config } from './config.ts';
+import { config, activeProviders } from './config.ts';
 import apiRouter from './api/routes.ts';
 import { prisma } from './db/client.ts';
 
 const app = express();
+
+// Trust proxy hop count must match the deployed proxy chain (Render alone = 1;
+// Vercel-rewrite -> Render = 2). A wrong value either collapses all users into
+// one IP bucket or trusts spoofable headers.
+app.set('trust proxy', config.TRUST_PROXY_HOPS);
 
 // Middleware: Parse incoming JSON request bodies
 app.use(express.json());
 
 // Middleware: Parse URL-encoded request bodies
 app.use(express.urlencoded({ extended: true }));
+
+// Gated CORS and Private-Network-Access middleware for Local Agent mode
+if (config.LOCAL_AGENT_MODE) {
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const origin = req.header('origin');
+    const isAllowedOrigin =
+      origin &&
+      (/^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/.test(origin) ||
+        (config.FRONTEND_ORIGIN && origin === config.FRONTEND_ORIGIN) ||
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin));
+
+    if (isAllowedOrigin && origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type, X-Visitor-Id, X-Groq-Api-Key, X-Gemini-Api-Key',
+      );
+      res.setHeader('Access-Control-Expose-Headers', 'X-Visitor-Id');
+    }
+
+    if (req.method === 'OPTIONS') {
+      if (isAllowedOrigin) {
+        res.setHeader('Access-Control-Allow-Private-Network', 'true');
+        res.sendStatus(204);
+        return;
+      }
+    }
+
+    next();
+  });
+}
 
 // Health Check Endpoint
 app.get('/api/health', (_req: Request, res: Response) => {
@@ -18,6 +55,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     environment: config.NODE_ENV,
+    llmConfigured: activeProviders.length > 0,
   });
 });
 
