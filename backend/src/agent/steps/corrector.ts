@@ -20,6 +20,7 @@ export async function correctTest(
   failingCode: string,
   error: string,
   elementsInScope: ScopedElement[],
+  previousErrors: string[] = [],
 ): Promise<CorrectionResult> {
   const messages: LlmMessage[] = [
     { role: 'system', content: CORRECTOR_SYSTEM_PROMPT },
@@ -29,6 +30,7 @@ export async function correctTest(
         code: failingCode,
         error,
         elementsInScope,
+        previousErrors,
       }),
     },
   ];
