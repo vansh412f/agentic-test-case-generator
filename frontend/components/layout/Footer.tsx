@@ -5,7 +5,7 @@ export function Footer() {
     <footer className="border-t">
       <div className="mx-auto flex w-full max-w-shell flex-col gap-4 px-gutter py-8 text-small text-muted-foreground md:flex-row md:items-center md:justify-between">
         <p>
-          Autonomous Test Suite Generator — crawl, plan, generate, execute,
+          Agentic Test Case Generator — crawl, plan, generate, execute,
           and self-correct.
         </p>
 
