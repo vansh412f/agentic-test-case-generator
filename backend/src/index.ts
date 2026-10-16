@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { config } from './config.ts';
 import apiRouter from './api/routes.ts';
+import { prisma } from './db/client.ts';
 
 const app = express();
 
@@ -32,7 +33,11 @@ app.use((req: Request, res: Response) => {
 });
 
 // Centralized Error Handling Middleware
-app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, res: Response, _next: NextFunction) => {
+app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
   const status = typeof err?.status === 'number' ? err.status : (typeof err?.statusCode === 'number' ? err.statusCode : 500);
 
   if (status < 500) {
@@ -56,11 +61,28 @@ const server = app.listen(config.PORT, () => {
   console.log(`Environment: ${config.NODE_ENV}`);
 });
 
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    console.log('HTTP server closed');
+let shuttingDown = false;
+function shutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received: draining HTTP requests`);
+  const deadline = setTimeout(() => {
+    console.error('Graceful shutdown deadline exceeded');
+    process.exit(1);
+  }, 30_000);
+  server.close((error) => {
+    void prisma.$disconnect().then(() => {
+      clearTimeout(deadline);
+      if (error) process.exitCode = 1;
+    }).catch((cause: unknown) => {
+      console.error('Database disconnect failed:', cause instanceof Error ? cause.message : String(cause));
+      process.exit(1);
+    });
   });
-});
+  server.closeIdleConnections();
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
 
 export default app;
