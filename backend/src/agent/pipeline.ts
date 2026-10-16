@@ -12,6 +12,8 @@ import { RUNNER_TESTS_DIR } from '../runner/config.ts';
 import type { AppMap, InteractiveElement } from '../crawler/types.ts';
 import type { TestPlan } from './prompts/plannerPrompt.ts';
 import type { ScopedElement } from './types.ts';
+import { scoreTestConfidence } from './confidence.ts';
+import type { ConfidenceScore } from './confidence.ts';
 import { createJob, updateJobStatus, setAppMap, setTestPlan, completeJob, failJob } from '../db/jobs.ts';
 import { recordGeneratedTest } from '../db/generatedTests.ts';
 import { safeWrite, withPersistence } from '../db/safeWrite.ts';
@@ -40,6 +42,7 @@ export interface GeneratedTestResult {
   code: string; // final code (last attempt)
   status: 'passed' | 'failed' | 'gave_up';
   attempts: TestAttempt[];
+  confidence: ConfidenceScore;
 }
 
 export interface PipelineResult {
@@ -224,6 +227,7 @@ async function runPersistedPipeline(url: string): Promise<PipelineResult> {
         code: currentCode,
         status: finalStatus,
         attempts,
+        confidence: scoreTestConfidence({ code: currentCode, finalStatus, attempts }),
       });
     }
 
