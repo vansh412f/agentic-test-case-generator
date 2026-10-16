@@ -6,7 +6,7 @@ export default defineConfig({
   retries: 0,
   timeout: 15_000,
   expect: { timeout: 5_000 },
-  reporter: [['json', { outputFile: 'results.json' }]],
+  reporter: [['json', { outputFile: process.env.PLAYWRIGHT_JSON_OUTPUT_FILE ?? 'results.json' }]],
   use: {
     actionTimeout: 10_000,
     headless: process.env.HEADLESS !== 'false',
