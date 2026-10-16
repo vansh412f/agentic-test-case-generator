@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 
 const terminalLines = [
-  { kind: 'command', content: '$ agent crawl https://acme-store.app' },
-  { kind: 'info', content: '↳ Discovered 4 pages · 37 interactive elements' },
-  { kind: 'plan', content: '◇ Planned: guest adds a product to cart' },
-  { kind: 'code', content: "await page.getByRole('button', { name: 'Add' }).click();" },
-  { kind: 'pass', content: '✓ PASS  cart.spec.ts  (2.4s)' },
-  { kind: 'correct', content: "↻ CORRECTED  locator → getByTestId('cart-count')" },
+  { kind: 'command', content: '$ agent crawl https://acme-store.app', speed: 32, delayAfter: 400 },
+  { kind: 'info', content: '↳ Discovered 4 pages · 37 interactive elements', speed: 18, delayAfter: 350 },
+  { kind: 'plan', content: '◇ Planned: guest adds a product to cart', speed: 20, delayAfter: 350 },
+  { kind: 'code', content: "await page.getByRole('button', { name: 'Add' }).click();", speed: 26, delayAfter: 450 },
+  { kind: 'pass', content: '✓ PASS  cart.spec.ts  (2.4s)', speed: 18, delayAfter: 350 },
+  { kind: 'correct', content: "↻ CORRECTED  locator → getByTestId('cart-count')", speed: 22, delayAfter: 4000 },
 ];
 
 export function HeroTerminal() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(1);
+  const [activeLine, setActiveLine] = useState(0);
+  const [charCount, setCharCount] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [isInView, setIsInView] = useState(true);
 
@@ -20,13 +21,9 @@ export function HeroTerminal() {
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
     if (media.matches) {
       setReducedMotion(true);
-      setVisible(terminalLines.length);
     }
     const handler = (e: MediaQueryListEvent) => {
       setReducedMotion(e.matches);
-      if (e.matches) {
-        setVisible(terminalLines.length);
-      }
     };
     media.addEventListener('change', handler);
     return () => media.removeEventListener('change', handler);
@@ -56,26 +53,36 @@ export function HeroTerminal() {
     };
   }, []);
 
-  // 1s-step reveal loop with hold
+  // Character-by-character typewriter loop
   useEffect(() => {
     if (reducedMotion || !isInView) return;
 
+    const currentLineData = terminalLines[activeLine];
+    if (!currentLineData) return;
+
     let timer: ReturnType<typeof setTimeout>;
 
-    if (visible < terminalLines.length) {
-      // Step to next line every 1000ms
+    if (charCount < currentLineData.content.length) {
+      // Type next character
       timer = setTimeout(() => {
-        setVisible((v) => v + 1);
-      }, 1000);
+        setCharCount((prev) => prev + 1);
+      }, currentLineData.speed);
     } else {
-      // Hold complete frame for 4s, then restart
+      // Line is finished: wait delayAfter, then advance to next line or loop
       timer = setTimeout(() => {
-        setVisible(1);
-      }, 4000);
+        if (activeLine < terminalLines.length - 1) {
+          setActiveLine((l) => l + 1);
+          setCharCount(0);
+        } else {
+          // Restart loop
+          setActiveLine(0);
+          setCharCount(0);
+        }
+      }, currentLineData.delayAfter);
     }
 
     return () => clearTimeout(timer);
-  }, [visible, reducedMotion, isInView]);
+  }, [activeLine, charCount, reducedMotion, isInView]);
 
   return (
     <div className="relative" ref={containerRef}>
@@ -97,16 +104,27 @@ export function HeroTerminal() {
         </div>
 
         <div className="terminal-body">
-          {terminalLines.map((line, i) => (
-            <div
-              className={`terminal-line ${line.kind} ${i < visible ? 'show' : ''}`}
-              key={i}
-            >
-              <span className="line-no">{String(i + 1).padStart(2, '0')}</span>
-              <code>{line.content}</code>
-              {i === visible - 1 && !reducedMotion && <span className="cursor" />}
-            </div>
-          ))}
+          {terminalLines.map((line, i) => {
+            const isFinishedLine = i < activeLine;
+            const isCurrentLine = i === activeLine;
+            const isVisible = reducedMotion || isFinishedLine || isCurrentLine;
+            const text = reducedMotion || isFinishedLine
+              ? line.content
+              : isCurrentLine
+                ? line.content.slice(0, charCount)
+                : '';
+
+            return (
+              <div
+                className={`terminal-line ${line.kind} ${isVisible ? 'show' : ''}`}
+                key={i}
+              >
+                <span className="line-no">{String(i + 1).padStart(2, '0')}</span>
+                <code>{text}</code>
+                {isCurrentLine && !reducedMotion && <span className="cursor" />}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

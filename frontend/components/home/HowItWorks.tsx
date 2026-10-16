@@ -1,4 +1,5 @@
 import { motion, useReducedMotion, type Variants } from 'framer-motion';
+import { HowItWorksVariantsShowcase } from './how-it-works-variants/HowItWorksVariantsShowcase';
 
 const steps = [
   {
@@ -50,7 +51,8 @@ export function HowItWorks() {
   };
 
   return (
-    <section aria-labelledby="how-it-works-title" className="how" id="how-it-works">
+    <>
+      <section aria-labelledby="how-it-works-title" className="how" id="how-it-works">
       <motion.div
         className="how-heading"
         initial={{ opacity: 0, y: shouldReduceMotion ? 0 : 18 }}
@@ -58,7 +60,6 @@ export function HowItWorks() {
         viewport={{ once: true, margin: '-60px' }}
         whileInView={{ opacity: 1, y: 0 }}
       >
-        <div className="section-kicker">HOW IT WORKS</div>
         <h2 id="how-it-works-title">How It Works</h2>
         <p className="section-lead">
           An autonomous agent turns a live web app into self-healing Playwright test suites, grounded in real DOM evidence—not guessed selectors.
@@ -170,7 +171,12 @@ export function HowItWorks() {
         </div>
       </motion.div>
     </section>
+
+    {/* 11 Alternative Design Variants for User Review */}
+    <HowItWorksVariantsShowcase />
+    </>
   );
 }
 
 export default HowItWorks;
+

@@ -43,11 +43,10 @@ export function UrlGenerateForm({
             disabled={disabled}
             id="target-url"
             inputMode="url"
-            placeholder="https://your-app.com or localhost:3000"
+            placeholder="https://your-app.com"
             type="text"
             {...register('url')}
           />
-          <kbd>⌘ K</kbd>
         </div>
         <button className="primary-button" disabled={disabled} type="submit">
           {disabled ? (

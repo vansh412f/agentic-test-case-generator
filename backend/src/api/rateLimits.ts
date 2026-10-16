@@ -33,6 +33,7 @@ export const generateIpLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(req.ip ?? ''),
   handler: createRateLimitHandler(ONE_HOUR_MS),
+  skip: (req) => hasOwnKeys(req),
 });
 
 export const crawlIpLimiter = rateLimit({

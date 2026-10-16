@@ -9,6 +9,7 @@ declare namespace JSX {
         hidelogo?: boolean | string;
         auto?: string;
         delay?: number | string;
+        display?: string;
         name?: string;
         ref?: React.Ref<any>;
       },
