@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { crawlPage } from '../crawler/pageCrawler.ts';
 import { planTests } from './steps/planner.ts';
@@ -11,6 +12,13 @@ import { RUNNER_TESTS_DIR } from '../runner/config.ts';
 import type { AppMap, InteractiveElement } from '../crawler/types.ts';
 import type { TestPlan } from './prompts/plannerPrompt.ts';
 import type { ScopedElement } from './types.ts';
+import { createJob, updateJobStatus, setAppMap, setTestPlan, completeJob, failJob } from '../db/jobs.ts';
+import { recordGeneratedTest } from '../db/generatedTests.ts';
+import { safeWrite, withPersistence } from '../db/safeWrite.ts';
+import { withLlmStep, withMeasuredStep } from './persistence.ts';
+import { CrawlError } from '../crawler/crawlErrors.ts';
+import { LlmError } from '../llm/types.ts';
+import { RunnerError } from '../runner/errors.ts';
 
 export type { GeneratedTest };
 
@@ -35,6 +43,7 @@ export interface GeneratedTestResult {
 }
 
 export interface PipelineResult {
+  jobId: string;
   appMap: AppMap;
   testPlan: TestPlan;
   generatedTests: GeneratedTestResult[];
@@ -49,13 +58,21 @@ function projectElementScope(elements: InteractiveElement[]): ScopedElement[] {
   }));
 }
 
-export async function runPipeline(url: string): Promise<PipelineResult> {
-  const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+export function runPipeline(url: string): Promise<PipelineResult> {
+  return withPersistence(() => runPersistedPipeline(url));
+}
+
+async function runPersistedPipeline(url: string): Promise<PipelineResult> {
+  const jobId = randomUUID();
+  const runId = `run-${jobId}`;
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
 
   try {
-    const appMap = await crawlPage(url);
-    const testPlan = await planTests(appMap);
+    await safeWrite('createJob', () => createJob({ id: jobId, targetUrl: url }));
+    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlPage(url), () => ({ success: true }));
+    await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
+    const testPlan = await withLlmStep({ jobId }, 'plan', () => planTests(appMap));
+    await safeWrite('setTestPlan', () => setTestPlan(jobId, testPlan));
 
     const generatedTests: GeneratedTestResult[] = [];
 
@@ -72,7 +89,11 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
       );
 
       // Initial generation
-      const initialGen = await generateTest(testCase, elementsInScope, appMap.url);
+      await safeWrite('updateJobStatus:generating', () => updateJobStatus(jobId, 'generating'));
+      const initialGen = await withLlmStep(
+        { jobId, testCaseId: testCase.id }, 'generate',
+        () => generateTest(testCase, elementsInScope, appMap.url),
+      );
       const filename = initialGen.filename;
       let currentCode = initialGen.code;
       const attempts: TestAttempt[] = [];
@@ -83,7 +104,12 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
         const isCorrected = attempt > 1;
 
         // Step A: Static validation
-        const validationResult = await validateTestCode(runId, [{ filename, code: currentCode }]);
+        const context = { jobId, testCaseId: testCase.id, attemptNumber: attempt };
+        const validationResult = await withMeasuredStep(
+          context, 'validate',
+          () => validateTestCode(runId, [{ filename, code: currentCode }]),
+          (result) => ({ success: result.valid, error: result.errors.join('\n') || undefined }),
+        );
 
         if (!validationResult.valid) {
           attempts.push({
@@ -101,7 +127,8 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
 
           if (attempt <= maxCorrections) {
             const errorText = validationResult.errors.join('\n');
-            const correction = await correctTest(currentCode, errorText, elementsInScope);
+            const correction = await withLlmStep(context, 'correct',
+              () => correctTest(currentCode, errorText, elementsInScope));
             if (correction.code) {
               if (!correctionPreservesAssertions(currentCode, correction.code)) {
                 console.warn(
@@ -119,7 +146,12 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
         }
 
         // Step B: Execution
-        const executionResult = await executeTests(runId, [{ filename, code: currentCode }]);
+        await safeWrite('updateJobStatus:executing', () => updateJobStatus(jobId, 'executing'));
+        const executionResult = await withMeasuredStep(
+          context, 'execute',
+          () => executeTests(runId, [{ filename, code: currentCode }]),
+          (result) => ({ success: result.success, error: result.results.find((r) => !r.passed)?.error }),
+        );
         const testCaseResult =
           executionResult.results.find((r) => r.testCaseId === testCase.id) ??
           executionResult.results[0];
@@ -160,11 +192,11 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
         }
 
         if (attempt <= maxCorrections) {
-          const correction = await correctTest(
+          const correction = await withLlmStep(context, 'correct', () => correctTest(
             currentCode,
             execError || 'Test execution failed',
             elementsInScope,
-          );
+          ));
           if (correction.code) {
             if (!correctionPreservesAssertions(currentCode, correction.code)) {
               console.warn(
@@ -181,6 +213,11 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
         break;
       }
 
+      await safeWrite('recordGeneratedTest', () => recordGeneratedTest({
+        jobId, testCaseId: testCase.id, filename, finalCode: currentCode,
+        finalStatus, attempts,
+      }));
+
       generatedTests.push({
         testCaseId: testCase.id,
         filename,
@@ -190,7 +227,13 @@ export async function runPipeline(url: string): Promise<PipelineResult> {
       });
     }
 
-    return { appMap, testPlan, generatedTests };
+    await safeWrite('completeJob', () => completeJob(jobId));
+    return { jobId, appMap, testPlan, generatedTests };
+  } catch (error) {
+    const code = error instanceof CrawlError || error instanceof LlmError || error instanceof RunnerError
+      ? error.code : 'INTERNAL_ERROR';
+    await safeWrite('failJob', () => failJob(jobId, code, error instanceof Error ? error.message : String(error)));
+    throw error;
   } finally {
     try {
       await rm(runDir, { recursive: true, force: true });
