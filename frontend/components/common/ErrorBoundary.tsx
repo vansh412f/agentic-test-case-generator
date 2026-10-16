@@ -1,4 +1,4 @@
-import { AlertTriangle, RotateCcw } from 'lucide-react';
+import { ArrowCounterClockwise, Warning } from '@phosphor-icons/react';
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 
@@ -32,7 +32,7 @@ export class ErrorBoundary extends Component<
     if (this.state.error !== null) {
       return (
         <section className="panel mx-auto my-section-sm max-w-reading p-6 text-center">
-          <AlertTriangle aria-hidden="true" className="mx-auto h-10 w-10 text-danger" />
+          <Warning aria-hidden="true" className="mx-auto h-10 w-10 text-danger" />
           <h1 className="mt-4 text-heading-2 font-bold">
             This job view could not be rendered
           </h1>
@@ -45,7 +45,7 @@ export class ErrorBoundary extends Component<
             onClick={() => this.setState({ error: null })}
             type="button"
           >
-            <RotateCcw aria-hidden="true" />
+            <ArrowCounterClockwise aria-hidden="true" />
             Retry Rendering
           </Button>
         </section>
