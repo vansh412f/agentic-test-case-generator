@@ -114,7 +114,8 @@ export async function executeTests(
   files: Array<{ filename: string; code: string }>,
 ): Promise<ExecutionResult> {
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
-  const resultsPath = path.join(RUNNER_DIR, 'results.json');
+  const resultsPath = path.join(runDir, 'results.json');
+  const outputDir = path.join(runDir, 'artifacts');
 
   try {
     if (!fsSync.existsSync(PLAYWRIGHT_CLI)) {
@@ -141,8 +142,12 @@ export async function executeTests(
     await new Promise<void>((resolve, reject) => {
       execFile(
         process.execPath,
-        [PLAYWRIGHT_CLI, 'test', testArg],
-        { cwd: RUNNER_DIR, timeout: EXECUTION_TIMEOUT_MS },
+        [PLAYWRIGHT_CLI, 'test', testArg, '--output', outputDir],
+        {
+          cwd: RUNNER_DIR,
+          timeout: EXECUTION_TIMEOUT_MS,
+          env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_FILE: resultsPath },
+        },
         (err) => {
           if (err) {
             const errnoErr = err as NodeJS.ErrnoException;
