@@ -56,10 +56,13 @@ model Job {
   createdAt      DateTime        @default(now())
   startedAt      DateTime?
   completedAt    DateTime?
+  visitorId      String?
+  usedOwnKeys    Boolean         @default(false)
   agentSteps     AgentStep[]
   generatedTests GeneratedTest[]
 
   @@index([createdAt, id])
+  @@index([visitorId, createdAt])
 }
 
 model AgentStep {
