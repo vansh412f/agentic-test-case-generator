@@ -4,9 +4,10 @@ import path from 'node:path';
 import { config, activeProviders } from '../config.ts';
 import { LlmError } from './types.ts';
 import type { LlmRequest, LlmResponse, LlmMessage, LlmErrorCode, LlmProvider } from './types.ts';
-import { LLM_MAX_RETRIES_PER_PROVIDER, LLM_REQUEST_TIMEOUT_MS } from './providers.config.ts';
+import { LLM_MAX_RETRIES_PER_PROVIDER, LLM_REQUEST_TIMEOUT_MS, LLM_PROVIDER_ORDER } from './providers.config.ts';
 import type { LlmProviderName } from './providers.config.ts';
 import { PROVIDER_REGISTRY } from './providers/index.ts';
+import { llmKeyOverride } from './requestKeys.ts';
 
 interface LlmCallLog {
   timestamp: string;
@@ -116,7 +117,15 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
   const collectedFailures: CollectedFailure[] = [];
   const requestPreview = buildRequestPreview(request.messages);
 
-  for (const providerName of activeProviders) {
+  const effectiveProviders = LLM_PROVIDER_ORDER.filter(
+    (name) => llmKeyOverride(name) !== undefined || activeProviders.includes(name),
+  );
+
+  if (effectiveProviders.length === 0) {
+    throw new LlmError('AUTH_FAILED', 'No LLM provider keys are configured (server or request).');
+  }
+
+  for (const providerName of effectiveProviders) {
     const provider = PROVIDER_REGISTRY[providerName];
 
     for (let attempt = 0; attempt <= LLM_MAX_RETRIES_PER_PROVIDER; attempt++) {
@@ -166,6 +175,12 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
           break; // move to next provider
         }
 
+        // P10 / Part 7b: Measured Groq TPM-reservation behavior shows long retry windows (>10s)
+        // are better handled by immediate failover to the next provider than burning retries.
+        if (llmErr.code === 'RATE_LIMITED' && (llmErr.retryAfterMs ?? 0) > 10_000) {
+          break;
+        }
+
         // Exhausted retries on this provider
         if (attempt === LLM_MAX_RETRIES_PER_PROVIDER) {
           break;
@@ -179,7 +194,7 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
 
   throw new LlmError(
     'ALL_PROVIDERS_FAILED',
-    `All ${activeProviders.length} provider(s) exhausted. Failures: ${JSON.stringify(collectedFailures)}`,
+    `All ${effectiveProviders.length} provider(s) exhausted. Failures: ${JSON.stringify(collectedFailures)}`,
     collectedFailures,
   );
 }
