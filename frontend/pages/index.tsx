@@ -2,7 +2,6 @@ import { ArrowRight, CheckCircle, Warning, XCircle } from '@phosphor-icons/react
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useReducer, useRef, useState } from 'react';
-import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
 import { Seo } from '@/components/common/Seo';
 import { CrawlPreview } from '@/components/home/CrawlPreview';
@@ -12,11 +11,10 @@ import { UrlGenerateForm } from '@/components/home/UrlGenerateForm';
 import { LocalTargetPanel } from '@/components/home/LocalTargetPanel';
 import { StatsBar } from '@/components/home/StatsBar';
 import { QuotaExhaustedPanel } from '@/components/home/QuotaExhaustedPanel';
-import type { PowWidgetRef } from '@/components/home/PowWidget';
+import { PowWidget } from '@/components/home/PowWidget';
 import { useJobPolling } from '@/hooks/useJobPolling';
 import { classifyTarget, isTunnelUrl, getDeploymentMode } from '@/lib/targetUrl';
 
-const PowWidget = dynamic(() => import('@/components/home/PowWidget'), { ssr: false });
 import {
   ApiError,
   crawlPage,
@@ -148,8 +146,9 @@ export default function HomePage() {
   const router = useRouter();
   const [state, dispatch] = useReducer(reducer, initialState);
   const { data: liveJob } = useJobPolling(state.jobId);
-  const powWidgetRef = useRef<PowWidgetRef>(null);
   const [hasCustomKeys, setHasCustomKeys] = useState(false);
+  const [altchaPayload, setAltchaPayload] = useState<string | null>(null);
+  const [powEpoch, setPowEpoch] = useState(0);
   const [localTargetUrl, setLocalTargetUrl] = useState<string | null>(null);
   const [quotaDetails, setQuotaDetails] = useState<{ limit?: number; resetsAt?: string } | null>(null);
 
@@ -250,21 +249,30 @@ export default function HomePage() {
   }
 
   async function handleGenerate(): Promise<void> {
+    if (!hasCustomKeys && !altchaPayload) {
+      toast('Bot check is still running — one moment');
+      return;
+    }
+
     const urls = state.selectedUrls;
     if (urls.length === 0) return;
+
+    const payloadToUse = altchaPayload ?? undefined;
+    // Single-use semantics: clear payload and force remount on next solve
+    setAltchaPayload(null);
+    setPowEpoch((epoch) => epoch + 1);
 
     dispatch({ type: 'GENERATION_STARTED', urls });
 
     try {
-      const altchaPayload = powWidgetRef.current?.getPayload() ?? undefined;
       if (urls.length === 1) {
-        const result = await generateSingle(urls[0] ?? '', altchaPayload);
+        const result = await generateSingle(urls[0] ?? '', payloadToUse);
         toast.success('Test suite generation completed successfully');
         await router.push(`/jobs/${result.jobId}`);
         return;
       }
 
-      const batch = await generateBatch(urls, altchaPayload);
+      const batch = await generateBatch(urls, payloadToUse);
       toast.success(`Batch completed: ${batch.summary.succeeded}/${batch.summary.total} jobs succeeded`);
       dispatch({ type: 'BATCH_SUCCEEDED', batch });
     } catch (error) {
@@ -488,16 +496,22 @@ export default function HomePage() {
         <div className="pb-section-sm">
           <CrawlPreview
             appMap={state.appMap}
+            disabled={!hasCustomKeys && !altchaPayload}
             generating={false}
             onGenerate={() => void handleGenerate()}
-            onReset={() => dispatch({ type: 'RESET' })}
+            onReset={() => {
+              setAltchaPayload(null);
+              dispatch({ type: 'RESET' });
+            }}
             onToggleUrl={(url) => dispatch({ type: 'TOGGLE_URL', url })}
             selectedUrls={state.selectedUrls}
           />
         </div>
       ) : null}
 
-      {!hasCustomKeys ? <PowWidget ref={powWidgetRef} /> : null}
+      {state.appMap && state.phase !== 'submitting' && !hasCustomKeys ? (
+        <PowWidget key={powEpoch} onPayload={setAltchaPayload} />
+      ) : null}
       <HowItWorks />
     </>
   );

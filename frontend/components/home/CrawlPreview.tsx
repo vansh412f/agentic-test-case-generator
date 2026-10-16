@@ -14,6 +14,7 @@ interface CrawlPreviewProps {
   appMap: AppMap;
   selectedUrls: string[];
   generating: boolean;
+  disabled?: boolean;
   onToggleUrl: (url: string) => void;
   onGenerate: () => void;
   onReset: () => void;
@@ -23,6 +24,7 @@ export function CrawlPreview({
   appMap,
   selectedUrls,
   generating,
+  disabled = false,
   onToggleUrl,
   onGenerate,
   onReset,
@@ -47,7 +49,8 @@ export function CrawlPreview({
           </div>
 
           <Button
-            disabled={generating || selectedUrls.length === 0}
+            aria-disabled={disabled || generating || selectedUrls.length === 0}
+            disabled={disabled || generating || selectedUrls.length === 0}
             onClick={onGenerate}
             size="lg"
             type="button"
@@ -55,7 +58,9 @@ export function CrawlPreview({
             <Play aria-hidden="true" />
             {generating
               ? 'Generating Test Suite…'
-              : `Generate Tests for ${pageCount} Page${pageCount === 1 ? '' : 's'}`}
+              : disabled
+                ? 'Verifying…'
+                : `Generate Tests for ${pageCount} Page${pageCount === 1 ? '' : 's'}`}
           </Button>
         </div>
 
