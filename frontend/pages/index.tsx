@@ -12,6 +12,7 @@ import { LocalTargetPanel } from '@/components/home/LocalTargetPanel';
 import { StatsBar } from '@/components/home/StatsBar';
 import { QuotaExhaustedPanel } from '@/components/home/QuotaExhaustedPanel';
 import { PowWidget } from '@/components/home/PowWidget';
+import { HeroTerminal } from '@/components/home/HeroTerminal';
 import { useJobPolling } from '@/hooks/useJobPolling';
 import { classifyTarget, isTunnelUrl, getDeploymentMode } from '@/lib/targetUrl';
 
@@ -366,41 +367,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        <aside
-          aria-label="Example agent output"
-          className="panel overflow-hidden font-mono text-small"
-        >
-          <div className="flex items-center justify-between border-b px-5 py-3">
-            <span className="text-muted-foreground">agent.session</span>
-            <span className="inline-flex items-center gap-2 text-success">
-              <span aria-hidden="true" className="h-2 w-2 animate-blink rounded-full bg-current" />
-              ready
-            </span>
-          </div>
-
-          <div className="space-y-4 p-5 leading-relaxed">
-            <p>
-              <span className="text-muted-foreground">$ crawl</span>{' '}
-              https://todo-app-staging.vercel.app
-            </p>
-            <p className="text-success">
-              App Map: 18 elements · 1 form · 3 internal pages
-            </p>
-            <p>
-              <span className="text-info">tc-1</span> Add new todo item
-            </p>
-            <p className="break-all text-muted-foreground">
-              page.getByPlaceholder(&apos;What needs to be done?&apos;)
-            </p>
-            <p>
-              <span className="text-success">PASS</span> validate · execute
-            </p>
-            <p>
-              <span className="text-warning">CORRECTED</span> locator timeout
-              on getByTestId(&apos;submit-btn&apos;)
-            </p>
-          </div>
-        </aside>
+        <HeroTerminal />
       </section>
 
       <StatsBar />
