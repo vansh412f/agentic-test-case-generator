@@ -60,3 +60,8 @@ export function truncateMiddle(value: string, maxLength: number): string {
   const side = Math.floor((maxLength - 1) / 2);
   return `${value.slice(0, side)}…${value.slice(-side)}`;
 }
+
+// 6 hex chars collide eventually; it is a display label, the UUID remains identity.
+export function formatJobShortId(id: string): string {
+  return `#${id.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+}
