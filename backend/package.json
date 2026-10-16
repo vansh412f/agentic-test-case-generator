@@ -17,12 +17,18 @@
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
     "playwright": "^1.63.0",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "@prisma/client": "6.19.3",
+    "archiver": "8.0.0",
+    "diff": "9.0.0",
+    "prismjs": "1.30.0",
+    "typescript": "5.9.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.4",
     "tsx": "^4.19.3",
-    "typescript": "^5.7.3"
+    "prisma": "6.19.3",
+    "@types/archiver": "8.0.0"
   }
 }
