@@ -18,6 +18,11 @@ const configSchema = z.object({
   DIRECT_URL: z.string().trim().min(1),
   GROQ_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
+  VISITOR_SIGNING_SECRET: z.string().min(16).optional(),
+  GENERATE_DAILY_LIMIT: z.coerce.number().int().positive().default(20),
+  LOCAL_AGENT_MODE: z.string().default('false').transform((v) => v.toLowerCase() === 'true'),
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
+  FRONTEND_ORIGIN: z.string().optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -35,6 +40,13 @@ const parseConfig = (): Config => {
 };
 
 export const config: Config = parseConfig();
+
+if (!config.VISITOR_SIGNING_SECRET && config.NODE_ENV === 'production') {
+  console.warn(
+    '[Security] VISITOR_SIGNING_SECRET is not set. Falling back to DATABASE_URL hash. Rotating DB credentials will invalidate active visitor sessions.'
+  );
+}
+
 export const VIEWPORT = { width: 1280, height: 720 } as const;
 
 // Maps provider names to their corresponding config properties
@@ -57,16 +69,11 @@ for (const provider of LLM_PROVIDER_ORDER) {
   }
 }
 
-// Fail fast on boot if no API keys are provided for the configured chain
+// Allow BYOK-only deployments to boot without environment keys
 if (activeProviders.length === 0) {
-  console.error('\n No LLM provider API keys configured.');
-  console.error(`LLM_PROVIDER_ORDER contains: ${LLM_PROVIDER_ORDER.join(', ')}`);
-  console.error('Configure at least one in your .env file:\n');
-  for (const provider of LLM_PROVIDER_ORDER) {
-    console.error(`  ${PROVIDER_ENV_KEYS[provider].padEnd(16)}`);
-  }
-  console.error('');
-  process.exit(1);
+  console.warn('\n[Warning] No LLM provider API keys configured in environment.');
+  console.warn(`LLM_PROVIDER_ORDER contains: ${LLM_PROVIDER_ORDER.join(', ')}`);
+  console.warn('Default runs will fail unless users supply request keys (BYOK).\n');
 }
 
 if (missingProviders.length > 0) {
