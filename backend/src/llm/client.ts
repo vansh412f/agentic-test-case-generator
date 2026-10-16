@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { observeLlmCall } from './telemetry.ts';
 import path from 'node:path';
 import { config, activeProviders } from '../config.ts';
 import { LlmError } from './types.ts';
@@ -84,6 +85,7 @@ function buildRequestPreview(messages: LlmMessage[]): string {
 }
 
 async function logCall(entry: LlmCallLog): Promise<void> {
+  await observeLlmCall(entry);
   if (config.NODE_ENV === 'production') {
     return;
   }
@@ -146,7 +148,7 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
           model: 'unknown',
           attempt,
           success: false,
-          latencyMs: 0,
+          latencyMs: Date.now() - Date.parse(timestamp),
           errorCode: llmErr.code,
           errorMessage: llmErr.message,
           requestPreview,
