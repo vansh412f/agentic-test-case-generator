@@ -2,6 +2,7 @@ import type { PipelineResult } from './pipeline.ts';
 import { CrawlError } from '../crawler/crawlErrors.ts';
 import { LlmError } from '../llm/types.ts';
 import { RunnerError } from '../runner/errors.ts';
+import { QueueFullError } from '../security/concurrencyGate.ts';
 
 // Batch cap matches the demo's 5-page ceiling. Concurrency is capped at 2:
 // each job runs its own Chromium crawl plus sequential browser executions,
@@ -46,6 +47,9 @@ export interface BatchResult {
 // Mirrors the failJob error-code derivation in pipeline.ts: domain errors
 // keep their machine code, everything else is INTERNAL_ERROR.
 function batchErrorCode(error: unknown): string {
+  if (error instanceof QueueFullError) {
+    return error.code;
+  }
   if (error instanceof CrawlError || error instanceof LlmError || error instanceof RunnerError) {
     return error.code;
   }
