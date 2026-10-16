@@ -1,4 +1,4 @@
-# Autonomous Test Suite Generator
+# Agentic Test Case Generator
 
 In progress (agentic self-healing loop). Backend in `backend/` (Express 5 + TypeScript + Prisma/Supabase + Playwright).
 
