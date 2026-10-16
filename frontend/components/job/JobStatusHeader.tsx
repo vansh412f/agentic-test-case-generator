@@ -1,6 +1,7 @@
-import { CalendarClock, Globe2, Hash, Timer } from 'lucide-react';
+import { CalendarBlank, Check, Copy, Globe, Hash, Timer } from '@phosphor-icons/react';
+import { useState } from 'react';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { formatDateTime, formatJobDuration } from '@/lib/utils';
+import { formatDateTime, formatJobDuration, formatJobShortId } from '@/lib/utils';
 import type { JobDetail } from '@/types/api';
 
 interface JobStatusHeaderProps {
@@ -8,6 +9,18 @@ interface JobStatusHeaderProps {
 }
 
 export function JobStatusHeader({ job }: JobStatusHeaderProps) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyJobId(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(job.id);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
   return (
     <section className="panel p-5 sm:p-6">
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -29,12 +42,28 @@ export function JobStatusHeader({ job }: JobStatusHeaderProps) {
             <Hash aria-hidden="true" className="h-4 w-4" />
             Job ID
           </dt>
-          <dd className="mt-2 break-all font-mono text-caption">{job.id}</dd>
+          <dd className="mt-2 flex items-center justify-between gap-2 font-mono text-caption">
+            <span className="font-bold text-foreground" title={job.id}>
+              {formatJobShortId(job.id)}
+            </span>
+            <button
+              aria-label={copied ? 'Job ID copied' : 'Copy full Job ID'}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-control transition-colors hover:bg-muted text-muted-foreground hover:text-foreground"
+              onClick={() => void copyJobId()}
+              type="button"
+            >
+              {copied ? (
+                <Check aria-hidden="true" className="h-3.5 w-3.5 text-success" />
+              ) : (
+                <Copy aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </dd>
         </div>
 
         <div className="rounded-panel border bg-background p-4">
           <dt className="flex items-center gap-2 text-caption uppercase tracking-wide text-muted-foreground">
-            <Globe2 aria-hidden="true" className="h-4 w-4" />
+            <Globe aria-hidden="true" className="h-4 w-4" />
             Target
           </dt>
           <dd className="mt-2 break-all font-mono text-caption">{job.targetUrl}</dd>
@@ -42,7 +71,7 @@ export function JobStatusHeader({ job }: JobStatusHeaderProps) {
 
         <div className="rounded-panel border bg-background p-4">
           <dt className="flex items-center gap-2 text-caption uppercase tracking-wide text-muted-foreground">
-            <CalendarClock aria-hidden="true" className="h-4 w-4" />
+            <CalendarBlank aria-hidden="true" className="h-4 w-4" />
             Created
           </dt>
           <dd className="mt-2 font-mono text-caption">
