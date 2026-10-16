@@ -1,10 +1,12 @@
 import { Router } from 'express';
+import jobsRouter from './jobsRoutes.ts';
 import { CrawlRequestSchema } from './schemas.ts';
 import { crawlPage } from '../crawler/pageCrawler.ts';
 import { runPipeline } from '../agent/pipeline.ts';
 import { toHttpError } from './errors.ts';
 
 const router = Router();
+router.use('/jobs', jobsRouter);
 
 router.post('/crawl', async (req, res) => {
   const parsed = CrawlRequestSchema.safeParse(req.body);
