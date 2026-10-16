@@ -1,8 +1,9 @@
-import { Check, Copy, FileCode2 } from 'lucide-react';
+import { Check, Copy, FileCode } from '@phosphor-icons/react';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { toast } from 'sonner';
 
 const MonacoEditor = dynamic(
   () => import('@monaco-editor/react').then((module) => module.Editor),
@@ -28,9 +29,11 @@ export function CodeViewer({ code, filename }: CodeViewerProps) {
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
+      toast.success(`Copied ${filename} to clipboard`);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       setCopied(false);
+      toast.error('Failed to copy to clipboard');
     }
   }
 
@@ -40,7 +43,7 @@ export function CodeViewer({ code, filename }: CodeViewerProps) {
     <div className="overflow-hidden rounded-panel border bg-background">
       <div className="flex min-h-12 items-center justify-between gap-3 border-b px-4">
         <p className="flex min-w-0 items-center gap-2 font-mono text-small">
-          <FileCode2 aria-hidden="true" className="h-4 w-4 shrink-0 text-brand-strong dark:text-brand" />
+          <FileCode aria-hidden="true" className="h-4 w-4 shrink-0 text-brand-strong dark:text-brand" />
           <span className="truncate">{filename}</span>
         </p>
 
