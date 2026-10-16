@@ -61,17 +61,30 @@ function projectElementScope(elements: InteractiveElement[]): ScopedElement[] {
   }));
 }
 
-export function runPipeline(url: string): Promise<PipelineResult> {
-  return withPersistence(() => runPersistedPipeline(url));
+export function runPipeline(
+  url: string,
+  options?: { visitorId?: string | null; usedOwnKeys?: boolean }
+): Promise<PipelineResult> {
+  return withPersistence(() => runPersistedPipeline(url, options));
 }
 
-async function runPersistedPipeline(url: string): Promise<PipelineResult> {
+async function runPersistedPipeline(
+  url: string,
+  options?: { visitorId?: string | null; usedOwnKeys?: boolean }
+): Promise<PipelineResult> {
   const jobId = randomUUID();
   const runId = `run-${jobId}`;
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
 
   try {
-    await safeWrite('createJob', () => createJob({ id: jobId, targetUrl: url }));
+    await safeWrite('createJob', () =>
+      createJob({
+        id: jobId,
+        targetUrl: url,
+        visitorId: options?.visitorId,
+        usedOwnKeys: options?.usedOwnKeys,
+      })
+    );
     const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlPage(url), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
     const testPlan = await withLlmStep({ jobId }, 'plan', () => planTests(appMap));
@@ -100,6 +113,7 @@ async function runPersistedPipeline(url: string): Promise<PipelineResult> {
       const filename = initialGen.filename;
       let currentCode = initialGen.code;
       const attempts: TestAttempt[] = [];
+      const priorErrors: string[] = [];
       const maxCorrections = 2;
       let finalStatus: 'passed' | 'failed' | 'gave_up' = 'gave_up';
 
@@ -131,7 +145,11 @@ async function runPersistedPipeline(url: string): Promise<PipelineResult> {
           if (attempt <= maxCorrections) {
             const errorText = validationResult.errors.join('\n');
             const correction = await withLlmStep(context, 'correct',
-              () => correctTest(currentCode, errorText, elementsInScope));
+              () => correctTest(currentCode, errorText, elementsInScope, priorErrors));
+            priorErrors.push(errorText);
+            if (priorErrors.length > 2) {
+              priorErrors.splice(0, priorErrors.length - 2);
+            }
             if (correction.code) {
               if (!correctionPreservesAssertions(currentCode, correction.code)) {
                 console.warn(
@@ -195,11 +213,17 @@ async function runPersistedPipeline(url: string): Promise<PipelineResult> {
         }
 
         if (attempt <= maxCorrections) {
+          const errorText = execError || 'Test execution failed';
           const correction = await withLlmStep(context, 'correct', () => correctTest(
             currentCode,
-            execError || 'Test execution failed',
+            errorText,
             elementsInScope,
+            priorErrors,
           ));
+          priorErrors.push(errorText);
+          if (priorErrors.length > 2) {
+            priorErrors.splice(0, priorErrors.length - 2);
+          }
           if (correction.code) {
             if (!correctionPreservesAssertions(currentCode, correction.code)) {
               console.warn(
