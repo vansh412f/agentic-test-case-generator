@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Key, CheckCircle, XCircle, CircleNotch, X } from '@phosphor-icons/react';
+import {
+  Key,
+  Check,
+  X,
+  CircleNotch,
+} from '@phosphor-icons/react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   getStoredKeys,
   saveStoredKeys,
@@ -19,12 +21,15 @@ interface ApiKeysPanelProps {
 
 type ValidationStatus = 'idle' | 'validating' | 'valid' | 'invalid';
 
-export function ApiKeysPanel({ open, onClose, onKeysChanged }: ApiKeysPanelProps) {
+export function ApiKeysPanel({
+  open,
+  onClose,
+  onKeysChanged,
+}: ApiKeysPanelProps) {
   const [groqKey, setGroqKey] = useState('');
   const [geminiKey, setGeminiKey] = useState('');
   const [groqStatus, setGroqStatus] = useState<ValidationStatus>('idle');
   const [geminiStatus, setGeminiStatus] = useState<ValidationStatus>('idle');
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -33,7 +38,6 @@ export function ApiKeysPanel({ open, onClose, onKeysChanged }: ApiKeysPanelProps
       setGeminiKey(stored.gemini ?? '');
       setGroqStatus('idle');
       setGeminiStatus('idle');
-      setStatusMessage(null);
     }
   }, [open]);
 
@@ -53,15 +57,12 @@ export function ApiKeysPanel({ open, onClose, onKeysChanged }: ApiKeysPanelProps
     const key = provider === 'groq' ? groqKey : geminiKey;
     if (!key.trim()) {
       const msg = `Please enter a ${provider === 'groq' ? 'Groq' : 'Gemini'} key first.`;
-      setStatusMessage(msg);
       toast.error(msg);
       return;
     }
 
     if (provider === 'groq') setGroqStatus('validating');
     else setGeminiStatus('validating');
-
-    setStatusMessage(null);
 
     try {
       const result = await validateApiKey(provider, key);
@@ -76,13 +77,11 @@ export function ApiKeysPanel({ open, onClose, onKeysChanged }: ApiKeysPanelProps
           result.reason === 'unreachable'
             ? 'Validation service unreachable. Check your network connection.'
             : `Invalid ${provider === 'groq' ? 'Groq' : 'Gemini'} API key.`;
-        setStatusMessage(reason);
         toast.error(reason);
       }
     } catch {
       if (provider === 'groq') setGroqStatus('invalid');
       else setGeminiStatus('invalid');
-      setStatusMessage('Validation failed unexpectedly.');
       toast.error('Validation request failed unexpectedly.');
     }
   }
@@ -103,7 +102,6 @@ export function ApiKeysPanel({ open, onClose, onKeysChanged }: ApiKeysPanelProps
     setGeminiKey('');
     setGroqStatus('idle');
     setGeminiStatus('idle');
-    setStatusMessage('All stored API keys cleared.');
     toast.success('Stored API keys cleared');
     onKeysChanged?.();
   }
@@ -111,18 +109,21 @@ export function ApiKeysPanel({ open, onClose, onKeysChanged }: ApiKeysPanelProps
   return (
     <div
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm overflow-y-auto"
       role="dialog"
     >
-      <div className="panel max-w-lg w-full p-6 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between border-b pb-4">
-          <div className="flex items-center gap-2">
-            <Key aria-hidden="true" className="h-5 w-5 text-brand" />
-            <h2 className="text-card-title font-semibold">Custom API Keys (BYOK)</h2>
+      <div className="relative w-full max-w-2xl bg-[#f7f8f4] border border-[#dde2da] rounded-[14px] p-6 sm:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto my-auto">
+        <div className="flex items-start justify-between">
+          <div className="page-title mb-0">
+            <p className="eyebrow">SETTINGS</p>
+            <h1 className="text-2xl font-bold">Bring your own API key</h1>
+            <p className="text-xs text-[#78847c] mt-1">
+              Keep generating beyond the free daily quota. Keys are stored in session storage only.
+            </p>
           </div>
           <button
             aria-label="Close dialog"
-            className="rounded-md p-1 text-muted-foreground hover:bg-surface-elevated hover:text-foreground transition-colors"
+            className="rounded p-1 text-[#78847c] hover:bg-[#e8ece5] hover:text-[#17201b]"
             onClick={onClose}
             type="button"
           >
@@ -130,125 +131,161 @@ export function ApiKeysPanel({ open, onClose, onKeysChanged }: ApiKeysPanelProps
           </button>
         </div>
 
-        <p className="mt-4 text-small text-muted-foreground leading-relaxed">
-          Supply your own free-tier or paid keys to bypass the global daily quota.
-          Keys live only in this tab&apos;s session storage, are sent per-request over HTTPS,
-          and are never stored on the server.
-        </p>
+        <div className="space-y-4">
+          {/* Groq Key Card */}
+          <section className="key-card">
+            <span className="state-icon">
+              <Key aria-hidden="true" className="h-6 w-6" />
+            </span>
+            <div>
+              <h2>Groq provider key</h2>
+              <p>High-speed Llama models for fast test planning and spec generation.</p>
+              <label>
+                GROQ API KEY
+                <input
+                  autoComplete="off"
+                  onChange={(e) => {
+                    setGroqKey(e.target.value);
+                    setGroqStatus('idle');
+                  }}
+                  placeholder="gsk_••••••••••••••••"
+                  spellCheck={false}
+                  type="password"
+                  value={groqKey}
+                />
+              </label>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  className="secondary-button"
+                  disabled={!groqKey.trim() || groqStatus === 'validating'}
+                  onClick={() => void handleValidate('groq')}
+                  type="button"
+                >
+                  {groqStatus === 'validating' ? (
+                    <>
+                      <CircleNotch aria-hidden="true" className="h-4 w-4 animate-spin" /> Testing key…
+                    </>
+                  ) : groqStatus === 'valid' ? (
+                    <>
+                      <Check aria-hidden="true" className="h-4 w-4 text-[#507416]" /> Valid key
+                    </>
+                  ) : groqStatus === 'invalid' ? (
+                    <>
+                      <X aria-hidden="true" className="h-4 w-4 text-danger" /> Invalid key
+                    </>
+                  ) : (
+                    'Test / Validate key'
+                  )}
+                </button>
+              </div>
+              <small>
+                Free keys available at{' '}
+                <a
+                  className="underline text-[#507416]"
+                  href="https://console.groq.com"
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  console.groq.com
+                </a>
+                .
+              </small>
+            </div>
+          </section>
 
-        <div className="mt-6 space-y-5">
-          {/* Groq Key Input */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-small font-medium" htmlFor="groq-key">
-                Groq API Key
-              </Label>
-              <span className="text-caption text-muted-foreground font-mono">Free at console.groq.com</span>
+          {/* Gemini Key Card */}
+          <section className="key-card">
+            <span className="state-icon">
+              <Key aria-hidden="true" className="h-6 w-6" />
+            </span>
+            <div>
+              <h2>Gemini provider key</h2>
+              <p>Google Gemini models for intelligent DOM reasoning, planning, and self-correction.</p>
+              <label>
+                GEMINI API KEY
+                <input
+                  autoComplete="off"
+                  onChange={(e) => {
+                    setGeminiKey(e.target.value);
+                    setGeminiStatus('idle');
+                  }}
+                  placeholder="AIza••••••••••••••••"
+                  spellCheck={false}
+                  type="password"
+                  value={geminiKey}
+                />
+              </label>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  className="secondary-button"
+                  disabled={!geminiKey.trim() || geminiStatus === 'validating'}
+                  onClick={() => void handleValidate('gemini')}
+                  type="button"
+                >
+                  {geminiStatus === 'validating' ? (
+                    <>
+                      <CircleNotch aria-hidden="true" className="h-4 w-4 animate-spin" /> Testing key…
+                    </>
+                  ) : geminiStatus === 'valid' ? (
+                    <>
+                      <Check aria-hidden="true" className="h-4 w-4 text-[#507416]" /> Valid key
+                    </>
+                  ) : geminiStatus === 'invalid' ? (
+                    <>
+                      <X aria-hidden="true" className="h-4 w-4 text-danger" /> Invalid key
+                    </>
+                  ) : (
+                    'Test / Validate key'
+                  )}
+                </button>
+              </div>
+              <small>
+                Free keys available at{' '}
+                <a
+                  className="underline text-[#507416]"
+                  href="https://aistudio.google.com"
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  aistudio.google.com
+                </a>
+                .
+              </small>
             </div>
-            <div className="flex gap-2">
-              <Input
-                autoComplete="off"
-                className="font-mono text-small flex-1"
-                id="groq-key"
-                onChange={(e) => {
-                  setGroqKey(e.target.value);
-                  setGroqStatus('idle');
-                }}
-                placeholder="gsk_..."
-                spellCheck={false}
-                type="password"
-                value={groqKey}
-              />
-              <Button
-                disabled={!groqKey.trim() || groqStatus === 'validating'}
-                onClick={() => void handleValidate('groq')}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                {groqStatus === 'validating' ? (
-                  <CircleNotch aria-hidden="true" className="h-4 w-4 animate-spin" />
-                ) : groqStatus === 'valid' ? (
-                  <CheckCircle aria-hidden="true" className="h-4 w-4 text-success" />
-                ) : groqStatus === 'invalid' ? (
-                  <XCircle aria-hidden="true" className="h-4 w-4 text-danger" />
-                ) : (
-                  'Validate'
-                )}
-              </Button>
-            </div>
-          </div>
-
-          {/* Gemini Key Input */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-small font-medium" htmlFor="gemini-key">
-                Gemini API Key
-              </Label>
-              <span className="text-caption text-muted-foreground font-mono">Free at aistudio.google.com</span>
-            </div>
-            <div className="flex gap-2">
-              <Input
-                autoComplete="off"
-                className="font-mono text-small flex-1"
-                id="gemini-key"
-                onChange={(e) => {
-                  setGeminiKey(e.target.value);
-                  setGeminiStatus('idle');
-                }}
-                placeholder="AIza..."
-                spellCheck={false}
-                type="password"
-                value={geminiKey}
-              />
-              <Button
-                disabled={!geminiKey.trim() || geminiStatus === 'validating'}
-                onClick={() => void handleValidate('gemini')}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                {geminiStatus === 'validating' ? (
-                  <CircleNotch aria-hidden="true" className="h-4 w-4 animate-spin" />
-                ) : geminiStatus === 'valid' ? (
-                  <CheckCircle aria-hidden="true" className="h-4 w-4 text-success" />
-                ) : geminiStatus === 'invalid' ? (
-                  <XCircle aria-hidden="true" className="h-4 w-4 text-danger" />
-                ) : (
-                  'Validate'
-                )}
-              </Button>
-            </div>
-          </div>
+          </section>
         </div>
 
-        {statusMessage ? (
-          <p className="mt-4 text-caption text-muted-foreground" role="alert">
-            {statusMessage}
-          </p>
-        ) : null}
-
-        <div className="mt-6 flex items-center justify-between border-t pt-4">
-          <Button
-            className="text-danger hover:text-danger hover:bg-danger/10"
+        <div className="flex flex-col gap-3 pt-4 border-t border-[#dde2da] sm:flex-row sm:items-center sm:justify-between">
+          <button
+            className="text-xs font-semibold text-danger hover:underline disabled:opacity-40 text-left"
             disabled={!groqKey && !geminiKey}
             onClick={handleClear}
-            size="sm"
             type="button"
-            variant="ghost"
           >
-            Clear Keys
-          </Button>
+            Clear stored keys
+          </button>
 
-          <div className="flex gap-2">
-            <Button onClick={onClose} size="sm" type="button" variant="outline">
+          <div className="flex gap-3 justify-end">
+            <button
+              className="secondary-button text-xs py-2 px-4"
+              onClick={onClose}
+              type="button"
+            >
               Cancel
-            </Button>
-            <Button onClick={handleSave} size="sm" type="button">
-              Save Keys
-            </Button>
+            </button>
+            <button
+              className="primary-button text-xs py-2 px-4"
+              onClick={handleSave}
+              type="button"
+            >
+              Save session keys
+            </button>
           </div>
         </div>
+
+        <p className="text-[10px] text-[#78847c] text-center">
+          Keys are stored in sessionStorage ONLY. They are never saved on the server and are cleared when this browser tab closes.
+        </p>
       </div>
     </div>
   );

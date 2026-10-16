@@ -1484,6 +1484,30 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
   from { opacity: 0; transform: translateY(12px); }
 }
 
+[data-sonner-toaster] [data-sonner-toast] {
+  background: #17201b !important;
+  color: white !important;
+  border: 1px solid #2b352e !important;
+  border-radius: 9px !important;
+  font-size: 11px !important;
+  box-shadow: 0 16px 40px rgba(0,0,0,.2) !important;
+  font-family: var(--font-sans), sans-serif !important;
+}
+
+[data-sonner-toaster] [data-sonner-toast] [data-icon] {
+  color: #bde958 !important;
+}
+
+[data-sonner-toaster] [data-sonner-toast][data-type="error"] [data-icon] {
+  color: #f1776f !important;
+}
+
+[data-sonner-toaster] [data-close-button] {
+  color: #8e9991 !important;
+  background: transparent !important;
+  border: 0 !important;
+}
+
 /* Media Queries */
 @media (max-width: 900px) {
   .hero {
