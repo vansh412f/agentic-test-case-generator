@@ -27,11 +27,19 @@ export function buildCorrectorUserPrompt(params: {
   code: string;
   error: string;
   elementsInScope: ScopedElement[];
+  previousErrors?: string[];
 }): string {
+  const previousSection =
+    params.previousErrors && params.previousErrors.length > 0
+      ? `## Previous Failed Attempts (do not repeat these approaches)\n${params.previousErrors
+          .map((err, idx) => `${idx + 1}. ${err.trim()}`)
+          .join('\n')}\n\n`
+      : '';
+
   return `## Failing Test Code
 ${params.code}
 
-## Error Output
+${previousSection}## Error Output
 ${params.error}
 
 ## Available Elements on Page
