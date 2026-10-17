@@ -46,6 +46,7 @@ export function CrawlPreview({
   onToggleDeepCrawl,
   onToggleUrl,
   onGenerate,
+  onReset,
 }: CrawlPreviewProps) {
   const totalPagesCount = 1 + appMap.discoveredLinks.length;
   const maxReached = selectedUrls.length >= 5;
@@ -139,19 +140,29 @@ export function CrawlPreview({
           {selectedUrls.length} of {totalPagesCount} pages selected
           {canDeepCrawl && deepCrawl ? ' · deep crawl on' : ''}
         </span>
-        <button
-          className="primary-button"
-          disabled={disabled || generating || selectedUrls.length === 0}
-          onClick={onGenerate}
-          type="button"
-        >
-          {generating
-            ? 'Generating Tests…'
-            : disabled
-              ? 'Verifying…'
-              : 'Generate Tests'}{' '}
-          <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button
+            className="secondary-button"
+            disabled={generating}
+            onClick={onReset}
+            type="button"
+          >
+            Start Over
+          </button>
+          <button
+            className="primary-button"
+            disabled={disabled || generating || selectedUrls.length === 0}
+            onClick={onGenerate}
+            type="button"
+          >
+            {generating
+              ? 'Generating Tests…'
+              : disabled
+                ? 'Verifying…'
+                : 'Generate Tests'}{' '}
+            <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
     </section>
   );
