@@ -73,6 +73,7 @@ export interface InteractiveElement {
   ariaLabel?: string | null;
   testId?: string | null;
   href?: string | null;
+  page?: number;
   isVisible: boolean;
   isEnabled: boolean;
   selectors: ElementSelectorMap;
@@ -101,6 +102,7 @@ export interface AppMap {
   discoveredLinks: string[];
   totalElementsFound: number;
   isTruncated: boolean;
+  pages?: Array<{ url: string; requestedUrl: string; title: string }>;
 }
 
 export interface PlanStep {
@@ -145,6 +147,7 @@ export interface PipelineGeneratedTest {
 // POST /api/generate -> 202. One id per unique URL, in request order.
 export interface GenerateAcceptedResponse {
   jobIds: string[];
+  webhookSecret?: string;
 }
 
 export interface AgentStep {

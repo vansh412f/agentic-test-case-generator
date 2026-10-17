@@ -15,6 +15,7 @@ export function Footer() {
       <p>Playwright tests that fix themselves, not your expectations.</p>
       <div>
         <Link href="/#how-it-works">Documentation</Link>
+        <Link href="/limitations">Limitations</Link>
         <Link href="/privacy">Privacy</Link>
         <a
           href="https://github.com/vansh412f/agentic-test-case-generator"
@@ -24,7 +25,7 @@ export function Footer() {
           GitHub
         </a>
       </div>
-      <small>© 2025 Agentic Test</small>
+      <small>© {new Date().getFullYear()} Agentic Test</small>
     </footer>
   );
 }

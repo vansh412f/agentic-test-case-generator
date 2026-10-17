@@ -6,6 +6,8 @@ interface CrawlPreviewProps {
   selectedUrls: string[];
   generating: boolean;
   disabled?: boolean;
+  deepCrawl?: boolean;
+  onToggleDeepCrawl?: (enabled: boolean) => void;
   onToggleUrl: (url: string) => void;
   onGenerate: () => void;
   onReset: () => void;
@@ -40,11 +42,17 @@ export function CrawlPreview({
   selectedUrls,
   generating,
   disabled = false,
+  deepCrawl = false,
+  onToggleDeepCrawl,
   onToggleUrl,
   onGenerate,
 }: CrawlPreviewProps) {
   const totalPagesCount = 1 + appMap.discoveredLinks.length;
   const maxReached = selectedUrls.length >= 5;
+  const canDeepCrawl =
+    onToggleDeepCrawl !== undefined &&
+    selectedUrls.length === 1 &&
+    appMap.discoveredLinks.length > 0;
 
   return (
     <section aria-labelledby="app-map-title" className="app-map">
@@ -109,9 +117,27 @@ export function CrawlPreview({
         })}
       </div>
 
+      {canDeepCrawl && (
+        <label className="deep-crawl-toggle">
+          <input
+            type="checkbox"
+            checked={Boolean(deepCrawl)}
+            disabled={generating || disabled}
+            onChange={(e) => onToggleDeepCrawl?.(e.target.checked)}
+          />
+          <div>
+            <strong>Deep crawl (experimental)</strong>
+            <small>
+              Also maps up to 2 linked pages so tests can cover journeys that cross pages. Slower; still counts as one run.
+            </small>
+          </div>
+        </label>
+      )}
+
       <div className="map-footer">
         <span>
           {selectedUrls.length} of {totalPagesCount} pages selected
+          {canDeepCrawl && deepCrawl ? ' · deep crawl on' : ''}
         </span>
         <button
           className="primary-button"

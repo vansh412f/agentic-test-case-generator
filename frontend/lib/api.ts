@@ -1,5 +1,4 @@
 import type {
-  ApiErrorBody,
   AppMap,
   GenerateAcceptedResponse,
   JobDetail,
@@ -9,9 +8,9 @@ import type {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
-  readonly details?: any;
+  readonly details?: unknown;
 
-  constructor(status: number, code: string, message: string, details?: any) {
+  constructor(status: number, code: string, message: string, details?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
@@ -20,14 +19,48 @@ export class ApiError extends Error {
   }
 }
 
+export function errorDetail(error: ApiError, key: string): string | number | undefined {
+  if (typeof error.details !== 'object' || error.details === null) return undefined;
+  const value = (error.details as Record<string, unknown>)[key];
+  return typeof value === 'string' || typeof value === 'number' ? value : undefined;
+}
+
 async function readError(response: Response): Promise<ApiError> {
-  const body = (await response.json().catch(() => null)) as ApiErrorBody | null;
+  const text = await response.text().catch(() => '');
+  let parsed: unknown = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = null;
+  }
+
+  const isApiErrorBody = (
+    v: unknown,
+  ): v is { error: string; message: string; details?: unknown } => {
+    return (
+      typeof v === 'object' &&
+      v !== null &&
+      typeof (v as Record<string, unknown>).error === 'string' &&
+      typeof (v as Record<string, unknown>).message === 'string'
+    );
+  };
+
+  if (isApiErrorBody(parsed)) {
+    return new ApiError(response.status, parsed.error, parsed.message, parsed.details);
+  }
+
+  if (response.status >= 500) {
+    return new ApiError(
+      response.status,
+      'UPSTREAM_UNAVAILABLE',
+      'The server is unreachable or still waking up (free-tier servers can take up to a minute). Please retry shortly.',
+    );
+  }
 
   return new ApiError(
     response.status,
-    body?.error ?? 'REQUEST_FAILED',
-    body?.message ?? `Request failed with status ${response.status}`,
-    body?.details,
+    'REQUEST_FAILED',
+    `Request failed with status ${response.status}`,
   );
 }
 
@@ -151,7 +184,7 @@ export async function validateApiKey(
     headers['X-Gemini-Api-Key'] = key.trim();
   }
 
-  const response = await fetch('/api/byok/validate', {
+  const response = await fetch(resolveUrl('/api/byok/validate'), {
     method: 'POST',
     headers,
     body: JSON.stringify({ provider }),
@@ -181,8 +214,23 @@ function buildHeaders(extra?: Record<string, string>, includeKeys = false): Reco
   return headers;
 }
 
+async function request(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(resolveUrl(url), init);
+  } catch (_err) {
+    const isLocal = getApiMode() === 'local-agent';
+    throw new ApiError(
+      0,
+      'NETWORK_ERROR',
+      isLocal
+        ? 'Could not reach your local agent at localhost:4000. Is it running?'
+        : 'Could not reach the server. Check your connection and retry.',
+    );
+  }
+}
+
 export async function fetcher<T>(url: string): Promise<T> {
-  const response = await fetch(resolveUrl(url), {
+  const response = await request(url, {
     headers: buildHeaders(),
   });
 
@@ -197,7 +245,7 @@ export async function fetcher<T>(url: string): Promise<T> {
 }
 
 async function postJson<TResponse, TBody>(url: string, body: TBody): Promise<TResponse> {
-  const response = await fetch(resolveUrl(url), {
+  const response = await request(url, {
     method: 'POST',
     headers: buildHeaders(
       {
@@ -222,12 +270,30 @@ export function crawlPage(url: string): Promise<AppMap> {
   return postJson<AppMap, { url: string }>('/api/crawl', { url });
 }
 
-export function startGeneration(urls: string[], altcha?: string): Promise<GenerateAcceptedResponse> {
-  const target = urls.length === 1 ? { url: urls[0] ?? '' } : { urls };
-  return postJson<GenerateAcceptedResponse, ({ url: string } | { urls: string[] }) & { altcha?: string }>(
-    '/api/generate',
-    { ...target, ...(altcha ? { altcha } : {}) },
-  );
+export function startGeneration(
+  urls: string[],
+  altcha?: string,
+  options: { deepCrawl?: boolean } = {},
+): Promise<GenerateAcceptedResponse> {
+  type GenerateBody =
+    | { url: string; altcha?: string; deepCrawl?: boolean }
+    | { urls: string[]; altcha?: string };
+
+  let body: GenerateBody;
+  if (urls.length === 1) {
+    body = {
+      url: urls[0] ?? '',
+      ...(altcha ? { altcha } : {}),
+      ...(options.deepCrawl ? { deepCrawl: true } : {}),
+    };
+  } else {
+    body = {
+      urls,
+      ...(altcha ? { altcha } : {}),
+    };
+  }
+
+  return postJson<GenerateAcceptedResponse, GenerateBody>('/api/generate', body);
 }
 
 export function getJob(jobId: string): Promise<JobDetail> {

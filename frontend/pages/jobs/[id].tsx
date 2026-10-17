@@ -12,7 +12,9 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { Seo } from '@/components/common/Seo';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { TestResultCard } from '@/components/job/TestResultCard';
+import { ShareButton } from '@/components/job/ShareButton';
 import { useJobStream } from '@/hooks/useJobStream';
+import { useApiBase } from '@/hooks/useApiBase';
 import { ApiError } from '@/lib/api';
 import { formatJobDuration, isTerminalJobStatus } from '@/lib/utils';
 import type { JobDetail } from '@/types/api';
@@ -21,6 +23,8 @@ interface JobPageProps {
   initialJob: JobDetail | null;
   jobId: string;
 }
+
+const SSR_FETCH_TIMEOUT_MS = 4_000;
 
 export const getServerSideProps: GetServerSideProps<JobPageProps> = async ({
   params,
@@ -37,6 +41,7 @@ export const getServerSideProps: GetServerSideProps<JobPageProps> = async ({
   try {
     const response = await fetch(`${backendUrl}/api/jobs/${jobId}`, {
       headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(SSR_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -76,17 +81,19 @@ function cleanDomain(urlStr: string): string {
 }
 
 function JobDetailContent({ initialJob, jobId }: JobPageProps) {
+  const router = useRouter();
+  const isShareView = router.query.share === '1';
+  const base = useApiBase();
   const {
     data: job,
     error,
     isLoading,
     mutate,
+    transport,
   } = useJobStream(jobId, initialJob ?? undefined);
 
   if (job === undefined) {
-    const isNotFound =
-      (error instanceof ApiError && error.status === 404) ||
-      (initialJob === null && (error !== undefined || !isLoading));
+    const isNotFound = error instanceof ApiError && error.status === 404;
 
     if (isNotFound) {
       return (
@@ -148,6 +155,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     );
   }
 
+  const terminal = isTerminalJobStatus(job.status);
   const durationStr = formatJobDuration(job.createdAt, job.completedAt);
   const passedCount = job.generatedTests.filter(
     (t) => t.finalStatus === 'passed',
@@ -180,20 +188,40 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     <>
       <Seo
         description={`Playwright generation results, attempts, corrections, token usage, and confidence for ${job.targetUrl}.`}
+        image={`/api/og?id=${job.id}`}
+        noindex
         path={`/jobs/${job.id}`}
         title={`Test Results for ${job.targetUrl} — Agentic Test Case Generator`}
       />
 
       <main className="page-main detail-page">
-        <Link className="back-link" href="/jobs">
-          ← All jobs
-        </Link>
+        {isShareView ? (
+          <div className="share-cta">
+            <p>
+              <strong>Shared test run.</strong> These Playwright tests were
+              generated, executed and self-corrected by an AI agent from a single URL.
+            </p>
+            <Link className="primary-button" href="/">
+              Generate tests for your app
+            </Link>
+          </div>
+        ) : (
+          <Link className="back-link" href="/jobs">
+            ← All jobs
+          </Link>
+        )}
 
         <section className="job-hero">
           <div>
             <div className="job-title-line">
               <StatusBadge status={job.status} />
               <span>#{job.id.slice(0, 8)}</span>
+              {!terminal && transport !== 'idle' && (
+                <span className={`live-pill ${transport === 'sse' ? 'is-live' : ''}`}>
+                  <i aria-hidden="true" />
+                  {transport === 'sse' ? 'Live' : 'Polling'}
+                </span>
+              )}
             </div>
             <h1>{cleanDomain(job.targetUrl)}</h1>
             <a href={job.targetUrl} rel="noreferrer" target="_blank">
@@ -202,10 +230,14 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           </div>
 
           <div className="job-actions">
-            {isTerminalJobStatus(job.status) ? (
+            {terminal && !isShareView && (
+              <ShareButton jobId={job.id} targetUrl={job.targetUrl} />
+            )}
+
+            {terminal ? (
               <a
                 className="secondary-button"
-                href={`/api/jobs/${job.id}/report.html`}
+                href={`${base}/api/jobs/${job.id}/report.html`}
                 rel="noreferrer"
                 target="_blank"
               >
@@ -217,7 +249,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
               <a
                 className="primary-button"
                 download
-                href={`/api/jobs/${job.id}/export.zip`}
+                href={`${base}/api/jobs/${job.id}/export.zip`}
               >
                 <DownloadSimple aria-hidden="true" className="h-4 w-4" /> Export Playwright Project (.zip)
               </a>

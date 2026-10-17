@@ -1,27 +1,29 @@
 import { Check, Clock } from '@phosphor-icons/react';
 import { useEffect, useState } from 'react';
 import { formatDurationMs } from '@/lib/utils';
-import type { JobDetail } from '@/types/api';
+import type { JobDetail, JobStatus } from '@/types/api';
+import type { JobTransport } from '@/hooks/useJobStream';
 
 interface PipelineProgressProps {
   job: JobDetail | undefined;
   jobId: string | null;
   startedAt: number | null;
   submittedUrls: string[];
+  liveStatus?: JobStatus | null;
+  transport?: JobTransport;
 }
 
 const steps = ['Crawl', 'Plan', 'Generate', 'Validate', 'Execute', 'Correct'];
 
-function getActiveStepIndex(job: JobDetail | undefined): number {
-  if (!job) return 1;
+function getActiveStepIndex(job: JobDetail | undefined, liveStatus?: JobStatus | null): number {
+  const status = liveStatus ?? job?.status;
+  if (!status || status === 'pending' || status === 'crawling') return 0;
+  if (status === 'planning') return 1;
+  if (status === 'executing') return 4;
+  if (status === 'completed') return 6;
 
-  if (job.status === 'crawling') return 0;
-  if (job.status === 'planning') return 1;
-  if (job.status === 'executing') return 4;
-  if (job.status === 'completed') return 6;
-
-  if (job.status === 'generating') {
-    const latest = job.agentSteps[job.agentSteps.length - 1];
+  if (status === 'generating') {
+    const latest = job?.agentSteps[job.agentSteps.length - 1];
     if (latest?.stepType === 'correct') return 5;
     if (latest?.stepType === 'validate') return 3;
     if (latest?.stepType === 'execute') return 4;
@@ -35,6 +37,8 @@ export function PipelineProgress({
   job,
   startedAt,
   submittedUrls,
+  liveStatus,
+  transport = 'idle',
 }: PipelineProgressProps) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -44,7 +48,7 @@ export function PipelineProgress({
   }, []);
 
   const elapsed = startedAt === null ? 0 : Math.max(0, now - startedAt);
-  const active = getActiveStepIndex(job);
+  const active = getActiveStepIndex(job, liveStatus);
 
   const stepTitles = [
     'Mapping interactive elements',
@@ -73,6 +77,12 @@ export function PipelineProgress({
           <h2 id="pipeline-progress-title">Building your test suite</h2>
         </div>
         <span className="time-est">
+          {transport !== 'idle' && (
+            <span className={`live-pill ${transport === 'sse' ? 'is-live' : ''}`}>
+              <i aria-hidden="true" />
+              {transport === 'sse' ? 'Live' : 'Polling'}
+            </span>
+          )}
           <Clock aria-hidden="true" className="h-3.5 w-3.5" />
           {formatDurationMs(elapsed)} elapsed
         </span>

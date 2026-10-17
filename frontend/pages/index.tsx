@@ -18,10 +18,12 @@ import { RunGroupList } from '@/components/home/RunGroupList';
 import { useJobStream } from '@/hooks/useJobStream';
 import { isTerminalJobStatus } from '@/lib/utils';
 import { classifyTarget, isTunnelUrl, getDeploymentMode } from '@/lib/targetUrl';
+import { SITE_URL } from '@/lib/site';
 
 import {
   ApiError,
   crawlPage,
+  errorDetail,
   fetcher,
   startGeneration,
   hasConfiguredKeys,
@@ -45,12 +47,14 @@ interface HomeState {
   jobIds: string[];
   error: string | null;
   startedAt: number | null;
+  deepCrawl: boolean;
 }
 
 type HomeAction =
   | { type: 'CRAWL_STARTED' }
   | { type: 'CRAWL_SUCCEEDED'; appMap: AppMap }
   | { type: 'TOGGLE_URL'; url: string }
+  | { type: 'SET_DEEP_CRAWL'; enabled: boolean }
   | { type: 'GENERATION_STARTED'; urls: string[] }
   | { type: 'JOBS_ACCEPTED'; jobIds: string[] }
   | { type: 'FAILED'; message: string }
@@ -64,6 +68,7 @@ const initialState: HomeState = {
   jobIds: [],
   error: null,
   startedAt: null,
+  deepCrawl: false,
 };
 
 function reducer(state: HomeState, action: HomeAction): HomeState {
@@ -80,6 +85,7 @@ function reducer(state: HomeState, action: HomeAction): HomeState {
         phase: 'selecting',
         appMap: action.appMap,
         selectedUrls: [action.appMap.url],
+        deepCrawl: false,
         error: null,
       };
 
@@ -88,6 +94,7 @@ function reducer(state: HomeState, action: HomeAction): HomeState {
         return {
           ...state,
           selectedUrls: state.selectedUrls.filter((url) => url !== action.url),
+          deepCrawl: false,
         };
       }
 
@@ -96,6 +103,15 @@ function reducer(state: HomeState, action: HomeAction): HomeState {
       return {
         ...state,
         selectedUrls: [...state.selectedUrls, action.url],
+        deepCrawl: false,
+      };
+    }
+
+    case 'SET_DEEP_CRAWL': {
+      if (state.selectedUrls.length > 1) return state;
+      return {
+        ...state,
+        deepCrawl: action.enabled,
       };
     }
 
@@ -163,7 +179,7 @@ export default function HomePage() {
           const summary = groupSummaries.find((job) => job.id === id);
           return summary === undefined || !isTerminalJobStatus(summary.status);
         }) ?? null;
-  const { data: liveJob } = useJobStream(activeJobId);
+  const { data: liveJob, liveStatus, transport } = useJobStream(activeJobId);
   const navigatedRef = useRef<string | null>(null);
   const [hasCustomKeys, setHasCustomKeys] = useState(false);
   const [altchaPayload, setAltchaPayload] = useState<string | null>(null);
@@ -230,6 +246,17 @@ export default function HomePage() {
       toast.success(`App map discovered: ${appMap.elements.length} interactive elements.`);
       dispatch({ type: 'CRAWL_SUCCEEDED', appMap });
     } catch (error) {
+      if (error instanceof ApiError) {
+        if (
+          error.code === 'UPSTREAM_UNAVAILABLE' ||
+          error.code === 'BROWSER_LAUNCH_FAILED' ||
+          error.code === 'CRAWL_FAILED'
+        ) {
+          toast.error(error.message);
+          dispatch({ type: 'FAILED', message: error.message });
+          return;
+        }
+      }
       let msg = errorMessage(error);
       if (isTunnelUrl(url)) {
         msg +=
@@ -257,26 +284,44 @@ export default function HomePage() {
     dispatch({ type: 'GENERATION_STARTED', urls });
 
     try {
-      const { jobIds } = await startGeneration(urls, payloadToUse);
+      const { jobIds } = await startGeneration(urls, payloadToUse, {
+        deepCrawl: state.deepCrawl,
+      });
       dispatch({ type: 'JOBS_ACCEPTED', jobIds });
       if (jobIds.length > 1) {
         toast.success(`${jobIds.length} jobs queued. They run one after another.`);
       }
     } catch (error) {
       if (error instanceof ApiError) {
+        if (error.status === 429 || error.code === 'RATE_LIMITED') {
+          const retryAfter = errorDetail(error, 'retryAfterSeconds');
+          const wait =
+            retryAfter !== undefined
+              ? ` Please retry in ${retryAfter}s.`
+              : ' Please slow down.';
+          toast.error(`Rate limit reached.${wait}`);
+          dispatch({ type: 'FAILED', message: errorMessage(error) });
+          return;
+        }
+
         if (error.code === 'DAILY_QUOTA_EXHAUSTED') {
+          const limit = errorDetail(error, 'limit');
+          const resetsAt = errorDetail(error, 'resetsAt');
           setQuotaDetails({
-            limit: error.details?.limit ?? 20,
-            resetsAt: error.details?.resetsAt,
+            limit: typeof limit === 'number' ? limit : 20,
+            resetsAt: typeof resetsAt === 'string' ? resetsAt : undefined,
           });
           toast.error('The free daily demo quota is exhausted. Add your own API key to continue.');
         } else if (error.code === 'QUEUE_FULL') {
           toast.error('The demo server is currently running at maximum capacity. Please retry shortly.');
-        } else if (error.code === 'RATE_LIMITED') {
-          const wait = error.details?.retryAfterSeconds ? ` Please retry in ${error.details.retryAfterSeconds}s.` : ' Please slow down.';
-          toast.error(`Rate limit reached.${wait}`);
         } else if (error.code === 'POW_FAILED') {
           toast.error('Bot verification failed. Please try again.');
+        } else if (
+          error.code === 'UPSTREAM_UNAVAILABLE' ||
+          error.code === 'BROWSER_LAUNCH_FAILED' ||
+          error.code === 'CRAWL_FAILED'
+        ) {
+          toast.error(error.message);
         } else {
           toast.error(error.message || 'Generation failed.');
         }
@@ -296,7 +341,7 @@ export default function HomePage() {
             '@context': 'https://schema.org',
             '@type': 'Organization',
             name: 'Agentic Test Case Generator',
-            url: process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000',
+            url: SITE_URL,
           },
           {
             '@context': 'https://schema.org',
@@ -387,6 +432,7 @@ export default function HomePage() {
       {state.appMap && state.phase !== 'submitting' && !groupRunning ? (
         <CrawlPreview
           appMap={state.appMap}
+          deepCrawl={state.deepCrawl}
           disabled={!hasCustomKeys && !altchaPayload}
           generating={false}
           onGenerate={() => void handleGenerate()}
@@ -394,6 +440,7 @@ export default function HomePage() {
             setAltchaPayload(null);
             dispatch({ type: 'RESET' });
           }}
+          onToggleDeepCrawl={(v) => dispatch({ type: 'SET_DEEP_CRAWL', enabled: v })}
           onToggleUrl={(url) => dispatch({ type: 'TOGGLE_URL', url })}
           selectedUrls={state.selectedUrls}
         />
@@ -403,8 +450,10 @@ export default function HomePage() {
         <PipelineProgress
           job={liveJob}
           jobId={activeJobId}
+          liveStatus={liveStatus}
           startedAt={state.startedAt}
           submittedUrls={state.submittedUrls}
+          transport={transport}
         />
       ) : null}
 

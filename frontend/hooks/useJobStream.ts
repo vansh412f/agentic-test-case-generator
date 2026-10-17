@@ -13,12 +13,35 @@ export interface JobStreamResult {
   isLoading: boolean;
   mutate: KeyedMutator<JobDetail>;
   transport: JobTransport;
+  liveStatus: JobStatus | null;
 }
 
 const POLL_INTERVAL_MS = 2000;
 const REFETCH_THROTTLE_MS = 750;
 const MAX_CONSECUTIVE_SSE_ERRORS = 3;
-const STREAM_EVENTS = ['snapshot', 'phase_change', 'step_recorded', 'test_completed'] as const;
+
+const JOB_STATUSES: readonly JobStatus[] = [
+  'pending',
+  'crawling',
+  'planning',
+  'generating',
+  'executing',
+  'completed',
+  'failed',
+];
+
+function parseJobStatus(event: Event): JobStatus | null {
+  if (!(event instanceof MessageEvent) || typeof event.data !== 'string') return null;
+  try {
+    const parsed = JSON.parse(event.data);
+    const candidate = parsed?.status;
+    return typeof candidate === 'string' && (JOB_STATUSES as readonly string[]).includes(candidate)
+      ? (candidate as JobStatus)
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 // SSE events are invalidation signals: every event triggers a throttled
 // refetch of GET /api/jobs/:id (the single source of truth for rendering).
@@ -26,6 +49,7 @@ const STREAM_EVENTS = ['snapshot', 'phase_change', 'step_recorded', 'test_comple
 // reports `unavailable` (job is owned by no live process).
 export function useJobStream(jobId: string | null, fallbackData?: JobDetail): JobStreamResult {
   const [transport, setTransport] = useState<JobTransport>('idle');
+  const [liveStatus, setLiveStatus] = useState<JobStatus | null>(null);
   const key = jobId === null ? null : `${apiBase()}/api/jobs/${jobId}`;
 
   const swr = useSWR<JobDetail, Error>(key, fetcher, {
@@ -45,6 +69,8 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
   const startTerminal = initialStatus !== undefined && isTerminalJobStatus(initialStatus);
 
   useEffect(() => {
+    setLiveStatus(null);
+
     if (jobId === null || startTerminal || typeof window === 'undefined' || !('EventSource' in window)) {
       setTransport(jobId === null ? 'idle' : 'polling');
       return;
@@ -63,6 +89,12 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
       }, REFETCH_THROTTLE_MS);
     };
 
+    const handleStatusEvent = (e: Event): void => {
+      const status = parseJobStatus(e);
+      if (status) setLiveStatus(status);
+      scheduleRefetch();
+    };
+
     const stop = (next: JobTransport): void => {
       if (closed) return;
       closed = true;
@@ -74,8 +106,14 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
       errors = 0;
       setTransport('sse');
     };
-    for (const name of STREAM_EVENTS) source.addEventListener(name, scheduleRefetch);
-    source.addEventListener('job_finished', () => {
+
+    source.addEventListener('snapshot', handleStatusEvent);
+    source.addEventListener('phase_change', handleStatusEvent);
+    source.addEventListener('step_recorded', scheduleRefetch);
+    source.addEventListener('test_completed', scheduleRefetch);
+    source.addEventListener('job_finished', (e: Event) => {
+      const status = parseJobStatus(e);
+      if (status) setLiveStatus(status);
       stop('idle');
       void mutateRef.current();
     });
@@ -104,5 +142,6 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     isLoading: swr.isLoading,
     mutate: swr.mutate,
     transport,
+    liveStatus,
   };
 }
