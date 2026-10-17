@@ -5,6 +5,7 @@ import type { LlmMessage } from '../../llm/types.ts';
 import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt, TestPlanSchema } from '../prompts/plannerPrompt.ts';
 import type { TestPlan } from '../prompts/plannerPrompt.ts';
 import type { AppMap } from '../../crawler/types.ts';
+import { canonicalPageUrl } from '../../crawler/mergeAppMaps.ts';
 
 function formatZodErrors(error: z.ZodError): string {
   return error.issues
@@ -12,15 +13,38 @@ function formatZodErrors(error: z.ZodError): string {
     .join('\n');
 }
 
-type ValidationResult =
+export interface PageScope {
+  pageOf: Map<string, string>;
+  aliases: Map<string, string>;
+}
+
+export function buildPageScope(appMap: AppMap): PageScope | null {
+  if (!appMap.pages || appMap.pages.length < 2) return null;
+  const pageUrls = appMap.pages.map((p) => canonicalPageUrl(p.url));
+  const aliases = new Map<string, string>();
+  appMap.pages.forEach((p, i) => {
+    const target = pageUrls[i];
+    aliases.set(canonicalPageUrl(p.requestedUrl), target);
+    aliases.set(pageUrls[i], target);
+  });
+  const pageOf = new Map<string, string>();
+  for (const element of appMap.elements) {
+    const pageIndex = (element.page ?? 1) - 1;
+    pageOf.set(element.id, pageUrls[pageIndex] ?? pageUrls[0]);
+  }
+  return { pageOf, aliases };
+}
+
+export type ValidationResult =
   | { ok: true; plan: TestPlan }
   | { ok: false; kind: 'syntax' | 'schema'; detail: string }
   | { ok: false; kind: 'references'; detail: string; plan: TestPlan; badCaseIndexes: Set<number> };
 
-function validateAndNormalizePlan(
+export function validateAndNormalizePlan(
   content: string,
   knownIds: Set<string>,
   appMapUrl: string,
+  pageScope: PageScope | null = null,
 ): ValidationResult {
   // 1. Parse JSON
   let parsed: unknown;
@@ -42,7 +66,13 @@ function validateAndNormalizePlan(
   // - Resolve relative navigate URLs against appMap.url
   // - Check elementId references against knownIds
   const badCaseIndexes = new Set<number>();
-  const invalidRefs: Array<{ position: number; llmId: string; title: string; badIds: string[] }> = [];
+  const invalidRefs: Array<{
+    position: number;
+    llmId: string;
+    title: string;
+    badIds: string[];
+    offPage: string[];
+  }> = [];
 
   result.data.testCases.forEach((tc, idx) => {
     const llmId = tc.id;
@@ -74,21 +104,56 @@ function validateAndNormalizePlan(
       }
     }
 
+    const offPage: string[] = [];
+    if (pageScope) {
+      const resolve = (u: string) => {
+        const k = canonicalPageUrl(u, appMapUrl);
+        return pageScope.aliases.get(k) ?? k;
+      };
+      let current = resolve(appMapUrl);
+      for (const step of tc.steps) {
+        if (step.action === 'navigate' && step.value) {
+          current = resolve(step.value);
+          continue;
+        }
+        const home = step.elementId ? pageScope.pageOf.get(step.elementId) : undefined;
+        if (step.elementId && home && home !== current) {
+          offPage.push(`${step.elementId} (on ${home})`);
+        }
+      }
+    }
+
     const badIds = tc.steps
       .map((s) => s.elementId)
       .filter((id): id is string => id !== null && !knownIds.has(id));
-    if (badIds.length > 0) {
+    if (badIds.length > 0 || offPage.length > 0) {
       badCaseIndexes.add(idx);
-      invalidRefs.push({ position: idx + 1, llmId, title, badIds: [...new Set(badIds)] });
+      invalidRefs.push({
+        position: idx + 1,
+        llmId,
+        title,
+        badIds: [...new Set(badIds)],
+        offPage,
+      });
     }
   });
 
   if (invalidRefs.length > 0) {
     const detail = invalidRefs
-      .map(
-        (r) =>
-          `Test case #${r.position} "${r.title}" (your id: "${r.llmId}") references element IDs that do not exist in the App Map: ${r.badIds.join(', ')}. Use only IDs present in the App Map, or set elementId to null for text/URL assertions.`,
-      )
+      .flatMap((r) => {
+        const msgs: string[] = [];
+        if (r.badIds.length > 0) {
+          msgs.push(
+            `Test case #${r.position} "${r.title}" (your id: "${r.llmId}") references element IDs that do not exist in the App Map: ${r.badIds.join(', ')}. Use only IDs present in the App Map, or set elementId to null for text/URL assertions.`,
+          );
+        }
+        if (r.offPage.length > 0) {
+          msgs.push(
+            `Test case #${r.position} "${r.title}" (your id: "${r.llmId}") uses elements from another page without navigating there first: ${r.offPage.join(', ')}. Add a navigate step to that page URL before using them.`,
+          );
+        }
+        return msgs;
+      })
       .join('\n');
     return { ok: false, kind: 'references', detail, plan: result.data, badCaseIndexes };
   }
@@ -99,9 +164,10 @@ function validateAndNormalizePlan(
 export async function planTests(appMap: AppMap): Promise<TestPlan> {
   const appMapJson = JSON.stringify(appMap);
   const knownIds = new Set(appMap.elements.map((e) => e.id));
+  const pageScope = buildPageScope(appMap);
   const messages: LlmMessage[] = [
     { role: 'system', content: PLANNER_SYSTEM_PROMPT },
-    { role: 'user', content: buildPlannerUserPrompt(appMapJson) },
+    { role: 'user', content: buildPlannerUserPrompt(appMapJson, { multiPage: pageScope !== null }) },
   ];
 
   const salvagePlan = (res: Extract<ValidationResult, { kind: 'references' }>): TestPlan | null => {
@@ -120,7 +186,7 @@ export async function planTests(appMap: AppMap): Promise<TestPlan> {
 
   // First attempt
   const response = await callLlm({ messages, jsonMode: true, maxTokens: 4000 });
-  const firstResult = validateAndNormalizePlan(response.content, knownIds, appMap.url);
+  const firstResult = validateAndNormalizePlan(response.content, knownIds, appMap.url, pageScope);
   if (firstResult.ok) return firstResult.plan;
 
   // Self-repair (one attempt)
@@ -136,7 +202,7 @@ export async function planTests(appMap: AppMap): Promise<TestPlan> {
   ];
 
   const repairResponse = await callLlm({ messages: repairMessages, jsonMode: true, maxTokens: 4000 });
-  const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url);
+  const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, pageScope);
   if (repairResult.ok) return repairResult.plan;
 
   // Graceful degradation for reference-only errors after repair

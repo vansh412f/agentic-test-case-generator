@@ -180,6 +180,7 @@ router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res
 
   // 2. A run group of N unique URLs consumes N runs of daily quota
   const urls = 'urls' in parsed.data ? [...new Set(parsed.data.urls)] : [parsed.data.url];
+  const deepCrawl = 'url' in parsed.data && parsed.data.deepCrawl === true;
   const requested = urls.length;
 
   // 3. BYOK check: extract keys from request headers (never logged)
@@ -232,7 +233,7 @@ router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res
   }
 
   // 7. Create job rows synchronously (fail-fast) so every returned jobId exists.
-  const jobs = urls.map((url) => ({ id: randomUUID(), url }));
+  const jobs = urls.map((url) => ({ id: randomUUID(), url, deepCrawl }));
   try {
     await createPendingJobs(
       jobs.map((job) => ({ id: job.id, targetUrl: job.url })),

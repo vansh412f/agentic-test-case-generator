@@ -1,6 +1,12 @@
 import path from 'node:path';
 import { rm } from 'node:fs/promises';
-import { crawlPage } from '../crawler/pageCrawler.ts';
+import { crawlPage, crawlSite } from '../crawler/pageCrawler.ts';
+import { takeFreshCrawl } from '../crawler/crawlCache.ts';
+import {
+  DEEP_CRAWL_MAX_PAGES,
+  DEEP_CRAWL_START_PAGE_ELEMENT_CAP,
+  DEEP_CRAWL_EXTRA_PAGE_ELEMENT_CAP,
+} from './run.config.ts';
 import { planTests } from './steps/planner.ts';
 import { generateTest } from './steps/generator.ts';
 import type { GeneratedTest } from './steps/generator.ts';
@@ -66,19 +72,42 @@ function announcePhase(jobId: string, status: JobStatus): void {
   publishJobEvent(jobId, { type: 'phase_change', data: { status } });
 }
 
-// The job row must already exist (createPendingJobs at admission).
-export function runPipeline(job: { id: string; url: string }): Promise<PipelineResult> {
-  return withPersistence(() => runPersistedPipeline(job.id, job.url));
+export function toJobErrorCode(error: unknown): string {
+  if (error instanceof CrawlError || error instanceof LlmError || error instanceof RunnerError) {
+    return error.code;
+  }
+  return 'INTERNAL_ERROR';
 }
 
-async function runPersistedPipeline(jobId: string, url: string): Promise<PipelineResult> {
+async function crawlForJob(url: string, deepCrawl: boolean): Promise<AppMap> {
+  if (deepCrawl) {
+    return crawlSite(url, {
+      maxPages: DEEP_CRAWL_MAX_PAGES,
+      startPageElementCap: DEEP_CRAWL_START_PAGE_ELEMENT_CAP,
+      extraPageElementCap: DEEP_CRAWL_EXTRA_PAGE_ELEMENT_CAP,
+    });
+  }
+  const cached = takeFreshCrawl(url);
+  if (cached) {
+    console.log(`[Pipeline] Crawl cache hit for ${url}`);
+    return Promise.resolve(cached);
+  }
+  return crawlPage(url);
+}
+
+// The job row must already exist (createPendingJobs at admission).
+export function runPipeline(job: { id: string; url: string; deepCrawl?: boolean }): Promise<PipelineResult> {
+  return withPersistence(() => runPersistedPipeline(job.id, job.url, job.deepCrawl ?? false));
+}
+
+async function runPersistedPipeline(jobId: string, url: string, deepCrawl: boolean): Promise<PipelineResult> {
   const runId = `run-${jobId}`;
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
 
   try {
     await safeWrite('markJobStarted', () => markJobStarted(jobId));
     announcePhase(jobId, 'crawling');
-    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlPage(url), () => ({ success: true }));
+    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(url, deepCrawl), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
     announcePhase(jobId, 'planning');
     const testPlan = await withLlmStep({ jobId }, 'plan', () => planTests(appMap));
@@ -260,8 +289,7 @@ async function runPersistedPipeline(jobId: string, url: string): Promise<Pipelin
     publishJobEvent(jobId, { type: 'job_finished', data: { status: 'completed', errorCode: null } });
     return { jobId, appMap, testPlan, generatedTests };
   } catch (error) {
-    const code = error instanceof CrawlError || error instanceof LlmError || error instanceof RunnerError
-      ? error.code : 'INTERNAL_ERROR';
+    const code = toJobErrorCode(error);
     await safeWrite('failJob', () => failJob(jobId, code, error instanceof Error ? error.message : String(error)));
     publishJobEvent(jobId, { type: 'job_finished', data: { status: 'failed', errorCode: code } });
     throw error;

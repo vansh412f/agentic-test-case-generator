@@ -6,6 +6,7 @@ import { pipelineGate } from '../security/concurrencyGate.ts';
 export interface QueuedJob {
   id: string;
   url: string;
+  deepCrawl?: boolean;
 }
 
 export type RunOne = (job: QueuedJob) => Promise<unknown>;
