@@ -21,6 +21,7 @@ import { classifyTarget, isTunnelUrl, getDeploymentMode } from '@/lib/targetUrl'
 import { SITE_URL } from '@/lib/site';
 
 import {
+  apiBase,
   ApiError,
   crawlPage,
   errorDetail,
@@ -157,7 +158,7 @@ export default function HomePage() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const isRunGroup = state.jobIds.length > 1;
   const { data: groupList } = useSWR<JobsListResponse, Error>(
-    state.phase === 'running' && isRunGroup ? '/api/jobs?page=1&limit=20' : null,
+    state.phase === 'running' && isRunGroup ? `${apiBase()}/api/jobs?page=1&limit=20` : null,
     fetcher,
     {
       refreshInterval: (latest) =>

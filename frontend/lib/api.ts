@@ -158,7 +158,7 @@ export function apiBase(): string {
   return getApiMode() === 'local-agent' ? 'http://localhost:4000' : '';
 }
 
-function resolveUrl(url: string): string {
+export function resolveUrl(url: string): string {
   if (url.startsWith('/api')) {
     return `${apiBase()}${url}`;
   }

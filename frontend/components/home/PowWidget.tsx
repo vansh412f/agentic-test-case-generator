@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { resolveUrl } from '@/lib/api';
 
 interface PowWidgetProps {
   challengeUrl?: string;
@@ -57,7 +58,7 @@ export function PowWidget({
 
     async function run() {
       try {
-        const resp = await fetch(challengeUrl);
+        const resp = await fetch(resolveUrl(challengeUrl));
         if (!resp.ok) {
           throw new Error(`Failed to fetch PoW challenge: ${resp.status}`);
         }
