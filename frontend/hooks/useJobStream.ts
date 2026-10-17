@@ -82,14 +82,15 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     let closed = false;
 
     const scheduleRefetch = (): void => {
-      if (timer !== null) return;
+      if (closed || timer !== null) return;
       timer = window.setTimeout(() => {
         timer = null;
-        void mutateRef.current();
+        if (!closed) void mutateRef.current();
       }, REFETCH_THROTTLE_MS);
     };
 
     const handleStatusEvent = (e: Event): void => {
+      if (closed) return;
       const status = parseJobStatus(e);
       if (status) setLiveStatus(status);
       scheduleRefetch();
@@ -103,6 +104,7 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     };
 
     source.onopen = () => {
+      if (closed) return;
       errors = 0;
       setTransport('sse');
     };
@@ -112,6 +114,7 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     source.addEventListener('step_recorded', scheduleRefetch);
     source.addEventListener('test_completed', scheduleRefetch);
     source.addEventListener('job_finished', (e: Event) => {
+      if (closed) return;
       const status = parseJobStatus(e);
       if (status) setLiveStatus(status);
       stop('idle');
@@ -119,6 +122,7 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     });
     source.addEventListener('unavailable', () => stop('polling'));
     source.onerror = () => {
+      if (closed) return;
       // EventSource auto-reconnects (server sends retry: 3000). A 4xx/5xx
       // response closes it permanently (readyState CLOSED).
       errors += 1;
@@ -130,8 +134,8 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     };
 
     return () => {
-      if (timer !== null) window.clearTimeout(timer);
       closed = true;
+      if (timer !== null) window.clearTimeout(timer);
       source.close();
     };
   }, [jobId, startTerminal]);
