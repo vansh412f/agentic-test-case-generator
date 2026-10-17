@@ -4,6 +4,8 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { RUNNER_DIR, RUNNER_TESTS_DIR, STATIC_VALIDATION_TIMEOUT_MS } from './config.ts';
+import { childProcessEnv } from './childEnv.ts';
+import { findUnsafeConstructs } from './codeSafety.ts';
 
 export interface ValidationResult {
   valid: boolean;
@@ -14,6 +16,9 @@ export async function validateTestCode(
   runId: string,
   files: Array<{ filename: string; code: string }>,
 ): Promise<ValidationResult> {
+  const unsafe = files.flatMap((file) => findUnsafeConstructs(file.code, file.filename));
+  if (unsafe.length > 0) return { valid: false, errors: unsafe };
+
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
   const tsconfigRunPath = path.join(RUNNER_DIR, `tsconfig.${runId}.json`);
 
@@ -44,7 +49,7 @@ export async function validateTestCode(
       childProcess = execFile(
         process.execPath,
         [tscJs, '--noEmit', '--project', tsconfigRunPath],
-        { cwd: RUNNER_DIR },
+        { cwd: RUNNER_DIR, env: childProcessEnv() },
         (error, stdout, stderr) => {
           // If error is null, tsc exited 0 (clean).
           // If error is present with a non-zero exit code, diagnostics are in stdout.

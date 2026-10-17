@@ -9,6 +9,7 @@ import {
   EXECUTION_TIMEOUT_MS,
 } from './config.ts';
 import { RunnerError } from './errors.ts';
+import { playwrightRunnerEnv } from './childEnv.ts';
 
 export type FailureClass = 'finding' | 'locator' | 'timeout' | 'other';
 
@@ -146,7 +147,7 @@ export async function executeTests(
         {
           cwd: RUNNER_DIR,
           timeout: EXECUTION_TIMEOUT_MS,
-          env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_FILE: resultsPath },
+          env: playwrightRunnerEnv(resultsPath),
         },
         (err) => {
           if (err) {
