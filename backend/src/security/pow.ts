@@ -42,16 +42,18 @@ class AltchaPowService implements PowService {
       return false;
     }
 
+    // Atomically reserve before async verification to block concurrent replays
+    this.consumed.set(hash, now + 10 * 60 * 1000);
+
     try {
       const valid = await verifySolution(trimmed, powSecret(), true);
       if (!valid) {
+        this.consumed.delete(hash);
         return false;
       }
-
-      // Mark as consumed for 10 minutes
-      this.consumed.set(hash, now + 10 * 60 * 1000);
       return true;
     } catch {
+      this.consumed.delete(hash);
       return false;
     }
   }
