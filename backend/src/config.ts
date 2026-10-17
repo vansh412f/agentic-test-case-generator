@@ -7,10 +7,8 @@ dotenv.config();
 const configSchema = z.object({
   PORT: z.coerce.number().default(4000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  HEADLESS: z
-    .string()
-    .default('false')
-    .transform((val) => val.toLowerCase() === 'true'),
+  HEADLESS: z.string().default('true').transform((val) => val.trim().toLowerCase() !== 'false'),
+  CRAWL_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
   MAX_ELEMENTS_PER_PAGE: z.coerce.number().int().positive().default(200),
   NAVIGATION_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   NETWORK_IDLE_WAIT_MS: z.coerce.number().int().nonnegative().default(3000),
@@ -36,6 +34,11 @@ const parseConfig = (): Config => {
     console.error('Invalid environment variables:');
     console.error(JSON.stringify(result.error.format(), null, 2));
     process.exit(1);
+  }
+
+  if (result.data.NODE_ENV === 'production' && !result.data.HEADLESS) {
+    console.warn('[Config] HEADLESS=false is ignored in production; browsers always run headless.');
+    return { ...result.data, HEADLESS: true };
   }
 
   return result.data;

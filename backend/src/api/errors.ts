@@ -16,6 +16,7 @@ const CRAWL_ERROR_STATUS: Record<CrawlErrorCode, number> = {
   NAVIGATION_TIMEOUT: 504,
   NAVIGATION_FAILED: 502,
   EXTRACTION_FAILED: 500,
+  BROWSER_LAUNCH_FAILED: 503,
 };
 
 const LLM_ERROR_STATUS: Record<LlmErrorCode, number> = {

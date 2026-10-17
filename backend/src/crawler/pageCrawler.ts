@@ -1,9 +1,19 @@
-import { chromium, errors } from 'playwright';
+import { chromium, errors, type Browser } from 'playwright';
 import { config, VIEWPORT } from '../config.ts';
 import { CrawlError } from './crawlErrors.ts';
 import { extractElements } from './browser/extractElements.ts';
 import { extractForms } from './browser/extractForms.ts';
 import { buildAppMap } from './appMapBuilder.ts';
+
+async function launchBrowser(): Promise<Browser> {
+  try {
+    return await chromium.launch({ headless: config.HEADLESS });
+  } catch (err) {
+    // Launch errors embed executable paths / missing libs: log, never return.
+    console.error(`[Crawler] Browser launch failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw new CrawlError('BROWSER_LAUNCH_FAILED', 'The crawler browser could not start. Please retry shortly.', err);
+  }
+}
 
 export async function crawlPage(url: string) {
   // Validate URL before launching anything expensive 
@@ -21,7 +31,7 @@ export async function crawlPage(url: string) {
   }
 
   // Launch a fresh browser 
-  const browser = await chromium.launch({ headless: config.HEADLESS });
+  const browser = await launchBrowser();
   try {
     const context = await browser.newContext({ viewport: VIEWPORT });
     const page = await context.newPage();
@@ -59,7 +69,7 @@ export async function crawlPage(url: string) {
         });
       } catch (err) {
         if (!(err instanceof errors.TimeoutError)) {
-          throw err;
+          throw new CrawlError('NAVIGATION_FAILED', `Page became unavailable after load: ${(err as Error).message}`, err);
         }
         // Timeout is expected for pages with polling/websockets
       }
@@ -86,6 +96,6 @@ export async function crawlPage(url: string) {
       throw new CrawlError('EXTRACTION_FAILED', 'Failed to extract or build App Map', err);
     }
   } finally {
-    await browser.close();
+    await browser.close().catch(() => undefined);
   }
 }

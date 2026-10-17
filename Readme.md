@@ -449,7 +449,7 @@ pnpm dev
 |---|---|---|---|
 | `PORT` | No | `4000` | Port for Express API server |
 | `NODE_ENV` | No | `development` | Environment mode (`development`, `production`, `test`) |
-| `HEADLESS` | No | `true` | Launch Playwright Chromium in headless mode |
+| `HEADLESS` | No | `true` | Launch Playwright Chromium in headless mode (ignored in production) |
 | `MAX_ELEMENTS_PER_PAGE` | No | `200` | Max interactive DOM elements extracted per page |
 | `NAVIGATION_TIMEOUT_MS` | No | `30000` | Playwright page load timeout (ms) |
 | `DATABASE_URL` | **Yes** | — | Supavisor pooled PostgreSQL connection string |
@@ -461,6 +461,7 @@ pnpm dev
 | `GENERATE_DAILY_LIMIT` | No | `20` | Daily global quota limit for unauthenticated runs |
 | `LOCAL_AGENT_MODE` | No | `false` | Enable permissive CORS/PNA headers for local agent connections |
 | `PIPELINE_CONCURRENCY` | No | `2` | Max simultaneous run groups (1–4). Set 1 on 512MB hosts |
+| `CRAWL_CONCURRENCY` | No | `2` | Max simultaneous crawl previews (1–4) |
 
 #### Frontend (`frontend/.env.local`)
 

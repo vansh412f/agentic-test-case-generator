@@ -3,6 +3,7 @@ export const CRAWL_ERROR_CODES = [
   'NAVIGATION_FAILED',
   'NAVIGATION_TIMEOUT',
   'EXTRACTION_FAILED',
+  'BROWSER_LAUNCH_FAILED',
 ] as const;
 
 export type CrawlErrorCode = (typeof CRAWL_ERROR_CODES)[number];
