@@ -12,7 +12,7 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { Seo } from '@/components/common/Seo';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { TestResultCard } from '@/components/job/TestResultCard';
-import { useJobPolling } from '@/hooks/useJobPolling';
+import { useJobStream } from '@/hooks/useJobStream';
 import { ApiError } from '@/lib/api';
 import { formatJobDuration, isTerminalJobStatus } from '@/lib/utils';
 import type { JobDetail } from '@/types/api';
@@ -81,7 +81,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     error,
     isLoading,
     mutate,
-  } = useJobPolling(jobId, initialJob ?? undefined);
+  } = useJobStream(jobId, initialJob ?? undefined);
 
   if (job === undefined) {
     const isNotFound =

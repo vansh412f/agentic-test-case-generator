@@ -1,8 +1,8 @@
-import { ArrowRight, CheckCircle, Warning, XCircle } from '@phosphor-icons/react';
+import { ArrowRight, Warning } from '@phosphor-icons/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useReducer, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import useSWR from 'swr';
 import { toast } from 'sonner';
 import { Seo } from '@/components/common/Seo';
 import { CrawlPreview } from '@/components/home/CrawlPreview';
@@ -14,26 +14,27 @@ import { StatsBar } from '@/components/home/StatsBar';
 import { QuotaExhaustedPanel } from '@/components/home/QuotaExhaustedPanel';
 import { PowWidget } from '@/components/home/PowWidget';
 import { HeroTerminal } from '@/components/home/HeroTerminal';
-import { useJobPolling } from '@/hooks/useJobPolling';
+import { RunGroupList } from '@/components/home/RunGroupList';
+import { useJobStream } from '@/hooks/useJobStream';
+import { isTerminalJobStatus } from '@/lib/utils';
 import { classifyTarget, isTunnelUrl, getDeploymentMode } from '@/lib/targetUrl';
 
 import {
   ApiError,
   crawlPage,
-  generateBatch,
-  generateSingle,
-  getJobs,
+  fetcher,
+  startGeneration,
   hasConfiguredKeys,
   getApiMode,
 } from '@/lib/api';
-import type { AppMap, BatchResponse } from '@/types/api';
+import type { AppMap, JobsListResponse } from '@/types/api';
 
 type RunPhase =
   | 'idle'
   | 'crawling'
   | 'selecting'
   | 'submitting'
-  | 'batch-complete'
+  | 'running'
   | 'error';
 
 interface HomeState {
@@ -41,8 +42,7 @@ interface HomeState {
   appMap: AppMap | null;
   selectedUrls: string[];
   submittedUrls: string[];
-  jobId: string | null;
-  batch: BatchResponse | null;
+  jobIds: string[];
   error: string | null;
   startedAt: number | null;
 }
@@ -52,8 +52,7 @@ type HomeAction =
   | { type: 'CRAWL_SUCCEEDED'; appMap: AppMap }
   | { type: 'TOGGLE_URL'; url: string }
   | { type: 'GENERATION_STARTED'; urls: string[] }
-  | { type: 'JOB_DISCOVERED'; jobId: string }
-  | { type: 'BATCH_SUCCEEDED'; batch: BatchResponse }
+  | { type: 'JOBS_ACCEPTED'; jobIds: string[] }
   | { type: 'FAILED'; message: string }
   | { type: 'RESET' };
 
@@ -62,8 +61,7 @@ const initialState: HomeState = {
   appMap: null,
   selectedUrls: [],
   submittedUrls: [],
-  jobId: null,
-  batch: null,
+  jobIds: [],
   error: null,
   startedAt: null,
 };
@@ -107,21 +105,15 @@ function reducer(state: HomeState, action: HomeAction): HomeState {
         phase: 'submitting',
         submittedUrls: action.urls,
         startedAt: Date.now(),
-        jobId: null,
+        jobIds: [],
         error: null,
       };
 
-    case 'JOB_DISCOVERED':
+    case 'JOBS_ACCEPTED':
       return {
         ...state,
-        jobId: action.jobId,
-      };
-
-    case 'BATCH_SUCCEEDED':
-      return {
-        ...state,
-        phase: 'batch-complete',
-        batch: action.batch,
+        phase: 'running',
+        jobIds: action.jobIds,
       };
 
     case 'FAILED':
@@ -147,7 +139,32 @@ function errorMessage(error: unknown): string {
 export default function HomePage() {
   const router = useRouter();
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { data: liveJob } = useJobPolling(state.jobId);
+  const isRunGroup = state.jobIds.length > 1;
+  const { data: groupList } = useSWR<JobsListResponse, Error>(
+    state.phase === 'running' && isRunGroup ? '/api/jobs?page=1&limit=20' : null,
+    fetcher,
+    {
+      refreshInterval: (latest) =>
+        latest !== undefined &&
+        state.jobIds.every((id) => {
+          const summary = latest.jobs.find((job) => job.id === id);
+          return summary !== undefined && isTerminalJobStatus(summary.status);
+        })
+          ? 0
+          : 3000,
+    },
+  );
+  const groupSummaries = (groupList?.jobs ?? []).filter((job) => state.jobIds.includes(job.id));
+  // Jobs in a run group execute sequentially: the active one is the first non-terminal id.
+  const activeJobId =
+    state.phase !== 'running'
+      ? null
+      : state.jobIds.find((id) => {
+          const summary = groupSummaries.find((job) => job.id === id);
+          return summary === undefined || !isTerminalJobStatus(summary.status);
+        }) ?? null;
+  const { data: liveJob } = useJobStream(activeJobId);
+  const navigatedRef = useRef<string | null>(null);
   const [hasCustomKeys, setHasCustomKeys] = useState(false);
   const [altchaPayload, setAltchaPayload] = useState<string | null>(null);
   const [powEpoch, setPowEpoch] = useState(0);
@@ -174,49 +191,22 @@ export default function HomePage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const busy =
-    state.phase === 'crawling' ||
-    state.phase === 'submitting';
+  const groupRunning = state.phase === 'running' && activeJobId !== null;
+  const busy = state.phase === 'crawling' || state.phase === 'submitting' || groupRunning;
 
+  // Single-job run: navigate to the job page once the stream reports a terminal status.
   useEffect(() => {
-    if (
-      state.phase !== 'submitting' ||
-      state.jobId !== null ||
-      state.startedAt === null
-    ) {
-      return;
+    if (state.phase !== 'running' || state.jobIds.length !== 1 || liveJob === undefined) return;
+    if (liveJob.id !== state.jobIds[0] || !isTerminalJobStatus(liveJob.status)) return;
+    if (navigatedRef.current === liveJob.id) return;
+    navigatedRef.current = liveJob.id;
+    if (liveJob.status === 'completed') {
+      toast.success('Test suite generation completed successfully');
+    } else {
+      toast.error(`Generation failed${liveJob.errorCode ? ` (${liveJob.errorCode})` : ''}`);
     }
-
-    let cancelled = false;
-
-    async function discoverJob(): Promise<void> {
-      try {
-        const result = await getJobs(1, 5);
-        const startedAt = state.startedAt;
-        if (cancelled || startedAt === null) return;
-
-        const candidate = result.jobs.find(
-          (job) =>
-            state.submittedUrls.includes(job.targetUrl) &&
-            new Date(job.createdAt).getTime() >= startedAt - 5000,
-        );
-
-        if (candidate !== undefined) {
-          dispatch({ type: 'JOB_DISCOVERED', jobId: candidate.id });
-        }
-      } catch {
-        // The generation POST remains authoritative; discovery is best effort.
-      }
-    }
-
-    void discoverJob();
-    const interval = window.setInterval(() => void discoverJob(), 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [state.phase, state.jobId, state.startedAt, state.submittedUrls]);
+    void router.push(`/jobs/${liveJob.id}`);
+  }, [liveJob, state.phase, state.jobIds, router]);
 
   async function handleCrawl(url: string): Promise<void> {
     const classified = classifyTarget(url);
@@ -267,16 +257,11 @@ export default function HomePage() {
     dispatch({ type: 'GENERATION_STARTED', urls });
 
     try {
-      if (urls.length === 1) {
-        const result = await generateSingle(urls[0] ?? '', payloadToUse);
-        toast.success('Test suite generation completed successfully');
-        await router.push(`/jobs/${result.jobId}`);
-        return;
+      const { jobIds } = await startGeneration(urls, payloadToUse);
+      dispatch({ type: 'JOBS_ACCEPTED', jobIds });
+      if (jobIds.length > 1) {
+        toast.success(`${jobIds.length} jobs queued. They run one after another.`);
       }
-
-      const batch = await generateBatch(urls, payloadToUse);
-      toast.success(`Batch completed: ${batch.summary.succeeded}/${batch.summary.total} jobs succeeded`);
-      dispatch({ type: 'BATCH_SUCCEEDED', batch });
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.code === 'DAILY_QUOTA_EXHAUSTED') {
@@ -387,19 +372,19 @@ export default function HomePage() {
             <strong>Request failed</strong>
             <p>{state.error}</p>
           </div>
-          {state.jobId ? (
+          {state.jobIds[0] ? (
             <Link
               className="inline-flex items-center gap-1.5 font-bold"
-              href={`/jobs/${state.jobId}`}
+              href={`/jobs/${state.jobIds[0]}`}
             >
-              Open discovered job
+              Open job
               <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
             </Link>
           ) : null}
         </div>
       ) : null}
 
-      {state.appMap && state.phase !== 'submitting' ? (
+      {state.appMap && state.phase !== 'submitting' && !groupRunning ? (
         <CrawlPreview
           appMap={state.appMap}
           disabled={!hasCustomKeys && !altchaPayload}
@@ -414,63 +399,24 @@ export default function HomePage() {
         />
       ) : null}
 
-      {state.phase === 'submitting' ? (
+      {state.phase === 'submitting' || groupRunning ? (
         <PipelineProgress
           job={liveJob}
-          jobId={state.jobId}
+          jobId={activeJobId}
           startedAt={state.startedAt}
           submittedUrls={state.submittedUrls}
         />
       ) : null}
 
-      {state.phase === 'batch-complete' && state.batch ? (
-        <section
-          aria-labelledby="batch-results-title"
-          className="app-map mb-12"
-        >
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Batch complete</p>
-              <h2 id="batch-results-title">
-                {state.batch.summary.succeeded} of {state.batch.summary.total} jobs completed
-              </h2>
-            </div>
-          </div>
-
-          <div className="page-list">
-            {state.batch.results.map((result) => (
-              <div className="page-row" key={result.url}>
-                <span className="page-icon">
-                  {result.status === 'completed' ? (
-                    <CheckCircle aria-hidden="true" className="h-4 w-4 text-[#527318]" />
-                  ) : (
-                    <XCircle aria-hidden="true" className="h-4 w-4 text-danger" />
-                  )}
-                </span>
-                <span className="page-name">
-                  <strong>{result.url}</strong>
-                  <code>
-                    {result.status === 'completed'
-                      ? `${result.testCount} tests · ${result.passedCount} passed · ${result.failedCount} findings · ${result.gaveUpCount} gave up`
-                      : `${result.error.error}: ${result.error.message}`}
-                  </code>
-                </span>
-                {result.status === 'completed' ? (
-                  <Link
-                    className="primary-button text-xs py-2 px-3"
-                    href={`/jobs/${result.jobId}`}
-                  >
-                    Open job
-                    <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-                  </Link>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </section>
+      {state.phase === 'running' && isRunGroup ? (
+        <RunGroupList
+          jobIds={state.jobIds}
+          submittedUrls={state.submittedUrls}
+          summaries={groupSummaries}
+        />
       ) : null}
 
-      {state.appMap && state.phase !== 'submitting' && !hasCustomKeys ? (
+      {state.appMap && state.phase !== 'submitting' && !groupRunning && !hasCustomKeys ? (
         <PowWidget key={powEpoch} onPayload={setAltchaPayload} />
       ) : null}
 

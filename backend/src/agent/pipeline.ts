@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { crawlPage } from '../crawler/pageCrawler.ts';
 import { planTests } from './steps/planner.ts';
@@ -14,7 +13,9 @@ import type { TestPlan } from './prompts/plannerPrompt.ts';
 import type { ScopedElement } from './types.ts';
 import { scoreTestConfidence } from './confidence.ts';
 import type { ConfidenceScore } from './confidence.ts';
-import { createJob, updateJobStatus, setAppMap, setTestPlan, completeJob, failJob } from '../db/jobs.ts';
+import type { JobStatus } from '@prisma/client';
+import { markJobStarted, updateJobStatus, setAppMap, setTestPlan, completeJob, failJob } from '../db/jobs.ts';
+import { publishJobEvent } from './jobEvents.ts';
 import { recordGeneratedTest } from '../db/generatedTests.ts';
 import { safeWrite, withPersistence } from '../db/safeWrite.ts';
 import { withLlmStep, withMeasuredStep } from './persistence.ts';
@@ -61,34 +62,28 @@ function projectElementScope(elements: InteractiveElement[]): ScopedElement[] {
   }));
 }
 
-export function runPipeline(
-  url: string,
-  options?: { visitorId?: string | null; usedOwnKeys?: boolean }
-): Promise<PipelineResult> {
-  return withPersistence(() => runPersistedPipeline(url, options));
+function announcePhase(jobId: string, status: JobStatus): void {
+  publishJobEvent(jobId, { type: 'phase_change', data: { status } });
 }
 
-async function runPersistedPipeline(
-  url: string,
-  options?: { visitorId?: string | null; usedOwnKeys?: boolean }
-): Promise<PipelineResult> {
-  const jobId = randomUUID();
+// The job row must already exist (createPendingJobs at admission).
+export function runPipeline(job: { id: string; url: string }): Promise<PipelineResult> {
+  return withPersistence(() => runPersistedPipeline(job.id, job.url));
+}
+
+async function runPersistedPipeline(jobId: string, url: string): Promise<PipelineResult> {
   const runId = `run-${jobId}`;
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
 
   try {
-    await safeWrite('createJob', () =>
-      createJob({
-        id: jobId,
-        targetUrl: url,
-        visitorId: options?.visitorId,
-        usedOwnKeys: options?.usedOwnKeys,
-      })
-    );
+    await safeWrite('markJobStarted', () => markJobStarted(jobId));
+    announcePhase(jobId, 'crawling');
     const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlPage(url), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
+    announcePhase(jobId, 'planning');
     const testPlan = await withLlmStep({ jobId }, 'plan', () => planTests(appMap));
     await safeWrite('setTestPlan', () => setTestPlan(jobId, testPlan));
+    announcePhase(jobId, 'generating');
 
     const generatedTests: GeneratedTestResult[] = [];
 
@@ -106,6 +101,7 @@ async function runPersistedPipeline(
 
       // Initial generation
       await safeWrite('updateJobStatus:generating', () => updateJobStatus(jobId, 'generating'));
+      announcePhase(jobId, 'generating');
       const initialGen = await withLlmStep(
         { jobId, testCaseId: testCase.id }, 'generate',
         () => generateTest(testCase, elementsInScope, appMap.url),
@@ -168,6 +164,7 @@ async function runPersistedPipeline(
 
         // Step B: Execution
         await safeWrite('updateJobStatus:executing', () => updateJobStatus(jobId, 'executing'));
+        announcePhase(jobId, 'executing');
         const executionResult = await withMeasuredStep(
           context, 'execute',
           () => executeTests(runId, [{ filename, code: currentCode }]),
@@ -244,6 +241,10 @@ async function runPersistedPipeline(
         jobId, testCaseId: testCase.id, filename, finalCode: currentCode,
         finalStatus, attempts,
       }));
+      publishJobEvent(jobId, {
+        type: 'test_completed',
+        data: { testCaseId: testCase.id, status: finalStatus, totalAttempts: attempts.length },
+      });
 
       generatedTests.push({
         testCaseId: testCase.id,
@@ -256,11 +257,13 @@ async function runPersistedPipeline(
     }
 
     await safeWrite('completeJob', () => completeJob(jobId));
+    publishJobEvent(jobId, { type: 'job_finished', data: { status: 'completed', errorCode: null } });
     return { jobId, appMap, testPlan, generatedTests };
   } catch (error) {
     const code = error instanceof CrawlError || error instanceof LlmError || error instanceof RunnerError
       ? error.code : 'INTERNAL_ERROR';
     await safeWrite('failJob', () => failJob(jobId, code, error instanceof Error ? error.message : String(error)));
+    publishJobEvent(jobId, { type: 'job_finished', data: { status: 'failed', errorCode: code } });
     throw error;
   } finally {
     try {

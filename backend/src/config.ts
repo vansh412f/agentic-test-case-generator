@@ -21,6 +21,7 @@ const configSchema = z.object({
   POW_SECRET: z.string().min(16).optional(),
   VISITOR_SIGNING_SECRET: z.string().min(16).optional(),
   GENERATE_DAILY_LIMIT: z.coerce.number().int().positive().default(20),
+  PIPELINE_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
   LOCAL_AGENT_MODE: z.string().default('false').transform((v) => v.toLowerCase() === 'true'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
   FRONTEND_ORIGIN: z.string().optional(),

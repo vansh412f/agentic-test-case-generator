@@ -1,5 +1,4 @@
 import { motion, useReducedMotion, type Variants } from 'framer-motion';
-import { HowItWorksVariantsShowcase } from './how-it-works-variants/HowItWorksVariantsShowcase';
 
 const steps = [
   {
@@ -51,8 +50,7 @@ export function HowItWorks() {
   };
 
   return (
-    <>
-      <section aria-labelledby="how-it-works-title" className="how" id="how-it-works">
+    <section aria-labelledby="how-it-works-title" className="how" id="how-it-works">
       <motion.div
         className="how-heading"
         initial={{ opacity: 0, y: shouldReduceMotion ? 0 : 18 }}
@@ -171,10 +169,6 @@ export function HowItWorks() {
         </div>
       </motion.div>
     </section>
-
-    {/* 11 Alternative Design Variants for User Review */}
-    <HowItWorksVariantsShowcase />
-    </>
   );
 }
 

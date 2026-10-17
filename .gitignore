@@ -49,3 +49,6 @@ pnpm-debug.log*
 # OS generated files
 .DS_Store
 Thumbs.db
+powershell.cmd
+**/powershell.cmd
+

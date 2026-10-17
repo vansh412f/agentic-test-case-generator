@@ -1,9 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import jobsRouter from './jobsRoutes.ts';
 import { CrawlRequestSchema, GenerateRequestSchema } from './schemas.ts';
 import { crawlPage } from '../crawler/pageCrawler.ts';
-import { runPipeline } from '../agent/pipeline.ts';
-import { runBatch } from '../agent/batch.ts';
+import { startDetachedRun } from '../agent/jobRunner.ts';
 import { toHttpError } from './errors.ts';
 import { visitorMiddleware } from './visitorMiddleware.ts';
 import {
@@ -21,11 +21,11 @@ import {
   releaseReservation,
   getReservedCount,
 } from '../security/dailyQuota.ts';
-import { pipelineGate, QueueFullError } from '../security/concurrencyGate.ts';
-import { withRequestLlmKeys, hasOwnKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
+import { pipelineGate } from '../security/concurrencyGate.ts';
+import { hasOwnKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
 import { z } from 'zod';
 import { config } from '../config.ts';
-import { getLifetimeStats } from '../db/jobs.ts';
+import { createPendingJobs, getLifetimeStats } from '../db/jobs.ts';
 
 const router = Router();
 router.use(visitorMiddleware);
@@ -169,11 +169,11 @@ router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res
     return;
   }
 
-  // 2. Batch counts per unique URL requested (a batch of 5 unique pages consumes 5 runs of daily quota)
-  const dedupeCount = 'urls' in parsed.data ? new Set(parsed.data.urls).size : 1;
-  const requested = dedupeCount;
+  // 2. A run group of N unique URLs consumes N runs of daily quota
+  const urls = 'urls' in parsed.data ? [...new Set(parsed.data.urls)] : [parsed.data.url];
+  const requested = urls.length;
 
-  // 3. BYOK check: extract keys from request headers
+  // 3. BYOK check: extract keys from request headers (never logged)
   const requestKeys: RequestLlmKeys = {
     groq: req.header('x-groq-api-key')?.trim() || undefined,
     gemini: req.header('x-gemini-api-key')?.trim() || undefined,
@@ -199,7 +199,7 @@ router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res
     }
   }
 
-  // 5. Enforce ALTCHA proof-of-work if not using own keys (after quota check so users don't burn solves)
+  // 5. Enforce ALTCHA proof-of-work if not using own keys
   if (!usesOwnKeys) {
     const payload = parsed.data.altcha;
     if (!payload || !(await powService.verifyAndConsume(payload))) {
@@ -212,56 +212,40 @@ router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res
     }
   }
 
-  // 6. Concurrency gate wrapped in withRequestLlmKeys, holding reservation until completion
-  const pipelineOptions = { visitorId: req.visitorId, usedOwnKeys: usesOwnKeys };
+  // 6. Concurrency gate: ONE slot per run group. Ownership transfers to startDetachedRun.
+  if (!pipelineGate.tryAcquire()) {
+    if (!usesOwnKeys) releaseReservation(requested);
+    res.status(429).json({
+      error: 'QUEUE_FULL',
+      message: 'The execution queue is currently full. Please retry shortly.',
+    });
+    return;
+  }
 
+  // 7. Create job rows synchronously (fail-fast) so every returned jobId exists.
+  const jobs = urls.map((url) => ({ id: randomUUID(), url }));
   try {
-    try {
-      await withRequestLlmKeys(requestKeys, async () => {
-        if ('urls' in parsed.data) {
-          res.json(
-            await runBatch(parsed.data.urls, async (url) => {
-              if (!pipelineGate.tryAcquire()) {
-                throw new QueueFullError();
-              }
-              try {
-                return await runPipeline(url, pipelineOptions);
-              } finally {
-                pipelineGate.release();
-              }
-            })
-          );
-          return;
-        }
-
-        if (!pipelineGate.tryAcquire()) {
-          res.status(429).json({
-            error: 'QUEUE_FULL',
-            message: 'The execution queue is currently full. Please retry shortly.',
-          });
-          return;
-        }
-
-        try {
-          const result = await runPipeline(parsed.data.url, pipelineOptions);
-          res.json(result);
-        } finally {
-          pipelineGate.release();
-        }
-      });
-    } finally {
-      if (!usesOwnKeys) {
-        releaseReservation(requested);
-      }
-    }
+    await createPendingJobs(
+      jobs.map((job) => ({ id: job.id, targetUrl: job.url })),
+      { visitorId: req.visitorId, usedOwnKeys: usesOwnKeys },
+    );
   } catch (err) {
+    pipelineGate.release();
     const httpErr = toHttpError(err);
     if (httpErr) {
       res.status(httpErr.status).json(httpErr.body);
       return;
     }
     throw err;
+  } finally {
+    // Committed rows are now counted by jobsCreatedToday(); holding the
+    // reservation any longer would double-count them for the whole run.
+    if (!usesOwnKeys) releaseReservation(requested);
   }
+
+  // 8. Detach. BYOK ALS context is entered inside startDetachedRun.
+  startDetachedRun(jobs, requestKeys);
+  res.status(202).json({ jobIds: jobs.map((job) => job.id) });
 });
 
 export default router;

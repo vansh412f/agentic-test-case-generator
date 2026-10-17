@@ -1,3 +1,5 @@
+import { config } from '../config.ts';
+
 export class QueueFullError extends Error {
   readonly code = 'QUEUE_FULL';
   constructor(message = 'The execution queue is currently full. Please retry shortly.') {
@@ -26,4 +28,6 @@ export class ConcurrencyGate {
   }
 }
 
-export const pipelineGate = new ConcurrencyGate(2);
+// One slot = one run group (1..MAX_URLS_PER_RUN sequential jobs).
+export const pipelineGate = new ConcurrencyGate(config.PIPELINE_CONCURRENCY);
+

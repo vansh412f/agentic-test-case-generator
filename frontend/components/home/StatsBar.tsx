@@ -59,7 +59,7 @@ function AnimatedNumber({ value }: { value: number }) {
     return () => cancelAnimationFrame(frameId);
   }, [inView, value]);
 
-  return <span ref={ref}>{displayValue.toLocaleString()}</span>;
+  return <span className="stat-num" ref={ref}>{displayValue.toLocaleString()}</span>;
 }
 
 export function StatsBar() {
@@ -88,28 +88,28 @@ export function StatsBar() {
       whileInView={{ opacity: 1, y: 0 }}
     >
       <div>
-        <strong>
+        <strong className="stat-num-wrap">
           <AnimatedNumber value={data.jobsRun} />
         </strong>
-        <span>jobs run</span>
+        <span className="stat-label">jobs run</span>
       </div>
       <div>
-        <strong>
+        <strong className="stat-num-wrap">
           <AnimatedNumber value={data.testCasesGenerated} />
         </strong>
-        <span>test cases</span>
+        <span className="stat-label">test cases</span>
       </div>
       <div>
-        <strong>
+        <strong className="stat-num-wrap">
           <AnimatedNumber value={data.testsPassed} />
         </strong>
-        <span>tests passed</span>
+        <span className="stat-label">tests passed</span>
       </div>
       <div>
-        <strong>
+        <strong className="stat-num-wrap">
           <AnimatedNumber value={data.correctionsApplied} />
         </strong>
-        <span>auto-corrections</span>
+        <span className="stat-label">auto-corrections</span>
       </div>
     </motion.div>
   );

@@ -142,48 +142,9 @@ export interface PipelineGeneratedTest {
   confidence: ConfidenceScore;
 }
 
-export interface GenerateSingleResponse {
-  jobId: string;
-  appMap: AppMap;
-  testPlan: TestPlan;
-  generatedTests: PipelineGeneratedTest[];
-}
-
-export interface BatchTestSummary {
-  testCaseId: string;
-  filename: string;
-  status: TestFinalStatus;
-  totalAttempts: number;
-  confidence: number;
-}
-
-export type BatchItemResult =
-  | {
-      url: string;
-      status: 'completed';
-      jobId: string;
-      testCount: number;
-      passedCount: number;
-      failedCount: number;
-      gaveUpCount: number;
-      generatedTests: BatchTestSummary[];
-    }
-  | {
-      url: string;
-      status: 'failed';
-      error: {
-        error: string;
-        message: string;
-      };
-    };
-
-export interface BatchResponse {
-  results: BatchItemResult[];
-  summary: {
-    total: number;
-    succeeded: number;
-    failed: number;
-  };
+// POST /api/generate -> 202. One id per unique URL, in request order.
+export interface GenerateAcceptedResponse {
+  jobIds: string[];
 }
 
 export interface AgentStep {

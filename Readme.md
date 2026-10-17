@@ -279,7 +279,7 @@ Mechanical failures (`locator`, `timeout`) enter a guarded correction loop cappe
 - Public job sharing and report downloads use unguessable capability UUIDs.
 
 ### Concurrency Semaphores & Atomic Quotas
-- `ConcurrencyGate(2)` limits concurrent browser instances to 2, guaranteeing operation within a 512MB RAM server profile.
+- `ConcurrencyGate(PIPELINE_CONCURRENCY)` (default 2). One slot per run group; a run group executes its jobs sequentially, so at most N pipelines (one Chromium each) run at once. Pipelines run detached from the request; on shutdown in-flight jobs are marked `SERVER_SHUTDOWN`, and on boot any orphaned non-terminal job is marked `SERVER_RESTART`.
 - Daily quotas (20 runs/day) use atomic reservations (`tryReserve()`) to eliminate Time-of-Check to Time-of-Use (TOCTOU) races.
 
 ### Zero-SDK BYOK Isolation (AsyncLocalStorage)
@@ -335,9 +335,10 @@ All endpoints accept and return JSON unless otherwise noted.
 | `GET` | `/api/pow/challenge` | None | Mint ALTCHA cryptographic PoW challenge | 30 req/hr per IP |
 | `POST` | `/api/crawl` | `{ url: string }` | Crawl URL and return discovered `AppMap` | 10 req/hr per IP |
 | `POST` | `/api/byok/validate` | `{ provider: 'groq' \| 'gemini' }`<br>`x-groq-api-key` or `x-gemini-api-key` | Validate personal API keys | 10 req/hr per IP |
-| `POST` | `/api/generate` | `{ url: string, altcha?: string }`<br>Optional: BYOK headers | Execute full agentic test generation pipeline | 3/hr IP, 5/day visitor, 20/day global (bypassed if BYOK) |
+| `POST` | `/api/generate` | { url } or { urls: string[] (≤5) }, altcha?<br>Optional: BYOK headers | Admit a run group. Returns 202 { jobIds } immediately; jobs run detached and sequentially | 3/hr IP, 5/day visitor, 20/day global (bypassed if BYOK) |
 | `GET` | `/api/jobs` | Query: `?page=1&limit=10`<br>Header: `X-Visitor-Id` | List jobs scoped to active visitor token | Visitor-scoped |
 | `GET` | `/api/jobs/:id` | Param: `id` (UUID) | Retrieve job details, agent steps, and tests | Capability UUID |
+| `GET` | `/api/jobs/:id/stream` | Param: `id` (UUID) | SSE: snapshot → replay (Last-Event-ID) → live phase_change / step_recorded / test_completed / job_finished; 15s heartbeat; unavailable ⇒ poll | Capability UUID |
 | `GET` | `/api/jobs/:id/report.html` | Param: `id` (UUID) | Download self-contained offline HTML report | Capability UUID |
 | `GET` | `/api/jobs/:id/export.zip` | Param: `id` (UUID) | Stream executable Playwright repository ZIP | Capability UUID |
 
@@ -459,6 +460,7 @@ pnpm dev
 | `VISITOR_SIGNING_SECRET`| No | — | Secret key for visitor token HMAC signing (min 16 chars) |
 | `GENERATE_DAILY_LIMIT` | No | `20` | Daily global quota limit for unauthenticated runs |
 | `LOCAL_AGENT_MODE` | No | `false` | Enable permissive CORS/PNA headers for local agent connections |
+| `PIPELINE_CONCURRENCY` | No | `2` | Max simultaneous run groups (1–4). Set 1 on 512MB hosts |
 
 #### Frontend (`frontend/.env.local`)
 

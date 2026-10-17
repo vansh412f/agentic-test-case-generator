@@ -4,6 +4,7 @@ import { safeWrite } from '../db/safeWrite.ts';
 import { withLlmObserver } from '../llm/telemetry.ts';
 import { GEMINI_DEFAULT_MODEL, GROQ_DEFAULT_MODEL } from '../llm/providers.config.ts';
 import type { LlmProviderName } from '../llm/providers.config.ts';
+import { publishJobEvent } from './jobEvents.ts';
 
 const PROVIDER_MODELS: Record<LlmProviderName, string> = {
   groq: GROQ_DEFAULT_MODEL,
@@ -18,6 +19,16 @@ interface StepContext {
 
 export async function recordStep(input: AgentStepInput): Promise<void> {
   await safeWrite(`recordAgentStep:${input.stepType}`, () => recordAgentStep(input));
+  // Published even when the DB write was skipped: the stream must not depend on persistence.
+  publishJobEvent(input.jobId, {
+    type: 'step_recorded',
+    data: {
+      stepType: input.stepType,
+      status: input.status,
+      testCaseId: input.testCaseId ?? null,
+      attemptNumber: input.attemptNumber ?? null,
+    },
+  });
 }
 
 export function withLlmStep<T>(

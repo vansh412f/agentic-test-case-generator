@@ -7,6 +7,7 @@ import { generateHtmlReport } from '../report/htmlReport.ts';
 import { exportProject } from '../export/projectExporter.ts';
 import { JobError } from './jobErrors.ts';
 import { toHttpError } from './errors.ts';
+import { handleJobStream } from './jobStream.ts';
 
 const router = Router();
 const JobIdSchema = z.object({ id: z.string().uuid() });
@@ -61,6 +62,8 @@ router.get('/:id', async (req, res) => {
     respondWithError(res, error);
   }
 });
+
+router.get('/:id/stream', handleJobStream);
 
 router.get('/:id/report.html', async (req, res) => {
   const parsed = JobIdSchema.safeParse(req.params);

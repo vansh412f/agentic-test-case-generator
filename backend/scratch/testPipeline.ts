@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { runPipeline } from '../src/agent/pipeline.ts';
+import { createPendingJobs } from '../src/db/jobs.ts';
 
 async function main() {
   const url = process.argv[2] || 'https://example.com';
@@ -6,7 +8,10 @@ async function main() {
   console.log(`Target URL: ${url}\n`);
 
   try {
-    const result = await runPipeline(url);
+    // Phase 8: rows are created at admission; the pipeline only advances them.
+    const id = randomUUID();
+    await createPendingJobs([{ id, targetUrl: url }], { visitorId: null, usedOwnKeys: false });
+    const result = await runPipeline({ id, url });
 
     console.log(`--- App Map ---`);
     console.log(`Interactive elements: ${result.appMap.elements.length}`);

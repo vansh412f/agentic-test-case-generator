@@ -2,6 +2,13 @@ import express, { Request, Response, NextFunction } from 'express';
 import { config, activeProviders } from './config.ts';
 import apiRouter from './api/routes.ts';
 import { prisma } from './db/client.ts';
+import { failNonTerminalJobs } from './db/jobs.ts';
+import { inFlightJobs } from './agent/jobRunner.ts';
+import { publishJobEvent } from './agent/jobEvents.ts';
+import { closeAllJobStreams } from './api/jobStream.ts';
+import { reconcileOrphanedJobs } from './maintenance/reconcileJobs.ts';
+
+const bootedAt = new Date();
 
 const app = express();
 
@@ -97,27 +104,52 @@ app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, r
 const server = app.listen(config.PORT, () => {
   console.log(`Server running on http://localhost:${config.PORT}`);
   console.log(`Environment: ${config.NODE_ENV}`);
+  void reconcileOrphanedJobs(bootedAt);
+});
+
+// Detached pipelines (Phase 8) make an unhandled rejection a process-killer.
+// Every detached chain has its own .catch; this is defense in depth.
+process.on('unhandledRejection', (reason) => {
+  console.error('[Fatal] Unhandled promise rejection:', reason instanceof Error ? reason.message : String(reason));
 });
 
 let shuttingDown = false;
+async function failInFlightJobs(): Promise<void> {
+  const ids = inFlightJobs();
+  if (ids.length === 0) return;
+  try {
+    await failNonTerminalJobs({ ids }, 'SERVER_SHUTDOWN', 'The server shut down while this job was running.');
+  } catch (error) {
+    console.warn('[Shutdown] Could not mark in-flight jobs failed:', error instanceof Error ? error.message : String(error));
+  }
+  for (const id of ids) {
+    publishJobEvent(id, { type: 'job_finished', data: { status: 'failed', errorCode: 'SERVER_SHUTDOWN' } });
+  }
+}
+
 function shutdown(signal: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`${signal} received: draining HTTP requests`);
+  console.log(`${signal} received: failing in-flight jobs, closing streams, draining HTTP requests`);
   const deadline = setTimeout(() => {
     console.error('Graceful shutdown deadline exceeded');
     process.exit(1);
   }, 30_000);
-  server.close((error) => {
-    void prisma.$disconnect().then(() => {
-      clearTimeout(deadline);
-      if (error) process.exitCode = 1;
-    }).catch((cause: unknown) => {
-      console.error('Database disconnect failed:', cause instanceof Error ? cause.message : String(cause));
-      process.exit(1);
+  deadline.unref();
+
+  void failInFlightJobs().finally(() => {
+    // SSE connections never go idle; without this server.close() waits for the deadline.
+    closeAllJobStreams();
+    server.close((error) => {
+      // Detached pipelines + Chromium children keep the event loop alive, so exit explicitly.
+      void prisma.$disconnect()
+        .catch((cause: unknown) => {
+          console.error('Database disconnect failed:', cause instanceof Error ? cause.message : String(cause));
+        })
+        .finally(() => process.exit(error ? 1 : 0));
     });
+    server.closeIdleConnections();
   });
-  server.closeIdleConnections();
 }
 
 process.once('SIGTERM', () => shutdown('SIGTERM'));

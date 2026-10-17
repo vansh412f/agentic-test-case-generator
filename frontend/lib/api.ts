@@ -1,8 +1,7 @@
 import type {
   ApiErrorBody,
   AppMap,
-  BatchResponse,
-  GenerateSingleResponse,
+  GenerateAcceptedResponse,
   JobDetail,
   JobsListResponse,
 } from '@/types/api';
@@ -223,18 +222,12 @@ export function crawlPage(url: string): Promise<AppMap> {
   return postJson<AppMap, { url: string }>('/api/crawl', { url });
 }
 
-export function generateSingle(url: string, altcha?: string): Promise<GenerateSingleResponse> {
-  return postJson<GenerateSingleResponse, { url: string; altcha?: string }>('/api/generate', {
-    url,
-    ...(altcha ? { altcha } : {}),
-  });
-}
-
-export function generateBatch(urls: string[], altcha?: string): Promise<BatchResponse> {
-  return postJson<BatchResponse, { urls: string[]; altcha?: string }>('/api/generate', {
-    urls,
-    ...(altcha ? { altcha } : {}),
-  });
+export function startGeneration(urls: string[], altcha?: string): Promise<GenerateAcceptedResponse> {
+  const target = urls.length === 1 ? { url: urls[0] ?? '' } : { urls };
+  return postJson<GenerateAcceptedResponse, ({ url: string } | { urls: string[] }) & { altcha?: string }>(
+    '/api/generate',
+    { ...target, ...(altcha ? { altcha } : {}) },
+  );
 }
 
 export function getJob(jobId: string): Promise<JobDetail> {

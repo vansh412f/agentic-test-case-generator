@@ -5,22 +5,54 @@ import { prisma } from './client.ts';
 import { DatabaseError } from './errors.ts';
 import { toDatabaseJson } from './json.ts';
 
-export function createJob(input: {
-  id: string;
-  targetUrl: string;
-  visitorId?: string | null;
-  usedOwnKeys?: boolean;
-}) {
-  return prisma.job.create({
-    data: {
-      id: input.id,
-      targetUrl: input.targetUrl,
-      visitorId: input.visitorId ?? null,
-      usedOwnKeys: input.usedOwnKeys ?? false,
-      status: 'crawling',
-      startedAt: new Date(),
+const NON_TERMINAL_STATUSES: JobStatus[] = ['pending', 'crawling', 'planning', 'generating', 'executing'];
+
+// Fail-fast by design (amends AJ): a 202 must never return a jobId whose row
+// does not exist. Only this admission write throws; pipeline writes stay best-effort.
+export async function createPendingJobs(
+  jobs: ReadonlyArray<{ id: string; targetUrl: string }>,
+  owner: { visitorId: string | null; usedOwnKeys: boolean },
+): Promise<void> {
+  try {
+    await prisma.job.createMany({
+      data: jobs.map((job) => ({
+        id: job.id,
+        targetUrl: job.targetUrl,
+        visitorId: owner.visitorId,
+        usedOwnKeys: owner.usedOwnKeys,
+        status: 'pending' as const,
+      })),
+    });
+  } catch (cause) {
+    throw new DatabaseError(cause);
+  }
+}
+
+export function markJobStarted(id: string) {
+  return prisma.job.update({ where: { id }, data: { status: 'crawling', startedAt: new Date() } });
+}
+
+export function failNonTerminalJobs(
+  scope: { ids?: string[]; createdBefore?: Date },
+  errorCode: string,
+  errorMessage: string,
+) {
+  return prisma.job.updateMany({
+    where: {
+      status: { in: NON_TERMINAL_STATUSES },
+      ...(scope.ids ? { id: { in: scope.ids } } : {}),
+      ...(scope.createdBefore ? { createdAt: { lt: scope.createdBefore } } : {}),
     },
+    data: { status: 'failed', errorCode, errorMessage, completedAt: new Date() },
   });
+}
+
+export async function getJobStatus(id: string) {
+  try {
+    return await prisma.job.findUnique({ where: { id }, select: { status: true, errorCode: true } });
+  } catch (cause) {
+    throw new DatabaseError(cause);
+  }
 }
 
 export function updateJobStatus(id: string, status: JobStatus) {
@@ -36,7 +68,10 @@ export function setTestPlan(id: string, testPlan: TestPlan) {
 }
 
 export function completeJob(id: string) {
-  return prisma.job.update({ where: { id }, data: { status: 'completed', completedAt: new Date() } });
+  return prisma.job.update({
+    where: { id },
+    data: { status: 'completed', completedAt: new Date(), errorCode: null, errorMessage: null },
+  });
 }
 
 export function failJob(id: string, errorCode: string, errorMessage: string) {
