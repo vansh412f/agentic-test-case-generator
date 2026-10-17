@@ -18,10 +18,10 @@ export function startOfUtcDay(now = new Date()): Date {
 
 export type JobCountProvider = () => Promise<number>;
 let jobCountProvider: JobCountProvider = () =>
-  prisma.job.count({ where: { createdAt: { gte: startOfUtcDay() } } });
+  prisma.job.count({ where: { createdAt: { gte: startOfUtcDay() }, usedOwnKeys: false } });
 
 export function setJobCountProviderForTest(fn: JobCountProvider | null): void {
-  jobCountProvider = fn ?? (() => prisma.job.count({ where: { createdAt: { gte: startOfUtcDay() } } }));
+  jobCountProvider = fn ?? (() => prisma.job.count({ where: { createdAt: { gte: startOfUtcDay() }, usedOwnKeys: false } }));
 }
 
 export async function jobsCreatedToday(): Promise<number> {
