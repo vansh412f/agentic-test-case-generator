@@ -52,6 +52,7 @@ export const InteractiveElementSchema = z.object({
   isRequired: z.boolean().default(false).describe('Whether the input is marked as required'),
   isReadOnly: z.boolean().default(false).describe('Whether the input is read-only'),
   selectors: ElementSelectorMapSchema.describe('Recommended Playwright selector queries'),
+  page: z.number().int().min(2).optional().describe('Deep crawl only: 1-based index into pages. Absent = start page'),
 });
 export type InteractiveElement = z.infer<typeof InteractiveElementSchema>;
 
@@ -79,7 +80,9 @@ export const AppMapSchema = z.object({
   elements: z.array(InteractiveElementSchema).describe('List of all discovered interactive elements'),
   forms: z.array(FormSchema).describe('Grouped forms discovered on the page'),
   discoveredLinks: z.array(z.string()).describe('Internal links discovered on this page for multi-page crawling'),
-    totalElementsFound: z.number().describe('Interactive elements found before the per-page cap was applied'),
+  pages: z.array(z.object({ url: z.string().url(), requestedUrl: z.string(), title: z.string() }))
+    .optional().describe('Deep crawl only: crawled pages in order; pages[0] is the start page'),
+  totalElementsFound: z.number().describe('Interactive elements found before the per-page cap was applied'),
   isTruncated: z.boolean().describe('True when the cap dropped some elements from this map'),
 });
 export type AppMap = z.infer<typeof AppMapSchema>;

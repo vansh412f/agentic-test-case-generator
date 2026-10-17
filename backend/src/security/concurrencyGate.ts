@@ -30,4 +30,6 @@ export class ConcurrencyGate {
 
 // One slot = one run group (1..MAX_URLS_PER_RUN sequential jobs).
 export const pipelineGate = new ConcurrencyGate(config.PIPELINE_CONCURRENCY);
+export const crawlGate = new ConcurrencyGate(config.CRAWL_CONCURRENCY);
+
 

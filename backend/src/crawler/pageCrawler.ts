@@ -4,6 +4,16 @@ import { CrawlError } from './crawlErrors.ts';
 import { extractElements } from './browser/extractElements.ts';
 import { extractForms } from './browser/extractForms.ts';
 import { buildAppMap } from './appMapBuilder.ts';
+import { mergeAppMaps, pickDeepCrawlLinks, type CrawledPage } from './mergeAppMaps.ts';
+import type { AppMap } from './types.ts';
+
+function assertCrawlableUrl(url: string): void {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { throw new CrawlError('INVALID_URL', `Cannot parse URL: "${url}"`); }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new CrawlError('INVALID_URL', `Unsupported protocol "${parsed.protocol}". Only http and https are allowed.`);
+  }
+}
 
 async function launchBrowser(): Promise<Browser> {
   try {
@@ -15,86 +25,71 @@ async function launchBrowser(): Promise<Browser> {
   }
 }
 
-export async function crawlPage(url: string) {
-  // Validate URL before launching anything expensive 
-  let parsed: URL;
+async function crawlInBrowser(browser: Browser, url: string, maxElements: number): Promise<AppMap> {
+  const context = await browser.newContext({ viewport: VIEWPORT });
   try {
-    parsed = new URL(url);
-  } catch {
-    throw new CrawlError('INVALID_URL', `Cannot parse URL: "${url}"`);
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new CrawlError(
-      'INVALID_URL',
-      `Unsupported protocol "${parsed.protocol}". Only http and https are allowed.`,
-    );
-  }
-
-  // Launch a fresh browser 
-  const browser = await launchBrowser();
-  try {
-    const context = await browser.newContext({ viewport: VIEWPORT });
     const page = await context.newPage();
-
-    // Defuse the tsx/esbuild __name helper 
-    await page.addInitScript(
-      'window.__name = window.__name || ((target) => target);',
-    );
-
+    await page.addInitScript('window.__name = window.__name || ((target) => target);');
     try {
-      await page.goto(url, {
-        waitUntil: 'load',
-        timeout: config.NAVIGATION_TIMEOUT_MS,
-      });
+      await page.goto(url, { waitUntil: 'load', timeout: config.NAVIGATION_TIMEOUT_MS });
     } catch (err) {
       if (err instanceof errors.TimeoutError) {
-        throw new CrawlError(
-          'NAVIGATION_TIMEOUT',
-          `Page did not load within ${config.NAVIGATION_TIMEOUT_MS}ms: ${url}`,
-          err,
-        );
+        throw new CrawlError('NAVIGATION_TIMEOUT', `Page did not load within ${config.NAVIGATION_TIMEOUT_MS}ms: ${url}`, err);
       }
-      throw new CrawlError(
-        'NAVIGATION_FAILED',
-        `Failed to navigate to ${url}: ${(err as Error).message}`,
-        err,
-      );
+      throw new CrawlError('NAVIGATION_FAILED', `Failed to navigate to ${url}: ${(err as Error).message}`, err);
     }
-
-    // Best-effort networkidle
     if (config.NETWORK_IDLE_WAIT_MS > 0) {
       try {
-        await page.waitForLoadState('networkidle', {
-          timeout: config.NETWORK_IDLE_WAIT_MS,
-        });
+        await page.waitForLoadState('networkidle', { timeout: config.NETWORK_IDLE_WAIT_MS });
       } catch (err) {
         if (!(err instanceof errors.TimeoutError)) {
           throw new CrawlError('NAVIGATION_FAILED', `Page became unavailable after load: ${(err as Error).message}`, err);
         }
-        // Timeout is expected for pages with polling/websockets
       }
     }
-
-    // Extract elements and forms from the live DOM 
     try {
       const [elementsResult, forms] = await Promise.all([
-        page.evaluate(extractElements, {
-          maxElements: config.MAX_ELEMENTS_PER_PAGE,
-        }),
+        page.evaluate(extractElements, { maxElements }),
         page.evaluate(extractForms),
       ]);
       const title = await page.title();
-
-      // Build and validate the App Map 
-      return buildAppMap({
-        url: page.url(),
-        viewport: VIEWPORT,
-        extraction: { title, ...elementsResult, forms },
-      });
+      return buildAppMap({ url: page.url(), viewport: VIEWPORT, extraction: { title, ...elementsResult, forms } });
     } catch (err) {
       if (err instanceof CrawlError) throw err;
       throw new CrawlError('EXTRACTION_FAILED', 'Failed to extract or build App Map', err);
     }
+  } finally {
+    await context.close().catch(() => undefined);
+  }
+}
+
+export async function crawlPage(url: string): Promise<AppMap> {
+  assertCrawlableUrl(url);
+  const browser = await launchBrowser();
+  try {
+    return await crawlInBrowser(browser, url, config.MAX_ELEMENTS_PER_PAGE);
+  } finally {
+    await browser.close().catch(() => undefined);
+  }
+}
+
+export interface DeepCrawlOptions { maxPages: number; startPageElementCap: number; extraPageElementCap: number; }
+
+// Start page is mandatory; extra pages that fail are skipped. One browser, sequential contexts.
+export async function crawlSite(url: string, options: DeepCrawlOptions): Promise<AppMap> {
+  assertCrawlableUrl(url);
+  const browser = await launchBrowser();
+  try {
+    const start = await crawlInBrowser(browser, url, options.startPageElementCap);
+    const extras: CrawledPage[] = [];
+    for (const link of pickDeepCrawlLinks(start, options.maxPages - 1)) {
+      try {
+        extras.push({ requestedUrl: link, map: await crawlInBrowser(browser, link, options.extraPageElementCap) });
+      } catch (err) {
+        console.warn(`[Crawler] Deep crawl skipped ${link}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return mergeAppMaps(start, extras);
   } finally {
     await browser.close().catch(() => undefined);
   }

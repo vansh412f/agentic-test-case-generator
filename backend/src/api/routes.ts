@@ -21,7 +21,8 @@ import {
   releaseReservation,
   getReservedCount,
 } from '../security/dailyQuota.ts';
-import { pipelineGate } from '../security/concurrencyGate.ts';
+import { pipelineGate, crawlGate } from '../security/concurrencyGate.ts';
+import { rememberCrawl } from '../crawler/crawlCache.ts';
 import { hasOwnKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
 import { z } from 'zod';
 import { config } from '../config.ts';
@@ -92,8 +93,14 @@ router.post('/crawl', crawlIpLimiter, async (req, res) => {
     return;
   }
 
+  if (!crawlGate.tryAcquire()) {
+    res.status(429).json({ error: 'QUEUE_FULL', message: 'Too many previews are running right now. Please retry in a few seconds.' });
+    return;
+  }
+
   try {
     const appMap = await crawlPage(parsed.data.url);
+    rememberCrawl(parsed.data.url, appMap);
     res.json(appMap);
   } catch (err) {
     const httpErr = toHttpError(err);
@@ -102,6 +109,8 @@ router.post('/crawl', crawlIpLimiter, async (req, res) => {
       return;
     }
     throw err;
+  } finally {
+    crawlGate.release();
   }
 });
 
