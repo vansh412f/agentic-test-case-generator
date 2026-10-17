@@ -40,11 +40,13 @@ const order: string[] = [];
 startDetachedRun(
   [{ id: 'job-1', url: 'https://a.example' }, { id: 'job-2', url: 'https://b.example' }],
   { groq: 'gsk_test_key' },
-  async (job) => {
-    await sleep(10); // cross an async boundary like a real pipeline
-    seenKeys.push(llmKeyOverride('groq'));
-    order.push(job.id);
-    if (job.id === 'job-1') throw new Error('simulated pipeline failure');
+  {
+    runOne: async (job) => {
+      await sleep(10); // cross an async boundary like a real pipeline
+      seenKeys.push(llmKeyOverride('groq'));
+      order.push(job.id);
+      if (job.id === 'job-1') throw new Error('simulated pipeline failure');
+    },
   },
 );
 assert.deepEqual(inFlightJobs().sort(), ['job-1', 'job-2']);

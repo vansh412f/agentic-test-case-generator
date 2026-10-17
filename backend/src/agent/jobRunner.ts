@@ -1,7 +1,8 @@
-import { runPipeline } from './pipeline.ts';
+import { runPipeline, toJobErrorCode, type PipelineResult } from './pipeline.ts';
 import { openJobChannel } from './jobEvents.ts';
 import { withRequestLlmKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
 import { pipelineGate } from '../security/concurrencyGate.ts';
+import { deliverJobWebhook, type WebhookTarget, type JobWebhookPayload } from '../notify/webhook.ts';
 
 export interface QueuedJob {
   id: string;
@@ -9,12 +10,56 @@ export interface QueuedJob {
   deepCrawl?: boolean;
 }
 
-export type RunOne = (job: QueuedJob) => Promise<unknown>;
+export type RunOne = (job: QueuedJob) => Promise<Pick<PipelineResult, 'generatedTests'> | void>;
+
+export interface RunGroupOptions {
+  webhook?: WebhookTarget;
+  runOne?: RunOne;
+}
 
 const inFlightJobIds = new Set<string>();
 
 export function inFlightJobs(): string[] {
   return [...inFlightJobIds];
+}
+
+function webhookPayload(
+  job: QueuedJob,
+  outcome: { result: Pick<PipelineResult, 'generatedTests'> | void } | { error: unknown },
+): JobWebhookPayload {
+  const finishedAt = new Date().toISOString();
+  if ('error' in outcome) {
+    return {
+      event: 'job.finished',
+      jobId: job.id,
+      targetUrl: job.url,
+      finishedAt,
+      status: 'failed',
+      errorCode: toJobErrorCode(outcome.error),
+    };
+  }
+  const tests = outcome.result?.generatedTests ?? [];
+  let passed = 0;
+  let failed = 0;
+  let gaveUp = 0;
+  for (const t of tests) {
+    if (t.status === 'passed') passed += 1;
+    else if (t.status === 'failed') failed += 1;
+    else gaveUp += 1;
+  }
+  return {
+    event: 'job.finished',
+    jobId: job.id,
+    targetUrl: job.url,
+    finishedAt,
+    status: 'completed',
+    tests: {
+      total: tests.length,
+      passed,
+      failed,
+      gaveUp,
+    },
+  };
 }
 
 /**
@@ -33,20 +78,26 @@ export function inFlightJobs(): string[] {
 export function startDetachedRun(
   jobs: readonly QueuedJob[],
   keys: RequestLlmKeys,
-  runOne: RunOne = runPipeline,
+  { webhook, runOne = runPipeline }: RunGroupOptions = {},
 ): void {
   for (const job of jobs) {
     inFlightJobIds.add(job.id);
     openJobChannel(job.id);
   }
 
+  const notify = (p: JobWebhookPayload) => {
+    if (webhook) void deliverJobWebhook(webhook, p);
+  };
+
   const run = withRequestLlmKeys(keys, async () => {
     for (const job of jobs) {
       try {
-        await runOne(job);
+        const result = await runOne(job);
+        notify(webhookPayload(job, { result }));
       } catch (error) {
         // runPipeline already persisted failJob + published job_finished.
         console.warn(`[JobRunner] ${job.id} failed: ${error instanceof Error ? error.message : String(error)}`);
+        notify(webhookPayload(job, { error }));
       } finally {
         inFlightJobIds.delete(job.id);
       }

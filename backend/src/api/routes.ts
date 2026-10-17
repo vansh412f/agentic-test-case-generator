@@ -6,6 +6,7 @@ import { crawlPage } from '../crawler/pageCrawler.ts';
 import { startDetachedRun } from '../agent/jobRunner.ts';
 import { toHttpError } from './errors.ts';
 import { visitorMiddleware } from './visitorMiddleware.ts';
+import { webhookUrlProblem, createWebhookTarget } from '../notify/webhook.ts';
 import {
   generateIpLimiter,
   crawlIpLimiter,
@@ -183,6 +184,13 @@ router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res
   const deepCrawl = 'url' in parsed.data && parsed.data.deepCrawl === true;
   const requested = urls.length;
 
+  const webhookProblem = parsed.data.webhookUrl ? webhookUrlProblem(parsed.data.webhookUrl) : null;
+  if (webhookProblem) {
+    res.status(400).json({ error: 'INVALID_WEBHOOK_URL', message: webhookProblem });
+    return;
+  }
+  const webhook = parsed.data.webhookUrl ? createWebhookTarget(parsed.data.webhookUrl) : undefined;
+
   // 3. BYOK check: extract keys from request headers (never logged)
   const requestKeys: RequestLlmKeys = {
     groq: req.header('x-groq-api-key')?.trim() || undefined,
@@ -254,8 +262,11 @@ router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res
   }
 
   // 8. Detach. BYOK ALS context is entered inside startDetachedRun.
-  startDetachedRun(jobs, requestKeys);
-  res.status(202).json({ jobIds: jobs.map((job) => job.id) });
+  startDetachedRun(jobs, requestKeys, { webhook });
+  res.status(202).json({
+    jobIds: jobs.map((job) => job.id),
+    ...(webhook ? { webhookSecret: webhook.secret } : {}),
+  });
 });
 
 export default router;

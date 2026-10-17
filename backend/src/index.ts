@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import compression from 'compression';
 import { config, activeProviders } from './config.ts';
 import apiRouter from './api/routes.ts';
 import { prisma } from './db/client.ts';
@@ -16,6 +17,8 @@ const app = express();
 // Vercel-rewrite -> Render = 2). A wrong value either collapses all users into
 // one IP bucket or trusts spoofable headers.
 app.set('trust proxy', config.TRUST_PROXY_HOPS);
+app.disable('x-powered-by');
+app.use(compression());
 
 // Middleware: Parse incoming JSON request bodies
 app.use(express.json());

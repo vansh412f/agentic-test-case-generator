@@ -335,12 +335,50 @@ All endpoints accept and return JSON unless otherwise noted.
 | `GET` | `/api/pow/challenge` | None | Mint ALTCHA cryptographic PoW challenge | 30 req/hr per IP |
 | `POST` | `/api/crawl` | `{ url: string }` | Crawl URL and return discovered `AppMap` | 10 req/hr per IP |
 | `POST` | `/api/byok/validate` | `{ provider: 'groq' \| 'gemini' }`<br>`x-groq-api-key` or `x-gemini-api-key` | Validate personal API keys | 10 req/hr per IP |
-| `POST` | `/api/generate` | { url } or { urls: string[] (≤5) }, altcha?<br>Optional: BYOK headers | Admit a run group. Returns 202 { jobIds } immediately; jobs run detached and sequentially | 3/hr IP, 5/day visitor, 20/day global (bypassed if BYOK) |
+| `POST` | `/api/generate` | Single URL: `{ url, deepCrawl?: boolean, webhookUrl?: string, altcha?: string }`<br>Multi URL: `{ urls: string[] (≤5), webhookUrl?: string, altcha?: string }`<br>Optional: BYOK headers | Admit a run group. Returns `202 { jobIds, webhookSecret? }` immediately; jobs run detached and sequentially | 3/hr IP, 5/day visitor, 20/day global (bypassed if BYOK) |
 | `GET` | `/api/jobs` | Query: `?page=1&limit=10`<br>Header: `X-Visitor-Id` | List jobs scoped to active visitor token | Visitor-scoped |
 | `GET` | `/api/jobs/:id` | Param: `id` (UUID) | Retrieve job details, agent steps, and tests | Capability UUID |
 | `GET` | `/api/jobs/:id/stream` | Param: `id` (UUID) | SSE: snapshot → replay (Last-Event-ID) → live phase_change / step_recorded / test_completed / job_finished; 15s heartbeat; unavailable ⇒ poll | Capability UUID |
 | `GET` | `/api/jobs/:id/report.html` | Param: `id` (UUID) | Download self-contained offline HTML report | Capability UUID |
 | `GET` | `/api/jobs/:id/export.zip` | Param: `id` (UUID) | Stream executable Playwright repository ZIP | Capability UUID |
+
+### Webhooks & Notifications
+
+When `webhookUrl` is provided in `POST /api/generate`, the backend delivers a post-run HTTP notification upon job completion or failure.
+
+- **Request**: `POST /api/generate` with `{ url, webhookUrl: "https://your-domain.com/webhook", deepCrawl?: boolean }`
+- **Response**: `202 Accepted` returns `{ jobIds: [...], webhookSecret: string }`. The `webhookSecret` is returned **only once** and is never stored on disk.
+- **SSRF Protection**: Private IPs, localhost, AWS metadata (`169.254.169.254`), and non-HTTPS endpoints (in non-local agent mode) are blocked.
+- **Payload Shape**:
+  ```json
+  {
+    "event": "job.finished",
+    "jobId": "e0b8e8b0-...",
+    "targetUrl": "https://example.com",
+    "finishedAt": "2026-10-17T12:00:00.000Z",
+    "status": "completed",
+    "tests": {
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "gaveUp": 0
+    }
+  }
+  ```
+  *(Or if failed: `{ "status": "failed", "errorCode": "BROWSER_LAUNCH_FAILED" }`)*
+- **Signature Verification**:
+  Every webhook request includes an `X-Agentic-Signature` header computed as HMAC-SHA256 of the raw request body using the `webhookSecret`:
+  ```ts
+  const signature = req.headers['x-agentic-signature']; // "sha256=<hex>"
+  const expected = 'sha256=' + crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+  const isValid = crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  ```
+- **Delivery Guarantees**: Requests timeout after 5 seconds with one automatic retry after 2 seconds on 5xx/429 errors. Webhook dispatch is non-blocking and never holds the pipeline concurrency gate.
+
+### Deep Crawl Multi-Page Mode
+
+- **Field**: `deepCrawl: true` (only valid for single-URL requests `{ url, deepCrawl: true }`).
+- **Behavior**: The crawler starts at the target URL and discovers same-origin links (up to 3 pages total). Elements from extra pages are tagged with their source page number, enabling multi-page journey planning with explicit navigation steps.
 
 ---
 
