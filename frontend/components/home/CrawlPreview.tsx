@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Globe } from '@phosphor-icons/react';
+import { ArrowRight, Check, Globe, Warning } from '@phosphor-icons/react';
 import type { AppMap } from '@/types/api';
 
 interface CrawlPreviewProps {
@@ -66,9 +66,19 @@ export function CrawlPreview({
             {appMap.elements.length} interactive elements discovered.
           </p>
         </div>
-        <span className="success-pill">
-          <Check aria-hidden="true" className="h-3.5 w-3.5" /> Healthy crawl
-        </span>
+        {appMap.elements.length === 0 ? (
+          <span className="warning" style={{ margin: 0, padding: '6px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: 700, alignItems: 'center' }}>
+            <Warning aria-hidden="true" className="h-3.5 w-3.5" /> No elements found
+          </span>
+        ) : appMap.isTruncated ? (
+          <span className="warning" style={{ margin: 0, padding: '6px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: 700, alignItems: 'center' }}>
+            <Warning aria-hidden="true" className="h-3.5 w-3.5" /> Crawl truncated
+          </span>
+        ) : (
+          <span className="success-pill">
+            <Check aria-hidden="true" className="h-3.5 w-3.5" /> Healthy crawl
+          </span>
+        )}
       </div>
 
       <div className="page-list">
