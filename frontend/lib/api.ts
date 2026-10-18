@@ -270,6 +270,8 @@ export function crawlPage(url: string): Promise<AppMap> {
   return postJson<AppMap, { url: string }>('/api/crawl', { url });
 }
 
+export const MAX_URLS_PER_RUN = 5;
+
 export interface TestDataParam {
   elementId: string;
   css: string;

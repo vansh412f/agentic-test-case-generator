@@ -15,6 +15,7 @@ import { Seo } from '@/components/common/Seo';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { TestResultCard } from '@/components/job/TestResultCard';
 import { ShareButton } from '@/components/job/ShareButton';
+import { ContinueTesting } from '@/components/job/ContinueTesting';
 import { useJobStream } from '@/hooks/useJobStream';
 import { useApiBase } from '@/hooks/useApiBase';
 import { ApiError } from '@/lib/api';
@@ -405,6 +406,10 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             ))
           )}
         </section>
+
+        {terminal && !isShareView && job.appMap ? (
+          <ContinueTesting job={job} />
+        ) : null}
       </main>
     </>
   );

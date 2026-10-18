@@ -211,7 +211,11 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   }
 
   let effectiveKeepHidden = options?.keepHiddenIds;
-  if (options?.focus && options.focus.length > 0) {
+  const resolvedFocus = (options?.focus ?? [])
+    .map((ref) => resolveElementRef(appMap, ref))
+    .filter((el): el is InteractiveElement => el !== undefined);
+
+  if (resolvedFocus.length > 0) {
     effectiveKeepHidden = new Set(appMap.elements.map((e) => e.id));
   }
 
@@ -219,7 +223,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   const cacheKey = buildPlanCacheKey({
     view: plannerView,
     data: resolvedData ? Object.fromEntries(resolvedData.fills.entries()) : undefined,
-    focus: options?.focus ? options.focus.map((f) => f.elementId) : undefined,
+    focus: resolvedFocus.length > 0 ? resolvedFocus.map((f) => f.id) : undefined,
   });
 
   const cached = getCachedPlan(cacheKey);
@@ -235,19 +239,14 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   if (resolvedData?.promptBlock) {
     userPrompt += `\n\n${resolvedData.promptBlock}`;
   }
-  if (options?.focus && options.focus.length > 0) {
-    const resolvedFocus = options.focus
-      .map((ref) => resolveElementRef(appMap, ref))
-      .filter((el): el is InteractiveElement => el !== undefined);
-    if (resolvedFocus.length > 0) {
-      const focusList = resolvedFocus
-        .map((el) => {
-          const label = el.ariaLabel ?? el.placeholder ?? el.name ?? el.text ?? el.id;
-          return `${el.id} ("${label}")`;
-        })
-        .join(', ');
-      userPrompt += `\n\nFOCUS: generate 2–4 test cases focused on these elements: ${focusList}.\nEvery test case must start by interacting with a focus element and verify what it reveals.`;
-    }
+  if (resolvedFocus.length > 0) {
+    const focusList = resolvedFocus
+      .map((el) => {
+        const label = el.text ?? el.ariaLabel ?? el.placeholder ?? el.name ?? el.id;
+        return `${el.id} ("${label}")`;
+      })
+      .join(', ');
+    userPrompt += `\n\nFOCUS: generate 2–4 test cases focused on these elements: ${focusList}.\nEvery test case must start by interacting with a focus element and verify what it reveals.`;
   }
   if (options?.extraPromptBlock) {
     userPrompt += `\n\n${options.extraPromptBlock}`;
