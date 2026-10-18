@@ -47,24 +47,19 @@ export interface ConfidenceScore {
   factors: ConfidenceFactor[];
 }
 
-export interface ProviderCostBreakdown {
+export interface TokenUsageRow {
   provider: string;
+  model: string;
   calls: number;
   promptTokens: number;
   completionTokens: number;
-  totalTokens: number;
-  usd: number;
-  priced: boolean;
 }
 
-export interface CostEstimate {
-  totalUsd: number;
-  totalPromptTokens: number;
-  totalCompletionTokens: number;
+export interface TokenUsage {
   totalTokens: number;
-  calls: number;
-  unpricedCalls: number;
-  byProvider: ProviderCostBreakdown[];
+  promptTokens: number;
+  completionTokens: number;
+  rows: TokenUsageRow[];
 }
 
 export interface ElementSelectorMap {
@@ -226,7 +221,7 @@ export interface JobDetail {
   completedAt: string | null;
   agentSteps: AgentStep[];
   generatedTests: PersistedGeneratedTest[];
-  costEstimate: CostEstimate;
+  tokenUsage: TokenUsage;
   usedOwnKeys: boolean;
 }
 

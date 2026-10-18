@@ -205,16 +205,12 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
       : '—';
 
   const totalTokens =
-    job.costEstimate?.totalTokens ??
+    job.tokenUsage?.totalTokens ??
     job.agentSteps.reduce(
       (sum, s) => sum + (s.promptTokens ?? 0) + (s.completionTokens ?? 0),
       0,
     );
   const tokensStr = totalTokens > 0 ? totalTokens.toLocaleString() : '—';
-  const estCostStr =
-    job.costEstimate?.totalUsd !== undefined && job.costEstimate.totalUsd > 0
-      ? `$${job.costEstimate.totalUsd.toFixed(4)}`
-      : 'free';
 
   return (
     <>
@@ -306,10 +302,6 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           <div>
             <strong>{tokensStr}</strong>
             <span>TOKENS</span>
-          </div>
-          <div>
-            <strong>{estCostStr}</strong>
-            <span>EST. COST</span>
           </div>
         </div>
 

@@ -1,5 +1,7 @@
 import { motion, useReducedMotion, type Variants } from 'framer-motion';
 
+const TYPICAL_TOKENS_PER_SUITE = '~14,500';
+
 const steps = [
   {
     n: '01',
@@ -143,11 +145,8 @@ export function HowItWorks() {
         <div className="cost-card">
           <span className="mini-label">MEASURED TOKEN ECONOMY</span>
           <div className="cost-equation">
-            <strong>~14,500</strong>
-            <i>tokens</i>
-            <em>≈</em>
-            <strong>$0.004</strong>
-            <i>per suite</i>
+            <strong>{TYPICAL_TOKENS_PER_SUITE}</strong>
+            <i>typical tokens per suite</i>
           </div>
           <hr />
           <p className="cost-lifecycle">
@@ -164,7 +163,7 @@ export function HowItWorks() {
             <span>Self-correct</span>
           </p>
           <small>
-            Covers the full test-suite lifecycle, including correction attempts. Estimate varies with application size and model pricing.
+            Covers the full test-suite lifecycle, including correction attempts. Token usage varies with application size and suite complexity.
           </small>
         </div>
       </motion.div>

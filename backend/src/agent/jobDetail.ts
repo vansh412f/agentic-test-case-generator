@@ -1,6 +1,6 @@
 import type { LoadedJob } from '../db/jobs.ts';
-import { estimateJobCost } from './costEstimate.ts';
-import type { CostEstimate } from './costEstimate.ts';
+import { summarizeTokenUsage } from './tokenUsage.ts';
+import type { TokenUsage } from './tokenUsage.ts';
 import { scoreTestConfidence } from './confidence.ts';
 import type { ConfidenceScore } from './confidence.ts';
 
@@ -12,7 +12,7 @@ export interface JobDetailTest extends PersistedTest {
 
 export interface JobDetail extends Omit<LoadedJob, 'generatedTests' | 'visitorId'> {
   usedOwnKeys: boolean;
-  costEstimate: CostEstimate;
+  tokenUsage: TokenUsage;
   generatedTests: JobDetailTest[];
 }
 
@@ -24,7 +24,7 @@ export function buildJobDetail(job: LoadedJob): JobDetail {
   return {
     ...rest,
     usedOwnKeys: Boolean(job.usedOwnKeys),
-    costEstimate: estimateJobCost(job.agentSteps),
+    tokenUsage: summarizeTokenUsage(job.agentSteps),
     generatedTests: job.generatedTests.map((test: PersistedTest) => ({
       ...test,
       confidence: scoreTestConfidence({

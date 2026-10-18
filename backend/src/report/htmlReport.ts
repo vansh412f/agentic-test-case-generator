@@ -4,7 +4,7 @@ import { TestPlanSchema } from '../agent/prompts/plannerPrompt.ts';
 import { generateDiffHtml } from './diffGenerator.ts';
 import { escapeHtml as h } from './escape.ts';
 import { prismCss, prismJs } from './prismAssets.ts';
-import { estimateJobCost } from '../agent/costEstimate.ts';
+import { summarizeTokenUsage } from '../agent/tokenUsage.ts';
 import { scoreTestConfidence } from '../agent/confidence.ts';
 
 function confidenceBadge(score: number, band: string): string {
@@ -29,8 +29,8 @@ export function generateHtmlReport(job: LoadedJob): string {
   }).join('');
   const totalPrompt = llmSteps.reduce((n, step) => n + (step.promptTokens ?? 0), 0);
   const totalCompletion = llmSteps.reduce((n, step) => n + (step.completionTokens ?? 0), 0);
-  const cost = estimateJobCost(job.agentSteps);
-  const costRows = cost.byProvider.map((row) => `<tr><td>${h(row.provider)}</td><td>${row.calls}</td><td>${row.promptTokens}</td><td>${row.completionTokens}</td><td>$${row.usd.toFixed(6)}${row.priced ? '' : ' (lower bound)'}</td></tr>`).join('');
+  const tokenUsage = summarizeTokenUsage(job.agentSteps);
+  const tokenRows = tokenUsage.rows.map((row) => `<tr><td>${h(row.provider)}</td><td>${h(row.model)}</td><td>${row.calls}</td><td>${row.promptTokens}</td><td>${row.completionTokens}</td></tr>`).join('');
   const duration = job.startedAt && job.completedAt ? `${job.completedAt.getTime() - job.startedAt.getTime()} ms` : '—';
   const code = (value: string) => `<pre><code class="language-typescript">${h(value)}</code></pre>`;
   const tests = job.generatedTests.map((test) => {
@@ -74,10 +74,9 @@ export function generateHtmlReport(job: LoadedJob): string {
   <section><h2>App Map Summary</h2>${map.success ? `<p>Interactive elements: ${map.data.totalElementsFound} found / ${map.data.elements.length} retained · Forms: ${map.data.forms.length} · Discovered links: ${map.data.discoveredLinks.length}</p>` : '<p>App Map unavailable.</p>'}</section>
   <section><h2>Test Plan Overview</h2>${cases.map((testCase) => `<details><summary>${h(testCase.id)} — ${h(testCase.title)} (${testCase.steps.length} steps)</summary><p>${h(testCase.description)}</p><ol>${testCase.steps.map((step) => `<li><strong>${h(step.action)}</strong> ${h(step.description)}${step.elementId ? ` · ${h(step.elementId)}` : ''}${step.value !== null ? ` · ${h(step.value)}` : ''}</li>`).join('')}</ol></details>`).join('') || '<p>Test plan unavailable.</p>'}</section>
   <section><h2>Test Results</h2>${tests || '<p>No completed test cases persisted.</p>'}</section>
-  <section><h2>Token Usage &amp; Cost Estimate</h2><p class="muted">Calls count provider attempts, including retries and planner repair. Failed requests with no usage returned have unknown token usage; totals include only reported tokens.</p>
+  <section><h2>Token Usage</h2><p class="muted">Calls count provider attempts, including retries and planner repair. Failed requests with no usage returned have unknown token usage; totals include only reported tokens.</p>
   <table><thead><tr><th>Step</th><th>Calls</th><th>Prompt tokens</th><th>Completion tokens</th></tr></thead><tbody>${usageRows}<tr><th>Total</th><th>${llmSteps.length}</th><th>${totalPrompt}</th><th>${totalCompletion}</th></tr></tbody></table>
-  <p>Estimated LLM cost: <strong>$${cost.totalUsd.toFixed(6)}</strong> across ${cost.calls} priced/unpriced call(s)${cost.unpricedCalls > 0 ? ` — ${cost.unpricedCalls} call(s) used a model with no pricing entry, so this total is a lower bound` : ''}. Gemini is priced at $0 on the free tier.</p>
-  <table><thead><tr><th>Provider</th><th>Calls</th><th>Prompt tokens</th><th>Completion tokens</th><th>Cost (USD)</th></tr></thead><tbody>${costRows || '<tr><td colspan="5">No LLM calls recorded.</td></tr>'}</tbody></table></section>
+  <table><thead><tr><th>Provider</th><th>Model</th><th>Calls</th><th>Prompt tokens</th><th>Completion tokens</th></tr></thead><tbody>${tokenRows || '<tr><td colspan="5">No LLM calls recorded.</td></tr>'}</tbody></table></section>
   <section><h2>Agent Step Timeline</h2><table><thead><tr><th>Started at</th><th>Step</th><th>Test / attempt</th><th>Status</th><th>Latency ms</th><th>Provider / model</th><th>Error</th></tr></thead><tbody>${timeline}</tbody></table></section>
   <script>window.Prism={manual:true};</script><script>${prismJs}</script><script>Prism.highlightAll();</script>
   </body></html>`;

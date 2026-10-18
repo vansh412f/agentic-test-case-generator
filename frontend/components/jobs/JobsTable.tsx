@@ -24,7 +24,7 @@ export function JobsTable({ jobs }: JobsTableProps) {
         <span>STATUS</span>
         <span>RESULTS</span>
         <span>CORRECTIONS</span>
-        <span>DURATION / COST</span>
+        <span>DURATION</span>
         <span>CREATED</span>
       </div>
 

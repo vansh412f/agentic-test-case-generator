@@ -1,30 +1,30 @@
 import assert from 'node:assert/strict';
-import { estimateJobCost } from '../src/agent/costEstimate.ts';
+import { summarizeTokenUsage } from '../src/agent/tokenUsage.ts';
 import { scoreTestConfidence } from '../src/agent/confidence.ts';
 
-// --- 6A: cost estimation -------------------------------------------------
-const cost = estimateJobCost([
+// --- 6A: token usage summarization ---------------------------------------
+const usage = summarizeTokenUsage([
   { llmProvider: 'groq', llmModel: 'openai/gpt-oss-120b', promptTokens: 1_000_000, completionTokens: 500_000 },
   { llmProvider: 'groq', llmModel: 'openai/gpt-oss-120b', promptTokens: null, completionTokens: null },
   { llmProvider: 'gemini', llmModel: 'gemini-2.5-flash', promptTokens: 900_000, completionTokens: 100_000 },
   { llmProvider: 'groq', llmModel: 'some-unpriced-model', promptTokens: 100, completionTokens: 100 },
   { llmProvider: null, llmModel: null, promptTokens: null, completionTokens: null },
 ]);
-// groq: 1M * $0.15 + 500k * $0.60 = $0.45; gemini free tier = $0; unpriced adds 0.
-assert.equal(cost.totalUsd, 0.45);
-assert.equal(cost.calls, 4);
-assert.equal(cost.unpricedCalls, 1);
-assert.equal(cost.totalTokens, 2_500_200);
-const groqRow = cost.byProvider.find((row) => row.provider === 'groq');
-assert.equal(groqRow?.calls, 3);
-assert.equal(groqRow?.usd, 0.45);
-assert.equal(groqRow?.priced, false); // one groq call used an unpriced model
-assert.equal(cost.byProvider.find((row) => row.provider === 'gemini')?.usd, 0);
-assert.deepEqual(estimateJobCost([]), {
-  totalUsd: 0, totalPromptTokens: 0, totalCompletionTokens: 0,
-  totalTokens: 0, calls: 0, unpricedCalls: 0, byProvider: [],
+assert.equal(usage.totalTokens, 2_500_200);
+assert.equal(usage.promptTokens, 1_900_100);
+assert.equal(usage.completionTokens, 600_100);
+assert.equal(usage.rows.length, 3);
+const groqRow = usage.rows.find((row) => row.provider === 'groq' && row.model === 'openai/gpt-oss-120b');
+assert.equal(groqRow?.calls, 2);
+assert.equal(groqRow?.promptTokens, 1_000_000);
+assert.equal(groqRow?.completionTokens, 500_000);
+assert.deepEqual(summarizeTokenUsage([]), {
+  totalTokens: 0,
+  promptTokens: 0,
+  completionTokens: 0,
+  rows: [],
 });
-console.log('[PASS] 6A cost estimation');
+console.log('[PASS] 6A token usage summarization');
 
 // --- 6B: confidence scoring ----------------------------------------------
 const strongCode = `

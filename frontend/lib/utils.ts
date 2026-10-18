@@ -50,10 +50,6 @@ export function formatJobDuration(
   );
 }
 
-export function formatUsd(value: number): string {
-  return `$${value.toFixed(6)}`;
-}
-
 export function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
 
