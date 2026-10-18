@@ -16,11 +16,11 @@ import { resolveTestData } from './testData.ts';
 import { buildBaselineTests } from './baseline.ts';
 import type { ElementRef, TestDataEntry } from '../api/schemas.ts';
 import { validateTestCode } from '../runner/validator.ts';
-import { executeTests, type FailureClass, type TestCaseResult } from '../runner/executor.ts';
+import { executeTests, type TestCaseResult } from '../runner/executor.ts';
 import { findUnsafeConstructs } from '../runner/codeSafety.ts';
 import { RUNNER_TESTS_DIR } from '../runner/config.ts';
 import type { AppMap, InteractiveElement } from '../crawler/types.ts';
-import type { TestPlan, TestCase } from './prompts/plannerPrompt.ts';
+import type { TestPlan } from './prompts/plannerPrompt.ts';
 import type { ScopedElement } from './types.ts';
 import { scoreTestConfidence } from './confidence.ts';
 import type { ConfidenceScore } from './confidence.ts';
@@ -36,19 +36,9 @@ import { RunnerError } from '../runner/errors.ts';
 import { JobCancelledError } from './cancellation.ts';
 import { prisma } from '../db/client.ts';
 
-export type { GeneratedTest };
+import { runRounds, type RoundTest, type TestAttempt } from './rounds.ts';
 
-export interface TestAttempt {
-  attemptNumber: number; // 1 = original, 2 = first correction, 3 = second correction
-  code: string;
-  validationPassed: boolean;
-  validationErrors?: string[];
-  executionPassed?: boolean; // undefined if validation failed (never executed)
-  executionError?: string; // trimmed error from executor
-  failureClass?: FailureClass;
-  durationMs?: number;
-  corrected: boolean; // true if this attempt was produced by the corrector
-}
+export type { GeneratedTest, TestAttempt };
 
 export interface GeneratedTestResult {
   testCaseId: string;
@@ -182,20 +172,7 @@ async function runPersistedPipeline(
     announcePhase(jobId, 'generating');
 
     type Origin = 'compiled' | 'llm' | 'corrected' | 'baseline';
-
-    interface TestState {
-      testCase: TestCase;
-      filename: string;
-      code: string;
-      origin: Origin;
-      elementsInScope: ScopedElement[];
-      attempts: TestAttempt[];
-      priorErrors: string[];
-      status: 'open' | 'passed' | 'failed' | 'gave_up';
-      recorded: boolean;
-    }
-
-    const tests: TestState[] = [];
+    const tests: RoundTest[] = [];
 
     // Round 0: compileTest for every LLM case (CompileError → generateTest LLM fallback, origin 'llm');
     // add baseline tests from WP7 if present (origin 'baseline').
@@ -220,6 +197,8 @@ async function runPersistedPipeline(
           testCase,
           filename,
           code,
+          codeVersion: 1,
+          validatedVersion: 0,
           origin: 'baseline',
           elementsInScope,
           attempts: [],
@@ -259,6 +238,8 @@ async function runPersistedPipeline(
         testCase,
         filename: initialGen.filename,
         code: initialGen.code,
+        codeVersion: 1,
+        validatedVersion: 0,
         origin,
         elementsInScope,
         attempts: [],
@@ -268,124 +249,22 @@ async function runPersistedPipeline(
       });
     }
 
-    for (let round = 1; round <= 3; round++) {
-      signal?.throwIfAborted();
-      const open = tests.filter((t) => t.status === 'open');
-      if (open.length === 0) break;
-
-      // a) findUnsafeConstructs on all open tests (cheap AST check)
-      for (const test of open) {
-        signal?.throwIfAborted();
-        const unsafe = findUnsafeConstructs(test.code, test.filename);
-        if (unsafe.length > 0) {
-          test.attempts.push({
-            attemptNumber: round,
-            code: test.code,
-            validationPassed: false,
-            validationErrors: unsafe,
-            corrected: test.origin === 'corrected',
-          });
-          if (round < 3 && test.origin !== 'baseline') {
-            const context = { jobId, testCaseId: test.testCase.id, attemptNumber: round };
-            const errorText = unsafe.join('\n');
-            const correction = await withLlmStep(context, 'correct', () =>
-              correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, { signal }),
-            );
-            test.priorErrors.push(errorText);
-            if (test.priorErrors.length > 2) test.priorErrors.splice(0, test.priorErrors.length - 2);
-            if (
-              correction.code &&
-              correctionPreservesAssertions(test.code, correction.code) &&
-              correctionPreservesSecrets(test.code, correction.code)
-            ) {
-              test.code = correction.code;
-              test.origin = 'corrected';
-            } else {
-              test.status = 'gave_up';
-            }
-          } else {
-            test.status = 'gave_up';
-          }
-        }
-      }
-
-      // b) tsc ONLY for origin 'llm' | 'corrected', all of them in ONE validateTestCode call.
-      // Compiled and baseline code skip tsc.
-      const needsTsc = open.filter(
-        (t) => t.status === 'open' && (t.origin === 'llm' || t.origin === 'corrected'),
-      );
-      if (needsTsc.length > 0) {
-        signal?.throwIfAborted();
+    await runRounds(tests, {
+      signal,
+      checkSafety: (code, filename) => findUnsafeConstructs(code, filename),
+      validateBatch: async (filesToValidate) => {
         const startTsc = Date.now();
-        const filesToValidate = needsTsc.map((t) => ({ filename: t.filename, code: t.code }));
         const validationResult = await validateTestCode(runId, filesToValidate, { signal });
-        const batchLatency = Date.now() - startTsc;
-        const perTestLatency = Math.round(batchLatency / needsTsc.length);
-
-        for (const test of needsTsc) {
-          signal?.throwIfAborted();
-          const fileErrors = validationResult.perFile.get(test.filename) ?? [];
-          const isValid = fileErrors.length === 0;
-
-          await recordStep({
-            jobId,
-            testCaseId: test.testCase.id,
-            attemptNumber: round,
-            stepType: 'validate',
-            status: isValid ? 'success' : 'failure',
-            latencyMs: perTestLatency,
-            errorDetail: isValid ? undefined : fileErrors.join('\n'),
-          });
-
-          if (!isValid) {
-            // c) invalid → push attempt; if round < 3 and origin !== 'baseline' → correctTest → origin 'corrected', stays open; else gave_up
-            test.attempts.push({
-              attemptNumber: round,
-              code: test.code,
-              validationPassed: false,
-              validationErrors: fileErrors,
-              corrected: test.origin === 'corrected',
-            });
-
-            if (round < 3 && test.origin !== 'baseline') {
-              const context = { jobId, testCaseId: test.testCase.id, attemptNumber: round };
-              const errorText = fileErrors.join('\n');
-              const correction = await withLlmStep(context, 'correct', () =>
-                correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, { signal }),
-              );
-              test.priorErrors.push(errorText);
-              if (test.priorErrors.length > 2) test.priorErrors.splice(0, test.priorErrors.length - 2);
-              if (
-                correction.code &&
-                correctionPreservesAssertions(test.code, correction.code) &&
-                correctionPreservesSecrets(test.code, correction.code)
-              ) {
-                test.code = correction.code;
-                test.origin = 'corrected';
-              } else {
-                test.status = 'gave_up';
-              }
-            } else {
-              test.status = 'gave_up';
-            }
-          }
-        }
-      }
-
-      // d) valid → ONE executeTests(runId, validFiles, { secrets, timeoutMs: min(30_000 + n*25_000, 300_000) })
-      // On RunnerError (crash, timeout, NO_RESULTS) → re-run THIS round per test
-      const validTests = open.filter((t) => t.status === 'open');
-      if (validTests.length > 0) {
-        await safeWrite('updateJobStatus:executing', () => updateJobStatus(jobId, 'executing'));
-        announcePhase(jobId, 'executing');
-
-        const timeoutMs = Math.min(30_000 + validTests.length * 25_000, 300_000);
-        const validFiles = validTests.map((t) => ({ filename: t.filename, code: t.code }));
-
-        signal?.throwIfAborted();
-        let executionResult: { success: boolean; results: TestCaseResult[] };
+        const batchLatencyMs = Date.now() - startTsc;
+        return {
+          perFile: validationResult.perFile,
+          batchLatencyMs,
+        };
+      },
+      executeBatch: async (validFiles) => {
+        const timeoutMs = Math.min(30_000 + validFiles.length * 25_000, 300_000);
         try {
-          executionResult = await executeTests(runId, validFiles, {
+          return await executeTests(runId, validFiles, {
             secrets: resolvedData?.secrets,
             timeoutMs,
             signal,
@@ -396,15 +275,15 @@ async function runPersistedPipeline(
           }
           if (err instanceof RunnerError) {
             console.warn(
-              `[Runner] Batch execution failed with ${err.code}: ${err.message}. Re-running round ${round} per test.`,
+              `[Runner] Batch execution failed with ${err.code}: ${err.message}. Re-running per test.`,
             );
             const fallbackResults: TestCaseResult[] = [];
-            for (const test of validTests) {
+            for (const file of validFiles) {
               signal?.throwIfAborted();
               try {
                 const singleRes = await executeTests(
                   runId,
-                  [{ filename: test.filename, code: test.code }],
+                  [file],
                   {
                     secrets: resolvedData?.secrets,
                     timeoutMs: Math.min(30_000 + 25_000, 300_000),
@@ -416,8 +295,9 @@ async function runPersistedPipeline(
                 if (singleErr instanceof JobCancelledError || (singleErr instanceof Error && singleErr.name === 'AbortError') || signal?.aborted) {
                   throw new JobCancelledError();
                 }
+                const testCaseId = file.filename.replace(/\.spec\.ts$/, '');
                 fallbackResults.push({
-                  testCaseId: test.testCase.id,
+                  testCaseId,
                   passed: false,
                   durationMs: 0,
                   error: singleErr instanceof Error ? singleErr.message : String(singleErr),
@@ -425,120 +305,45 @@ async function runPersistedPipeline(
                 });
               }
             }
-            executionResult = {
+            return {
               success: fallbackResults.length > 0 && fallbackResults.every((r) => r.passed),
               results: fallbackResults,
             };
-          } else {
-            throw err;
           }
+          throw err;
         }
-
-        // e) per result: passed → passed; failureClass 'finding' → failed;
-        //    baseline → (finding ? failed : gave_up), never corrected;
-        //    else if round < 3 → correct (sequential) → open; else gave_up
-        for (const test of validTests) {
-          signal?.throwIfAborted();
-          const testCaseIdFromFilename = test.filename.replace(/\.spec\.ts$/, '');
-          const result =
-            executionResult.results.find(
-              (r) => r.testCaseId === test.testCase.id || r.testCaseId === testCaseIdFromFilename,
-            ) ?? executionResult.results[0];
-
-          const execPassed = Boolean(result?.passed);
-          const execError = result?.error;
-          const failureClass = result?.failureClass;
-          const durationMs = result?.durationMs ?? 0;
-
-          await recordStep({
-            jobId,
-            testCaseId: test.testCase.id,
-            attemptNumber: round,
-            stepType: 'execute',
-            status: execPassed ? 'success' : 'failure',
-            latencyMs: durationMs,
-            errorDetail: execPassed ? undefined : (execError ?? 'Execution failed'),
-          });
-
-          test.attempts.push({
-            attemptNumber: round,
-            code: test.code,
-            validationPassed: true,
-            executionPassed: execPassed,
-            ...(execError ? { executionError: execError } : {}),
-            ...(failureClass ? { failureClass } : {}),
-            durationMs,
-            corrected: test.origin === 'corrected',
-          });
-
-          if (execPassed) {
-            console.log(
-              `[Runner] ${test.testCase.id} | round ${round}${test.origin === 'corrected' ? ' | corrected' : ''} | execute: PASS`,
-            );
-            test.status = 'passed';
-          } else if (failureClass === 'finding') {
-            console.warn(
-              `[Runner] ${test.testCase.id} | round ${round} | execute: FAIL (finding)`,
-            );
-            test.status = 'failed';
-          } else if (test.origin === 'baseline') {
-            test.status = 'gave_up';
-          } else if (round < 3) {
-            const context = { jobId, testCaseId: test.testCase.id, attemptNumber: round };
-            const errorText = execError || 'Test execution failed';
-            const correction = await withLlmStep(context, 'correct', () =>
-              correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, { signal }),
-            );
-            test.priorErrors.push(errorText);
-            if (test.priorErrors.length > 2) test.priorErrors.splice(0, test.priorErrors.length - 2);
-            if (
-              correction.code &&
-              correctionPreservesAssertions(test.code, correction.code) &&
-              correctionPreservesSecrets(test.code, correction.code)
-            ) {
-              test.code = correction.code;
-              test.origin = 'corrected';
-            } else {
-              test.status = 'gave_up';
-            }
-          } else {
-            test.status = 'gave_up';
-          }
+      },
+      correct: async ({ test, errorText, attemptNumber }) => {
+        const context = { jobId, testCaseId: test.testCase.id, attemptNumber };
+        const correction = await withLlmStep(context, 'correct', () =>
+          correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, { signal }),
+        );
+        if (
+          correction.code &&
+          correctionPreservesAssertions(test.code, correction.code) &&
+          correctionPreservesSecrets(test.code, correction.code)
+        ) {
+          return { code: correction.code };
         }
-      }
-
-      // f) a test that reaches a final status → recordGeneratedTest + test_completed event immediately
-      for (const test of tests) {
-        if (test.status !== 'open' && !test.recorded) {
-          test.recorded = true;
-          const finalStatus = test.status;
-          await safeWrite('recordGeneratedTest', () =>
-            recordGeneratedTest({
-              jobId,
-              testCaseId: test.testCase.id,
-              filename: test.filename,
-              finalCode: test.code,
-              finalStatus,
-              attempts: test.attempts,
-            }),
-          );
-          publishJobEvent(jobId, {
-            type: 'test_completed',
-            data: {
-              testCaseId: test.testCase.id,
-              status: finalStatus,
-              totalAttempts: test.attempts.length,
-            },
-          });
-        }
-      }
-    }
-
-    for (const test of tests) {
-      if (!test.recorded) {
+        return null;
+      },
+      recordStep: async (step) => {
+        await recordStep({
+          jobId,
+          testCaseId: step.testCaseId,
+          attemptNumber: step.attemptNumber,
+          stepType: step.stepType,
+          status: step.status,
+          latencyMs: step.latencyMs,
+          errorDetail: step.errorDetail,
+        });
+      },
+      onPhaseChange: async (phase) => {
+        await safeWrite('updateJobStatus:executing', () => updateJobStatus(jobId, phase));
+        announcePhase(jobId, phase);
+      },
+      emitTerminal: async (test) => {
         const finalStatus = test.status === 'open' ? 'gave_up' : test.status;
-        test.status = finalStatus;
-        test.recorded = true;
         await safeWrite('recordGeneratedTest', () =>
           recordGeneratedTest({
             jobId,
@@ -557,8 +362,8 @@ async function runPersistedPipeline(
             totalAttempts: test.attempts.length,
           },
         });
-      }
-    }
+      },
+    });
 
     const generatedTests: GeneratedTestResult[] = tests.map((t) => ({
       testCaseId: t.testCase.id,
