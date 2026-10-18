@@ -36,8 +36,12 @@ export function withLlmStep<T>(
   context: StepContext,
   stepType: 'plan' | 'generate' | 'correct',
   operation: () => Promise<T>,
+  onUsage?: (promptTokens?: number, completionTokens?: number) => void,
 ): Promise<T> {
   return withLlmObserver(async (event) => {
+    if (onUsage) {
+      onUsage(event.usage?.promptTokens, event.usage?.completionTokens);
+    }
     const model = event.model === 'unknown'
       ? PROVIDER_MODELS[event.provider]
       : event.model;

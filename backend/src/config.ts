@@ -52,6 +52,7 @@ const configSchema = z.object({
   LOCAL_AGENT_MODE: z.string().default('false').transform((v) => v.toLowerCase() === 'true'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
   FRONTEND_ORIGIN: z.string().optional(),
+  JOB_TOKEN_BUDGET: z.coerce.number().int().min(0).default(40000),
 });
 
 export type Config = z.infer<typeof configSchema> & {

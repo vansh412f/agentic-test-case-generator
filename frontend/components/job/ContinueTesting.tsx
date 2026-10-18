@@ -15,7 +15,7 @@ import {
 } from '@/lib/api';
 import { handleGenerationError } from '@/lib/generationErrors';
 import { isTerminalJobStatus } from '@/lib/utils';
-import type { JobDetail, JobsListResponse } from '@/types/api';
+import type { AppMap, JobDetail, JobsListResponse } from '@/types/api';
 
 interface ContinueTestingProps {
   job: JobDetail;
@@ -31,6 +31,7 @@ function normalizeUrl(u: string): string {
 }
 
 export function ContinueTesting({ job }: ContinueTestingProps) {
+  const [isOpen, setIsOpen] = useState(false);
   const [hasCustomKeys, setHasCustomKeys] = useState(false);
   const [altchaPayload, setAltchaPayload] = useState<string | null>(null);
   const [powEpoch, setPowEpoch] = useState(0);
@@ -44,6 +45,12 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
   const [createdJobIds, setCreatedJobIds] = useState<string[] | null>(null);
   const [submittedUrls, setSubmittedUrls] = useState<string[]>([]);
 
+  const { data: appMapData, isLoading: appMapLoading } = useSWR<{ appMap: AppMap | null }>(
+    isOpen ? `${apiBase()}/api/jobs/${job.id}/appmap` : null,
+    fetcher,
+  );
+  const appMap = appMapData?.appMap ?? job.appMap;
+
   const { data: budget } = useSWR<BudgetResponse, Error>(
     ['/api/budget', hasCustomKeys],
     () => getBudget(),
@@ -55,25 +62,25 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
   }, []);
 
   const { eligiblePages, eligibleTabs } = useMemo(() => {
-    if (!job.appMap) return { eligiblePages: [], eligibleTabs: [] };
+    if (!appMap) return { eligiblePages: [], eligibleTabs: [] };
 
     const excludedUrls = new Set([
       normalizeUrl(job.targetUrl),
-      ...(job.appMap.pages?.map((p) => normalizeUrl(p.url)) ?? []),
-      ...(job.appMap.pages?.map((p) => normalizeUrl(p.requestedUrl)) ?? []),
+      ...(appMap.pages?.map((p) => normalizeUrl(p.url)) ?? []),
+      ...(appMap.pages?.map((p) => normalizeUrl(p.requestedUrl)) ?? []),
     ]);
 
-    const uniqueLinks = Array.from(new Set(job.appMap.discoveredLinks ?? []));
+    const uniqueLinks = Array.from(new Set(appMap.discoveredLinks ?? []));
     const pages = uniqueLinks
       .filter((link) => !excludedUrls.has(normalizeUrl(link)))
       .slice(0, 20);
 
-    const tabs = (job.appMap.elements ?? [])
+    const tabs = (appMap.elements ?? [])
       .filter((el) => el.ariaRole === 'tab' && (!el.page || el.page === 1) && el.selectors?.css)
       .slice(0, 12);
 
     return { eligiblePages: pages, eligibleTabs: tabs };
-  }, [job.appMap, job.targetUrl]);
+  }, [appMap, job.targetUrl]);
 
   // Poll job status once jobs are created
   const { data: groupList } = useSWR<JobsListResponse, Error>(
@@ -186,6 +193,52 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
   }
 
   const buttonsDisabled = submitting || (!hasCustomKeys && !altchaPayload);
+
+  if (!isOpen) {
+    return (
+      <section className="detail-section continue-testing continue-testing-root">
+        <div className="detail-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <p className="eyebrow">CONTINUE TESTING</p>
+            <h2>Expand test coverage to discovered pages and tabs</h2>
+          </div>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setIsOpen(true)}
+          >
+            Explore Pages & Tabs <ArrowRight aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (appMapLoading) {
+    return (
+      <section className="detail-section continue-testing continue-testing-root">
+        <div className="detail-heading">
+          <div>
+            <p className="eyebrow">CONTINUE TESTING</p>
+            <h2>Loading discovered pages and tabs…</h2>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (!appMap || (eligiblePages.length === 0 && eligibleTabs.length === 0)) {
+    return (
+      <section className="detail-section continue-testing continue-testing-root">
+        <div className="detail-heading">
+          <div>
+            <p className="eyebrow">CONTINUE TESTING</p>
+            <h2>No additional pages or tabs discovered for this target.</h2>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="detail-section continue-testing continue-testing-root">

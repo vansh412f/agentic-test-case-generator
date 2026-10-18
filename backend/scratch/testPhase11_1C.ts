@@ -618,9 +618,72 @@ async function testUiAndDataCorrectnessWP6() {
   console.log('\n✓ Test 9 passed\n');
 }
 
+async function testCostAndEgressWP7() {
+  console.log('--- Test 10: Cost and Egress (WP7: slim job detail, token budget, retention) ---');
+  const { config } = await import('../src/config.ts');
+  const { prisma } = await import('../src/db/client.ts');
+  const { getJobDetailView, getJobById } = await import('../src/db/jobs.ts');
+  const { runRetention } = await import('../src/maintenance/expireOldJobs.ts');
+
+  // 1. Config default
+  assert.equal(config.JOB_TOKEN_BUDGET, 40000, 'JOB_TOKEN_BUDGET default should be 40000');
+  console.log('✓ JOB_TOKEN_BUDGET default is 40000');
+
+  // 2. Slim detail view: appMap is null, non-attempt-1 executionResult code is stripped
+  const testJobId = crypto.randomUUID();
+  await prisma.job.create({
+    data: {
+      id: testJobId,
+      targetUrl: 'https://example.com/test-wp7',
+      status: 'completed',
+      appMap: { url: 'https://example.com/test-wp7', elements: [] },
+      generatedTests: {
+        create: {
+          testCaseId: 'tc-1',
+          filename: 'tc-1.spec.ts',
+          finalCode: '// final code',
+          finalStatus: 'passed',
+          totalAttempts: 3,
+          executionResults: {
+            create: [
+              { attemptNumber: 1, code: '// attempt 1 code', validationPassed: true, corrected: false },
+              { attemptNumber: 2, code: '// attempt 2 code', validationPassed: true, corrected: false },
+              { attemptNumber: 3, code: '// attempt 3 code', validationPassed: true, corrected: false },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  const detailView = await getJobDetailView(testJobId);
+  assert.ok(detailView, 'Detail view should find job');
+  assert.equal(detailView.appMap, null, 'appMap should be null in slim detail view');
+  assert.equal(detailView.generatedTests.length, 1);
+  const test0 = detailView.generatedTests[0];
+  assert.equal(test0.finalCode, '// final code', 'finalCode must be retained');
+  assert.equal(test0.executionResults[0].code, '// attempt 1 code', 'Attempt 1 code must be retained for diff');
+  assert.equal(test0.executionResults[1].code, '', 'Attempt 2 code must be empty string in slim view');
+  assert.equal(test0.executionResults[2].code, '', 'Attempt 3 code must be empty string in slim view');
+
+  const fullJob = await getJobById(testJobId);
+  assert.ok(fullJob?.appMap, 'getJobById must retain appMap for export/reports');
+  assert.equal(fullJob?.generatedTests[0]?.executionResults[1]?.code, '// attempt 2 code', 'getJobById retains all code');
+  console.log('✓ getJobDetailView strips appMap and intermediate attempt code while preserving attempt 1 diff');
+
+  // 3. Retention run
+  const retentionRes = await runRetention();
+  assert.ok(typeof retentionRes.deletedJobs === 'number');
+  assert.ok(typeof retentionRes.truncatedAttempts === 'number');
+  console.log(`✓ runRetention ran successfully (deleted: ${retentionRes.deletedJobs}, truncated: ${retentionRes.truncatedAttempts})`);
+
+  await prisma.job.delete({ where: { id: testJobId } });
+  console.log('\n✓ Test 10 passed\n');
+}
+
 async function main() {
   console.log('====================================================');
-  console.log(' Phase 11.1C Regression Tests - WP1 to WP6          ');
+  console.log(' Phase 11.1C Regression Tests - WP1 to WP7          ');
   console.log('====================================================\n');
   await testTscFailCorrectedNextRoundExec();
   await testAttemptNumbersStrictlyIncreasingNoDuplicates();
@@ -631,7 +694,8 @@ async function main() {
   await testEgressGuardAndSsrf();
   await testCancelAndBudgetCorrectness();
   await testUiAndDataCorrectnessWP6();
-  console.log('All WP1, WP2, WP3, WP4, WP5, and WP6 tests passed successfully!');
+  await testCostAndEgressWP7();
+  console.log('All WP1, WP2, WP3, WP4, WP5, WP6, and WP7 tests passed successfully!');
 }
 
 main().catch((err) => {

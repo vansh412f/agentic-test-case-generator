@@ -95,6 +95,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     mutate,
     transport,
     wakingInfo,
+    budgetNote,
   } = useJobStream(jobId, initialJob ?? undefined);
 
   const [wakingCountdown, setWakingCountdown] = useState<number | null>(null);
@@ -410,6 +411,25 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           </div>
         )}
 
+        {(budgetNote ||
+          job.generatedTests.some((t) =>
+            t.executionResults.some((r) => r.executionError?.includes('token_budget')),
+          )) && (
+          <div
+            className="error-banner mb-6"
+            style={{ background: '#fffbeb', borderColor: '#fef3c7', color: '#92400e', margin: '16px 0' }}
+            role="status"
+            aria-live="polite"
+          >
+            <div>
+              <strong>Token budget reached</strong>
+              <p style={{ color: '#b45309' }}>
+                {budgetNote ?? 'Token budget reached: remaining failures were not auto-corrected.'}
+              </p>
+            </div>
+          </div>
+        )}
+
         {showCancelDialog && (
           <div
             style={{
@@ -604,7 +624,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           )}
         </section>
 
-        {terminal && !isShareView && job.appMap ? (
+        {terminal && !isShareView ? (
           <ContinueTesting job={job} />
         ) : null}
       </main>

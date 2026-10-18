@@ -1,19 +1,12 @@
-/**
- * Maintenance script to clean up expired jobs older than RETENTION_DAYS (default: 180 days).
- *
- * Scheduling note:
- * Running this script on a schedule (e.g. Render cron or GitHub Actions) is deferred
- * to Phase 9. This script provides the CLI utility for manual runs and dry runs.
- *
- * Usage:
- *   pnpm run jobs:expire           # Dry-run: prints count of eligible jobs
- *   pnpm run jobs:expire --apply   # Actually deletes matching jobs and cascades
- */
 import { prisma } from '../db/client.ts';
+import { config } from '../config.ts';
 
-async function main() {
-  const isApply = process.argv.includes('--apply');
-  const retentionDays = Number.parseInt(process.env.RETENTION_DAYS || '180', 10);
+export async function runRetention(): Promise<{ deletedJobs: number; truncatedAttempts: number }> {
+  if (config.LOCAL_AGENT_MODE) {
+    return { deletedJobs: 0, truncatedAttempts: 0 };
+  }
+
+  const retentionDays = Number.parseInt(process.env.RETENTION_DAYS || '30', 10);
   const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
 
   const sampleIds = (process.env.SAMPLE_JOB_IDS || '')
@@ -26,30 +19,51 @@ async function main() {
     ...(sampleIds.length > 0 ? { id: { notIn: sampleIds } } : {}),
   };
 
-  const eligibleCount = await prisma.job.count({ where });
-
-  console.log(`[Retention] Cutoff date (${retentionDays} days): ${cutoffDate.toISOString()}`);
-  console.log(`[Retention] Found ${eligibleCount} job(s) eligible for expiration.`);
-
-  if (!isApply) {
-    console.log('[Retention] Dry run completed. Pass --apply to delete.');
-    return;
+  let deletedJobs = 0;
+  try {
+    const deleteResult = await prisma.job.deleteMany({ where });
+    deletedJobs = deleteResult.count;
+    if (deletedJobs > 0) {
+      console.log(`[Retention] Deleted ${deletedJobs} job(s) older than ${retentionDays} days.`);
+    }
+  } catch (err) {
+    console.warn(`[Retention] Failed to delete expired jobs: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  if (eligibleCount === 0) {
-    console.log('[Retention] Nothing to delete.');
-    return;
+  let truncatedAttempts = 0;
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    truncatedAttempts = await prisma.$executeRawUnsafe(`
+      UPDATE "ExecutionResult" er
+      SET code = ''
+      FROM "GeneratedTest" gt
+      WHERE er."generatedTestId" = gt.id
+        AND er."createdAt" < $1
+        AND er."attemptNumber" > 1
+        AND er."attemptNumber" < gt."totalAttempts"
+        AND er.code != ''
+    `, sevenDaysAgo);
+    if (truncatedAttempts > 0) {
+      console.log(`[Retention] Truncated code for ${truncatedAttempts} intermediate attempt(s) older than 7 days.`);
+    }
+  } catch (err) {
+    console.warn(`[Retention] Failed to truncate intermediate attempt code: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  const result = await prisma.job.deleteMany({ where });
-  console.log(`[Retention] Successfully deleted ${result.count} job(s).`);
+  return { deletedJobs, truncatedAttempts };
 }
 
-main()
-  .catch((err) => {
-    console.error('[Retention] Failed:', err);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+// CLI entrypoint
+if (process.argv[1]?.endsWith('expireOldJobs.ts') || process.argv[1]?.endsWith('expireOldJobs.js')) {
+  runRetention()
+    .then(({ deletedJobs, truncatedAttempts }) => {
+      console.log(`[Retention] Completed: deleted ${deletedJobs} job(s), truncated ${truncatedAttempts} attempt(s).`);
+    })
+    .catch((err) => {
+      console.error('[Retention] Failed:', err);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
+}

@@ -2,6 +2,7 @@ import path from 'node:path';
 import { rm } from 'node:fs/promises';
 import { crawlPage, crawlSite } from '../crawler/pageCrawler.ts';
 import { assertPublicTarget } from '../security/netPolicy.ts';
+import { config } from '../config.ts';
 import { takeFreshCrawl } from '../crawler/crawlCache.ts';
 import {
   DEEP_CRAWL_MAX_PAGES,
@@ -169,9 +170,35 @@ async function runPersistedPipeline(
     signal?.throwIfAborted();
     const resolvedData = testData && testData.length > 0 ? resolveTestData(appMap, testData) : undefined;
 
+    let consumedTokens = 0;
+    const tokenBudget = config.JOB_TOKEN_BUDGET;
+    let budgetNoteEmitted = false;
+
+    const trackTokens = (promptTokens?: number, completionTokens?: number) => {
+      consumedTokens += (promptTokens ?? 0) + (completionTokens ?? 0);
+      if (tokenBudget > 0 && consumedTokens >= tokenBudget && !budgetNoteEmitted) {
+        budgetNoteEmitted = true;
+        publishJobEvent(jobId, {
+          type: 'budget_note',
+          data: { message: 'Token budget reached: remaining failures were not auto-corrected.' },
+        });
+      }
+    };
+
     announcePhase(jobId, 'planning');
-    const testPlan = await withLlmStep({ jobId }, 'plan', () =>
-      planTests(appMap, { testData, focus, signal, fresh }),
+    const testPlan = await withLlmStep(
+      { jobId },
+      'plan',
+      () =>
+        planTests(appMap, {
+          testData,
+          focus,
+          signal,
+          fresh,
+          tokenBudget,
+          consumedTokens: () => consumedTokens,
+        }),
+      trackTokens,
     );
     const baselineTests = buildBaselineTests(appMap);
     for (const b of baselineTests) {
@@ -236,6 +263,7 @@ async function runPersistedPipeline(
             { jobId, testCaseId: testCase.id },
             'generate',
             () => generateTest(testCase, elementsInScope, appMap.url, { signal }),
+            trackTokens,
           );
           origin = 'llm';
         } else {
@@ -324,8 +352,12 @@ async function runPersistedPipeline(
       },
       correct: async ({ test, errorText, attemptNumber }) => {
         const context = { jobId, testCaseId: test.testCase.id, attemptNumber };
-        const correction = await withLlmStep(context, 'correct', () =>
-          correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, { signal }),
+        const correction = await withLlmStep(
+          context,
+          'correct',
+          () =>
+            correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, { signal }),
+          trackTokens,
         );
         if (
           correction.code &&
@@ -374,6 +406,10 @@ async function runPersistedPipeline(
             totalAttempts: test.attempts.length,
           },
         });
+      },
+      canCorrect: () => {
+        if (tokenBudget <= 0) return true;
+        return consumedTokens < tokenBudget;
       },
     });
 

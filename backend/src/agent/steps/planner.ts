@@ -245,6 +245,8 @@ export interface PlanTestsOptions {
   extraPromptBlock?: string;
   signal?: AbortSignal;
   fresh?: boolean;
+  tokenBudget?: number;
+  consumedTokens?: () => number;
 }
 
 export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Promise<TestPlan> {
@@ -331,8 +333,14 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     plan.testCases = filterNavigationOnlyTests(plan.testCases, appMap);
     capAndRenumberTestPlan(plan);
 
-    // 2. Expansion call if < 4 cases AND >= 6 visible interactive elements
-    if (!isSalvaged && plan.testCases.length < 4 && visibleCount >= 6 && assistantResponseContent) {
+    // 2. Expansion call if < 4 cases AND >= 6 visible interactive elements AND meter <= 50%
+    const budgetExceeded = Boolean(
+      options?.tokenBudget &&
+        options.tokenBudget > 0 &&
+        options?.consumedTokens &&
+        options.consumedTokens() > options.tokenBudget * 0.5,
+    );
+    if (!isSalvaged && plan.testCases.length < 4 && visibleCount >= 6 && assistantResponseContent && !budgetExceeded) {
       try {
         const expansionMessages: LlmMessage[] = [
           ...messages,

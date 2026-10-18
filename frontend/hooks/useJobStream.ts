@@ -20,6 +20,7 @@ export interface JobStreamResult {
   transport: JobTransport;
   liveStatus: JobStatus | null;
   wakingInfo: WakingInfo | null;
+  budgetNote: string | null;
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -58,6 +59,7 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
   const [transport, setTransport] = useState<JobTransport>('idle');
   const [liveStatus, setLiveStatus] = useState<JobStatus | null>(null);
   const [wakingInfo, setWakingInfo] = useState<WakingInfo | null>(null);
+  const [budgetNote, setBudgetNote] = useState<string | null>(null);
   const key = jobId === null ? null : `${apiBase()}/api/jobs/${jobId}`;
 
   const swr = useSWR<JobDetail, Error>(key, fetcher, {
@@ -65,7 +67,7 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     revalidateOnFocus: true,
     refreshInterval: (latest) => {
       if (latest !== undefined && isTerminalJobStatus(latest.status)) return 0;
-      return transport === 'sse' ? 0 : POLL_INTERVAL_MS;
+      return transport === 'polling' ? POLL_INTERVAL_MS : 0;
     },
   });
 
@@ -77,8 +79,15 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
   const startTerminal = initialStatus !== undefined && isTerminalJobStatus(initialStatus);
 
   useEffect(() => {
+    if (swr.data && isTerminalJobStatus(swr.data.status) && transport === 'polling') {
+      setTransport('idle');
+    }
+  }, [swr.data, transport]);
+
+  useEffect(() => {
     setLiveStatus(null);
     setWakingInfo(null);
+    setBudgetNote(null);
 
     if (jobId === null || startTerminal || typeof window === 'undefined' || !('EventSource' in window)) {
       setTransport(jobId === null ? 'idle' : 'polling');
@@ -88,6 +97,7 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     const source = new EventSource(`${apiBase()}/api/jobs/${jobId}/stream`);
     let errors = 0;
     let timer: number | null = null;
+    let stepTimer: number | null = null;
     let closed = false;
 
     const scheduleRefetch = (): void => {
@@ -96,6 +106,15 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
         timer = null;
         if (!closed) void mutateRef.current();
       }, REFETCH_THROTTLE_MS);
+    };
+
+    const scheduleStepRefetch = (): void => {
+      if (closed) return;
+      if (stepTimer !== null) window.clearTimeout(stepTimer);
+      stepTimer = window.setTimeout(() => {
+        stepTimer = null;
+        if (!closed) void mutateRef.current();
+      }, 5000);
     };
 
     const handleStatusEvent = (e: Event): void => {
@@ -125,8 +144,19 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
 
     source.addEventListener('snapshot', handleStatusEvent);
     source.addEventListener('phase_change', handleStatusEvent);
-    source.addEventListener('step_recorded', scheduleRefetch);
+    source.addEventListener('step_recorded', scheduleStepRefetch);
     source.addEventListener('test_completed', scheduleRefetch);
+    source.addEventListener('budget_note', (e: Event) => {
+      if (closed) return;
+      if (e instanceof MessageEvent && typeof e.data === 'string') {
+        try {
+          const parsed = JSON.parse(e.data);
+          if (typeof parsed?.message === 'string') {
+            setBudgetNote(parsed.message);
+          }
+        } catch {}
+      }
+    });
     source.addEventListener('target_waking', (e: Event) => {
       if (closed) return;
       if (e instanceof MessageEvent && typeof e.data === 'string') {
@@ -167,19 +197,16 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     source.addEventListener('unavailable', () => stop('polling'));
     source.onerror = () => {
       if (closed) return;
-      // EventSource auto-reconnects (server sends retry: 3000). A 4xx/5xx
-      // response closes it permanently (readyState CLOSED).
       errors += 1;
       if (source.readyState === EventSource.CLOSED || errors >= MAX_CONSECUTIVE_SSE_ERRORS) {
         stop('polling');
-      } else {
-        setTransport('polling');
       }
     };
 
     return () => {
       closed = true;
       if (timer !== null) window.clearTimeout(timer);
+      if (stepTimer !== null) window.clearTimeout(stepTimer);
       source.close();
     };
   }, [jobId, startTerminal]);
@@ -192,5 +219,6 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     transport,
     liveStatus,
     wakingInfo,
+    budgetNote,
   };
 }

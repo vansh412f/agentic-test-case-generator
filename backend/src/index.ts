@@ -8,6 +8,7 @@ import { inFlightJobs } from './agent/jobRunner.ts';
 import { publishJobEvent } from './agent/jobEvents.ts';
 import { closeAllJobStreams } from './api/jobStream.ts';
 import { reconcileOrphanedJobs } from './maintenance/reconcileJobs.ts';
+import { runRetention } from './maintenance/expireOldJobs.ts';
 
 const bootedAt = new Date();
 
@@ -98,6 +99,17 @@ const server = app.listen(config.PORT, () => {
   console.log(`Server running on http://localhost:${config.PORT}`);
   console.log(`Environment: ${config.NODE_ENV}`);
   void reconcileOrphanedJobs(bootedAt);
+
+  if (!config.LOCAL_AGENT_MODE) {
+    const retentionTimer = setTimeout(() => {
+      void runRetention();
+      const dailyTimer = setInterval(() => {
+        void runRetention();
+      }, 24 * 60 * 60 * 1000);
+      dailyTimer.unref();
+    }, 60_000);
+    retentionTimer.unref();
+  }
 });
 
 // Detached pipelines (Phase 8) make an unhandled rejection a process-killer.

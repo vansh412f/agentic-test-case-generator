@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Response } from 'express';
 import { z } from 'zod';
-import { getJobById, listJobs } from '../db/jobs.ts';
+import { getJobById, getJobDetailView, listJobs } from '../db/jobs.ts';
 import { buildJobDetail } from '../agent/jobDetail.ts';
 import { generateHtmlReport } from '../report/htmlReport.ts';
 import { exportProject } from '../export/projectExporter.ts';
@@ -66,7 +66,7 @@ router.get('/:id', async (req, res) => {
     return;
   }
   try {
-    const job = await getJobById(parsed.data.id);
+    const job = await getJobDetailView(parsed.data.id);
     if (!job) throw new JobError('JOB_NOT_FOUND', 'Job not found.');
     let groupRemainingJobs: number | undefined;
     if (job.runGroupId) {
@@ -78,7 +78,25 @@ router.get('/:id', async (req, res) => {
         },
       });
     }
-    res.json(buildJobDetail(job, { viewerVisitorId: req.visitorId, groupRemainingJobs }));
+    res.json(buildJobDetail(job as any, { viewerVisitorId: req.visitorId, groupRemainingJobs }));
+  } catch (error) {
+    respondWithError(res, error);
+  }
+});
+
+router.get('/:id/appmap', async (req, res) => {
+  const parsed = JobIdSchema.safeParse(req.params);
+  if (!parsed.success) {
+    invalid(res, parsed.error.flatten().fieldErrors);
+    return;
+  }
+  try {
+    const job = await prisma.job.findUnique({
+      where: { id: parsed.data.id },
+      select: { id: true, visitorId: true, appMap: true },
+    });
+    if (!job) throw new JobError('JOB_NOT_FOUND', 'Job not found.');
+    res.json({ appMap: job.appMap });
   } catch (error) {
     respondWithError(res, error);
   }

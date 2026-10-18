@@ -10,7 +10,8 @@ export type JobEventPayload =
   | { type: 'test_completed'; data: { testCaseId: string; status: TestStatus; totalAttempts: number } }
   | { type: 'job_finished'; data: { status: 'completed' | 'failed' | 'cancelled'; errorCode: string | null } }
   | { type: 'queue_position'; data: { position: number } }
-  | { type: 'target_waking'; data: { attempt: number; nextRetryInSec: number } };
+  | { type: 'target_waking'; data: { attempt: number; nextRetryInSec: number } }
+  | { type: 'budget_note'; data: { message: string } };
 
 export type JobEvent = JobEventPayload & { id: string; seq: number };
 

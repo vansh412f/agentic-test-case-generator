@@ -99,6 +99,98 @@ export async function getJobById(id: string) {
 
 export type LoadedJob = NonNullable<Awaited<ReturnType<typeof getJobById>>>;
 
+export async function getJobDetailView(id: string) {
+  try {
+    const job = await prisma.job.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        visitorId: true,
+        targetUrl: true,
+        status: true,
+        errorCode: true,
+        errorMessage: true,
+        testPlan: true,
+        createdAt: true,
+        startedAt: true,
+        completedAt: true,
+        cancelledAt: true,
+        runGroupId: true,
+        usedOwnKeys: true,
+        agentSteps: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+        generatedTests: {
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            jobId: true,
+            testCaseId: true,
+            filename: true,
+            finalCode: true,
+            finalStatus: true,
+            totalAttempts: true,
+            createdAt: true,
+            executionResults: {
+              orderBy: { attemptNumber: 'asc' },
+              select: {
+                id: true,
+                generatedTestId: true,
+                attemptNumber: true,
+                validationPassed: true,
+                validationErrors: true,
+                executionPassed: true,
+                executionError: true,
+                failureClass: true,
+                durationMs: true,
+                corrected: true,
+                createdAt: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!job) return null;
+
+    const testIds = job.generatedTests.map((t) => t.id);
+    const attempt1Rows =
+      testIds.length === 0
+        ? []
+        : await prisma.executionResult.findMany({
+            where: {
+              generatedTestId: { in: testIds },
+              attemptNumber: 1,
+            },
+            select: {
+              generatedTestId: true,
+              code: true,
+            },
+          });
+
+    const attempt1Map = new Map(attempt1Rows.map((r) => [r.generatedTestId, r.code]));
+
+    const generatedTests = job.generatedTests.map((t) => {
+      const code1 = attempt1Map.get(t.id) ?? '';
+      const executionResults = t.executionResults.map((r) => ({
+        ...r,
+        code: r.attemptNumber === 1 ? code1 : '',
+      }));
+      return {
+        ...t,
+        executionResults,
+      };
+    });
+
+    return {
+      ...job,
+      appMap: null,
+      generatedTests,
+    };
+  } catch (cause) {
+    throw new DatabaseError(cause);
+  }
+}
+
 export async function listJobs(page: number, limit: number, visitorId?: string | null) {
   try {
     const where = visitorId ? { visitorId } : { visitorId: '__none__' };
