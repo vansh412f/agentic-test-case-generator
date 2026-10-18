@@ -32,6 +32,7 @@ import {
   getApiMode,
   type TestDataParam,
   type BudgetResponse,
+  getBudget,
 } from '@/lib/api';
 import { loadRememberedTestData } from '@/lib/rememberedTestData';
 import type { AppMap, JobsListResponse } from '@/types/api';
@@ -275,8 +276,8 @@ export default function HomePage() {
   }, [wakingActive, wakingAttempt]);
 
   const { data: budget, mutate: mutateBudget } = useSWR<BudgetResponse, Error>(
-    '/api/budget',
-    fetcher,
+    ['/api/budget', hasCustomKeys],
+    () => getBudget(),
   );
 
   useEffect(() => {

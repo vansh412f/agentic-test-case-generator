@@ -468,9 +468,91 @@ test('ssrf attempt via request fixture', async ({ request }) => {
   console.log('\n✓ Test 7 passed\n');
 }
 
+async function testCancelAndBudgetCorrectness() {
+  console.log('--- Test 8: Cancel and budget correctness (WP5: B2, B13, B14, B7, B9) ---');
+  const { tryReserveRun, resetReservationsForTest } = await import('../src/security/dailyBudget.ts');
+  const { prisma } = await import('../src/db/client.ts');
+  const { config } = await import('../src/config.ts');
+
+  // A. tryReserveRun returns reason: 'quota_exhausted' when limit reached
+  resetReservationsForTest();
+  const visitorId = 'v-test-exhaust';
+  const res1 = await tryReserveRun({
+    visitorId,
+    ipHash: 'ip-exhaust',
+    n: config.FREE_VISITOR_DAILY_LIMIT + 1,
+  });
+  assert.equal(res1.ok, false);
+  if (!res1.ok) {
+    assert.equal(res1.reason, 'quota_exhausted');
+    assert.equal(res1.scope, 'visitor');
+    console.log('✓ tryReserveRun returns reason: quota_exhausted on limit exceeded');
+  }
+
+  // B. Simulate DB outage during budget reservation -> returns reason: 'unavailable'
+  const originalCount = prisma.job.count;
+  (prisma.job as any).count = async () => {
+    throw new Error('Connection terminated unexpectedly');
+  };
+  try {
+    const resOutage = await tryReserveRun({
+      visitorId: 'v-test-db-down',
+      ipHash: 'ip-db-down',
+      n: 1,
+    });
+    assert.equal(resOutage.ok, false);
+    if (!resOutage.ok) {
+      assert.equal(resOutage.reason, 'unavailable');
+      console.log('✓ tryReserveRun returns reason: unavailable during DB outage (B14)');
+    }
+  } finally {
+    prisma.job.count = originalCount;
+  }
+
+  // C. B13: Conditional updateMany prevents overwriting completed/failed/cancelled jobs
+  const { randomUUID } = await import('node:crypto');
+  const testJobId = randomUUID();
+  await prisma.job.create({
+    data: {
+      id: testJobId,
+      targetUrl: 'https://example.com',
+      status: 'completed',
+    },
+  });
+
+  const now = new Date();
+  const updateRes = await prisma.job.updateMany({
+    where: {
+      id: testJobId,
+      status: { notIn: ['completed', 'failed', 'cancelled'] },
+    },
+    data: {
+      status: 'cancelled',
+      cancelledAt: now,
+    },
+  });
+  assert.equal(updateRes.count, 0, 'Completed job must NOT be updated by cancel query (count === 0)');
+  const reRead = await prisma.job.findUnique({ where: { id: testJobId } });
+  assert.equal(reRead?.status, 'completed', 'Completed job status must remain completed');
+  await prisma.job.delete({ where: { id: testJobId } });
+  console.log('✓ Conditional updateMany protects finished jobs from cancel overwrite (B13)');
+
+  // D. B9: errorDetailRaw returns array for jobIds
+  const { ApiError, errorDetail, errorDetailRaw } = await import('../../frontend/lib/api');
+  const err409 = new ApiError(409, 'ALREADY_RUNNING', 'You already have a run in progress.', {
+    jobIds: ['job-123', 'job-456'],
+  });
+  assert.equal(errorDetail(err409, 'jobIds'), undefined, 'errorDetail must return undefined for array');
+  const rawIds = errorDetailRaw(err409, 'jobIds');
+  assert.deepEqual(rawIds, ['job-123', 'job-456'], 'errorDetailRaw must extract jobIds array');
+  console.log('✓ errorDetailRaw successfully extracts jobIds array (B9)');
+
+  console.log('\n✓ Test 8 passed\n');
+}
+
 async function main() {
   console.log('====================================================');
-  console.log(' Phase 11.1C Regression Tests - WP1, WP2, WP3, WP4 ');
+  console.log(' Phase 11.1C Regression Tests - WP1 to WP5          ');
   console.log('====================================================\n');
   await testTscFailCorrectedNextRoundExec();
   await testAttemptNumbersStrictlyIncreasingNoDuplicates();
@@ -479,7 +561,8 @@ async function main() {
   await testSafeWritePersistenceResilience();
   await testClassifyExecutionErrorTable();
   await testEgressGuardAndSsrf();
-  console.log('All WP1, WP2, WP3, and WP4 tests passed successfully!');
+  await testCancelAndBudgetCorrectness();
+  console.log('All WP1, WP2, WP3, WP4, and WP5 tests passed successfully!');
 }
 
 main().catch((err) => {

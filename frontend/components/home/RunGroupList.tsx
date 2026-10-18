@@ -5,6 +5,8 @@ import { StatusBadge } from '@/components/common/StatusBadge';
 import type { JobSummary } from '@/types/api';
 import { isTerminalJobStatus } from '@/lib/utils';
 import { useApiBase } from '@/hooks/useApiBase';
+import { cancelJob } from '@/lib/api';
+import { toast } from 'sonner';
 
 interface RunGroupListProps {
   jobIds: string[];
@@ -30,13 +32,10 @@ export function RunGroupList({ jobIds, submittedUrls, summaries }: RunGroupListP
     if (!nonTerminal) return;
     setCancelling(true);
     try {
-      await fetch(`${base}/api/jobs/${nonTerminal.id}/cancel`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scope: 'group' }),
-      });
+      await cancelJob(nonTerminal.id, 'group');
+      toast.success('Remaining jobs cancelled');
     } catch (err) {
-      console.error('Cancel failed', err);
+      toast.error(err instanceof Error ? err.message : 'Cancel failed');
     } finally {
       setCancelling(false);
     }

@@ -25,6 +25,11 @@ export function errorDetail(error: ApiError, key: string): string | number | und
   return typeof value === 'string' || typeof value === 'number' ? value : undefined;
 }
 
+export function errorDetailRaw(error: ApiError, key: string): unknown {
+  if (typeof error.details !== 'object' || error.details === null) return undefined;
+  return (error.details as Record<string, unknown>)[key];
+}
+
 async function readError(response: Response): Promise<ApiError> {
   const text = await response.text().catch(() => '');
   let parsed: unknown = null;
@@ -229,9 +234,9 @@ async function request(url: string, init?: RequestInit): Promise<Response> {
   }
 }
 
-export async function fetcher<T>(url: string): Promise<T> {
+export async function fetcher<T>(url: string, includeKeys = false): Promise<T> {
   const response = await request(url, {
-    headers: buildHeaders(),
+    headers: buildHeaders(undefined, includeKeys),
   });
 
   captureVisitorToken(response);
@@ -337,6 +342,27 @@ export interface BudgetResponse {
 }
 
 export function getBudget(): Promise<BudgetResponse> {
-  return fetcher<BudgetResponse>('/api/budget');
+  return fetcher<BudgetResponse>('/api/budget', true);
+}
+
+export async function cancelJob(
+  id: string,
+  scope: 'job' | 'group' = 'job',
+): Promise<{ cancelled: string[] }> {
+  const response = await request(`/api/jobs/${id}/cancel`, {
+    method: 'POST',
+    headers: buildHeaders({
+      'Content-Type': 'application/json',
+    }),
+    body: JSON.stringify({ scope }),
+  });
+
+  captureVisitorToken(response);
+
+  if (!response.ok) {
+    throw await readError(response);
+  }
+
+  return (await response.json()) as { cancelled: string[] };
 }
 

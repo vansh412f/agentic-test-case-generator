@@ -18,7 +18,8 @@ import { ShareButton } from '@/components/job/ShareButton';
 import { ContinueTesting } from '@/components/job/ContinueTesting';
 import { useJobStream } from '@/hooks/useJobStream';
 import { useApiBase } from '@/hooks/useApiBase';
-import { ApiError } from '@/lib/api';
+import { ApiError, cancelJob } from '@/lib/api';
+import { toast } from 'sonner';
 import { formatJobDuration, isTerminalJobStatus } from '@/lib/utils';
 import type { JobDetail } from '@/types/api';
 
@@ -117,15 +118,12 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     if (!job) return;
     setIsCancelling(true);
     try {
-      await fetch(`${base}/api/jobs/${job.id}/cancel`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scope }),
-      });
+      await cancelJob(job.id, scope);
       setShowCancelDialog(false);
       void mutate();
+      toast.success(scope === 'group' ? 'Run group cancelled' : 'Job cancelled');
     } catch (err) {
-      console.error('Cancel failed', err);
+      toast.error(err instanceof Error ? err.message : 'Cancellation failed');
     } finally {
       setIsCancelling(false);
     }

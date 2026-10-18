@@ -8,6 +8,7 @@ import { RunGroupList } from '@/components/home/RunGroupList';
 import {
   apiBase,
   fetcher,
+  getBudget,
   hasConfiguredKeys,
   startGeneration,
   type BudgetResponse,
@@ -43,7 +44,10 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
   const [createdJobIds, setCreatedJobIds] = useState<string[] | null>(null);
   const [submittedUrls, setSubmittedUrls] = useState<string[]>([]);
 
-  const { data: budget } = useSWR<BudgetResponse, Error>('/api/budget', fetcher);
+  const { data: budget } = useSWR<BudgetResponse, Error>(
+    ['/api/budget', hasCustomKeys],
+    () => getBudget(),
+  );
   const maxAllowedUrls = budget?.maxUrlsPerRun ?? (hasCustomKeys ? 5 : 3);
 
   useEffect(() => {

@@ -114,10 +114,15 @@ export type ReserveRunResult =
   | { ok: true; release(): void }
   | {
       ok: false;
+      reason: 'quota_exhausted';
       scope: 'global' | 'visitor' | 'ip';
       limit: number;
       used: number;
       resetsAt: string;
+    }
+  | {
+      ok: false;
+      reason: 'unavailable';
     };
 
 export async function tryReserveRun({
@@ -137,7 +142,7 @@ export async function tryReserveRun({
           const limit = config.FREE_VISITOR_DAILY_LIMIT;
           const used = counts.visitor + (reservedVisitor.get(visitorId) ?? 0);
           if (used + n > limit) {
-            resolve({ ok: false, scope: 'visitor', limit, used, resetsAt });
+            resolve({ ok: false, reason: 'quota_exhausted', scope: 'visitor', limit, used, resetsAt });
             return;
           }
         }
@@ -147,7 +152,7 @@ export async function tryReserveRun({
           const limit = config.FREE_IP_DAILY_LIMIT;
           const used = counts.ip + (reservedIp.get(ipHash) ?? 0);
           if (used + n > limit) {
-            resolve({ ok: false, scope: 'ip', limit, used, resetsAt });
+            resolve({ ok: false, reason: 'quota_exhausted', scope: 'ip', limit, used, resetsAt });
             return;
           }
         }
@@ -157,7 +162,7 @@ export async function tryReserveRun({
           const limit = config.GENERATE_DAILY_LIMIT;
           const used = counts.global + reservedGlobal;
           if (used + n > limit) {
-            resolve({ ok: false, scope: 'global', limit, used, resetsAt });
+            resolve({ ok: false, reason: 'quota_exhausted', scope: 'global', limit, used, resetsAt });
             return;
           }
         }
@@ -194,10 +199,7 @@ export async function tryReserveRun({
       } catch (_err) {
         resolve({
           ok: false,
-          scope: 'global',
-          limit: config.GENERATE_DAILY_LIMIT,
-          used: config.GENERATE_DAILY_LIMIT,
-          resetsAt: nextUtcMidnight(now).toISOString(),
+          reason: 'unavailable',
         });
       }
     });

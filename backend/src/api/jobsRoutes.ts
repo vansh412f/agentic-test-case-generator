@@ -123,13 +123,22 @@ router.post('/:id/cancel', async (req, res) => {
     const now = new Date();
 
     for (const target of targetJobs) {
-      cancelledIds.push(target.id);
       const wasQueued = runQueue.removeQueuedJob(target.id);
-      if (wasQueued) {
-        await prisma.job.update({
-          where: { id: target.id },
-          data: { status: 'cancelled', cancelledAt: now },
-        });
+      if (!wasQueued) {
+        cancelJob(target.id);
+      }
+      const updateRes = await prisma.job.updateMany({
+        where: {
+          id: target.id,
+          status: { notIn: ['completed', 'failed', 'cancelled'] },
+        },
+        data: {
+          status: 'cancelled',
+          cancelledAt: now,
+        },
+      });
+      if (updateRes.count === 1) {
+        cancelledIds.push(target.id);
         publishJobEvent(target.id, {
           type: 'job_finished',
           data: { status: 'cancelled', errorCode: null },
@@ -138,23 +147,11 @@ router.post('/:id/cancel', async (req, res) => {
           type: 'phase_change',
           data: { status: 'cancelled' },
         });
-      } else {
-        const wasRunning = cancelJob(target.id);
-        if (!wasRunning) {
-          await prisma.job.update({
-            where: { id: target.id },
-            data: { status: 'cancelled', cancelledAt: now },
-          });
-          publishJobEvent(target.id, {
-            type: 'job_finished',
-            data: { status: 'cancelled', errorCode: null },
-          });
-          publishJobEvent(target.id, {
-            type: 'phase_change',
-            data: { status: 'cancelled' },
-          });
-        }
       }
+    }
+
+    if (cancelledIds.length === 0) {
+      throw new JobError('NOT_CANCELLABLE', 'Job is already finished.');
     }
 
     res.status(202).json({ cancelled: cancelledIds });

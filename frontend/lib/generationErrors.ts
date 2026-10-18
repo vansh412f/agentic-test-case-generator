@@ -1,5 +1,5 @@
 import { toast } from 'sonner';
-import { ApiError, errorDetail } from './api';
+import { ApiError, errorDetail, errorDetailRaw } from './api';
 
 function formatLocalResetTime(iso?: string): string {
   if (!iso) return 'midnight UTC';
@@ -55,7 +55,7 @@ export function handleGenerationError(
       }
 
       case 'ALREADY_RUNNING': {
-        const rawJobIds = errorDetail(error, 'jobIds');
+        const rawJobIds = errorDetailRaw(error, 'jobIds');
         const firstJobId =
           Array.isArray(rawJobIds) && typeof rawJobIds[0] === 'string'
             ? rawJobIds[0]
@@ -93,6 +93,12 @@ export function handleGenerationError(
         const providerName =
           provider === 'groq' ? 'Groq' : provider === 'gemini' ? 'Gemini' : 'API';
         const msg = `Your ${providerName} key was rejected. Open API Keys to fix it.`;
+        toast.error(msg);
+        return msg;
+      }
+
+      case 'SERVICE_UNAVAILABLE': {
+        const msg = error.message || 'Usage tracking is temporarily unavailable. Please retry shortly.';
         toast.error(msg);
         return msg;
       }

@@ -329,6 +329,14 @@ router.post('/generate', async (req, res) => {
       n: requested,
     });
     if (!reservation.ok) {
+      if (reservation.reason === 'unavailable') {
+        res.setHeader('Retry-After', '30');
+        res.status(503).json({
+          error: 'SERVICE_UNAVAILABLE',
+          message: 'Usage tracking is temporarily unavailable.',
+        });
+        return;
+      }
       res.status(429).json({
         error: 'DAILY_QUOTA_EXHAUSTED',
         message: 'Daily quota exhausted.',
