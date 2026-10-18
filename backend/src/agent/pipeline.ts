@@ -13,6 +13,7 @@ import type { GeneratedTest } from './steps/generator.ts';
 import { compileTest, CompileError } from './steps/compiler.ts';
 import { correctTest, correctionPreservesAssertions, correctionPreservesSecrets } from './steps/corrector.ts';
 import { resolveTestData } from './testData.ts';
+import { buildBaselineTests } from './baseline.ts';
 import type { ElementRef, TestDataEntry } from '../api/schemas.ts';
 import { validateTestCode } from '../runner/validator.ts';
 import { executeTests, type FailureClass, type TestCaseResult } from '../runner/executor.ts';
@@ -108,13 +109,14 @@ export function runPipeline(
     id: string;
     url: string;
     deepCrawl?: boolean;
+    fresh?: boolean;
     testData?: TestDataEntry[];
     focus?: ElementRef[];
   },
   signal?: AbortSignal,
 ): Promise<PipelineResult> {
   return withPersistence(() =>
-    runPersistedPipeline(job.id, job.url, job.deepCrawl ?? false, job.testData, job.focus, signal),
+    runPersistedPipeline(job.id, job.url, job.deepCrawl ?? false, job.testData, job.focus, signal, job.fresh),
   );
 }
 
@@ -125,6 +127,7 @@ async function runPersistedPipeline(
   testData?: TestDataEntry[],
   focus?: ElementRef[],
   signal?: AbortSignal,
+  fresh?: boolean,
 ): Promise<PipelineResult> {
   const runId = `run-${jobId}`;
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
@@ -141,8 +144,12 @@ async function runPersistedPipeline(
 
     announcePhase(jobId, 'planning');
     const testPlan = await withLlmStep({ jobId }, 'plan', () =>
-      planTests(appMap, { testData, focus, signal }),
+      planTests(appMap, { testData, focus, signal, fresh }),
     );
+    const baselineTests = buildBaselineTests(appMap);
+    for (const b of baselineTests) {
+      testPlan.testCases.push(b.testCase);
+    }
     await safeWrite('setTestPlan', () => setTestPlan(jobId, testPlan));
     announcePhase(jobId, 'generating');
 
@@ -178,8 +185,9 @@ async function runPersistedPipeline(
 
       const testCaseOrigin = (testCase as { origin?: string }).origin;
       if (testCaseOrigin === 'baseline' || testCase.id.startsWith('smoke-')) {
-        const filename = (testCase as { filename?: string }).filename ?? `${testCase.id}.spec.ts`;
-        const code = (testCase as { code?: string }).code ?? '';
+        const baselineMatch = baselineTests.find((b) => b.testCase.id === testCase.id);
+        const filename = baselineMatch?.filename ?? `${testCase.id}.spec.ts`;
+        const code = baselineMatch?.code ?? '';
         tests.push({
           testCase,
           filename,

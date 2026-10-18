@@ -84,6 +84,42 @@ export function toPlannerView(appMap: AppMap, options?: PlannerViewOptions): Pla
     emittedIds.add(el.id);
   }
 
+  let hiddenAdded = 0;
+  for (const el of appMap.elements) {
+    if (hiddenAdded >= 25) break;
+    if (emittedIds.has(el.id)) continue;
+    if (el.isVisible !== false) continue;
+
+    const text = clip(el.text);
+    const label = clip(el.ariaLabel);
+    const placeholder = clip(el.placeholder);
+
+    if (!text && !label && !placeholder) continue;
+
+    const item: PlannerElementView = {
+      id: el.id,
+      type: el.type,
+      inputType: el.inputType ?? undefined,
+      role: el.ariaRole ?? undefined,
+      text,
+      label,
+      placeholder,
+      name: el.name ?? undefined,
+      testId: el.testId ?? undefined,
+      value: clip(el.value),
+      href: el.href ?? undefined,
+      required: el.isRequired ? true : undefined,
+      disabled: !el.isEnabled ? true : undefined,
+      readOnly: el.isReadOnly ? true : undefined,
+      hidden: true,
+      page: el.page,
+    };
+
+    elements.push(item);
+    emittedIds.add(el.id);
+    hiddenAdded++;
+  }
+
   const forms: PlannerFormView[] = (appMap.forms ?? []).map((form) => {
     const fieldIds = form.fieldIds.filter((id) => emittedIds.has(id));
     const submitButtonId =

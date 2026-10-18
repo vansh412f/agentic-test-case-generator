@@ -44,6 +44,8 @@ const configSchema = z.object({
   BYOK_VALIDATE_DAILY_LIMIT_PER_IP: z.coerce.number().int().positive().default(50),
   PIPELINE_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
   QUEUE_MAX_WAITING_GROUPS: z.coerce.number().int().min(1).default(5),
+  BASELINE_TESTS: z.string().default('true').transform((v) => v.toLowerCase() === 'true'),
+  A11Y_SMOKE: z.string().default('true').transform((v) => v.toLowerCase() === 'true'),
   LOCAL_AGENT_MODE: z.string().default('false').transform((v) => v.toLowerCase() === 'true'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
   FRONTEND_ORIGIN: z.string().optional(),

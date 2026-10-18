@@ -51,4 +51,5 @@ pnpm-debug.log*
 Thumbs.db
 powershell.cmd
 **/powershell.cmd
+.freebuff/
 

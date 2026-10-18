@@ -509,15 +509,27 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
               Tests will appear here as each test case completes generation and execution.
             </p>
           ) : (
-            job.generatedTests.map((test) => (
-              <TestResultCard
-                key={test.id}
-                plannedCase={job.testPlan?.testCases.find(
-                  (testCase) => testCase.id === test.testCaseId,
-                )}
-                test={test}
-              />
-            ))
+            (() => {
+              const aiTests = job.generatedTests.filter(
+                (t) =>
+                  !t.testCaseId.startsWith('smoke-') &&
+                  job.testPlan?.testCases.find((tc) => tc.id === t.testCaseId)?.origin !== 'baseline',
+              );
+              const baselineTests = job.generatedTests.filter(
+                (t) =>
+                  t.testCaseId.startsWith('smoke-') ||
+                  job.testPlan?.testCases.find((tc) => tc.id === t.testCaseId)?.origin === 'baseline',
+              );
+              return [...aiTests, ...baselineTests].map((test) => (
+                <TestResultCard
+                  key={test.id}
+                  plannedCase={job.testPlan?.testCases.find(
+                    (testCase) => testCase.id === test.testCaseId,
+                  )}
+                  test={test}
+                />
+              ));
+            })()
           )}
         </section>
 

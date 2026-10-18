@@ -2,7 +2,7 @@ import type { z } from 'zod';
 import { callLlm } from '../../llm/client.ts';
 import { LlmError } from '../../llm/types.ts';
 import type { LlmMessage } from '../../llm/types.ts';
-import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt, TestPlanSchema, type PlanStep } from '../prompts/plannerPrompt.ts';
+import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt, TestPlanSchema, type PlanStep, type TestCase } from '../prompts/plannerPrompt.ts';
 import type { TestPlan } from '../prompts/plannerPrompt.ts';
 import type { AppMap, InteractiveElement } from '../../crawler/types.ts';
 import type { ElementRef, TestDataEntry } from '../../api/schemas.ts';
@@ -167,6 +167,41 @@ export function validateAndNormalizePlan(
   return { ok: true, plan: result.data };
 }
 
+function isNavigationOnlyTest(tc: TestCase, elementsMap: Map<string, InteractiveElement>): boolean {
+  const nonAssertSteps = tc.steps.filter((s) => !s.action.startsWith('assert_'));
+  const assertSteps = tc.steps.filter((s) => s.action.startsWith('assert_'));
+
+  if (nonAssertSteps.length === 0) return false;
+
+  const allNonAssertAreLinks = nonAssertSteps.every((s) => {
+    if (s.action === 'navigate') return true;
+    if (s.action === 'click' && s.elementId) {
+      const el = elementsMap.get(s.elementId);
+      return el?.type === 'link' || el?.tagName?.toLowerCase() === 'a' || Boolean(el?.href);
+    }
+    return false;
+  });
+
+  const allAssertsAreUrl = assertSteps.length > 0 && assertSteps.every((s) => s.action === 'assert_url');
+
+  return allNonAssertAreLinks && allAssertsAreUrl;
+}
+
+function filterNavigationOnlyTests(testCases: TestCase[], appMap: AppMap): TestCase[] {
+  const elementsMap = new Map(appMap.elements.map((e) => [e.id, e]));
+  let seenNav = false;
+  return testCases.filter((tc) => {
+    if (isNavigationOnlyTest(tc, elementsMap)) {
+      if (!seenNav) {
+        seenNav = true;
+        return true;
+      }
+      return false;
+    }
+    return true;
+  });
+}
+
 export function capAndRenumberTestPlan(plan: TestPlan): TestPlan {
   plan.testCases = plan.testCases.slice(0, MAX_TEST_CASES);
   plan.testCases.forEach((tc, idx) => {
@@ -177,6 +212,7 @@ export function capAndRenumberTestPlan(plan: TestPlan): TestPlan {
 
 export function enforceTestData(plan: TestPlan, fills: Map<string, string>): TestPlan {
   if (fills.size === 0) return plan;
+  const keptCases: TestCase[] = [];
   for (const tc of plan.testCases) {
     const keptSteps: PlanStep[] = [];
     for (const step of tc.steps) {
@@ -193,7 +229,12 @@ export function enforceTestData(plan: TestPlan, fills: Map<string, string>): Tes
       keptSteps.push(step);
     }
     tc.steps = keptSteps;
+    if (tc.steps.some((s) => s.action.startsWith('assert_'))) {
+      keptCases.push(tc);
+    }
   }
+  plan.testCases = keptCases;
+  capAndRenumberTestPlan(plan);
   return plan;
 }
 
@@ -203,6 +244,7 @@ export interface PlanTestsOptions {
   keepHiddenIds?: Set<string>;
   extraPromptBlock?: string;
   signal?: AbortSignal;
+  fresh?: boolean;
 }
 
 export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Promise<TestPlan> {
@@ -227,10 +269,12 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     focus: resolvedFocus.length > 0 ? resolvedFocus.map((f) => f.id) : undefined,
   });
 
-  const cached = getCachedPlan(cacheKey);
-  if (cached) {
-    console.log('[Planner] cache hit');
-    return cached;
+  if (!options?.fresh) {
+    const cached = getCachedPlan(cacheKey);
+    if (cached) {
+      console.log('[Planner] cache hit');
+      return cached;
+    }
   }
 
   const appMapJson = JSON.stringify(plannerView);
@@ -253,10 +297,20 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     userPrompt += `\n\n${options.extraPromptBlock}`;
   }
 
+  const userChars = userPrompt.length;
+  const sysChars = PLANNER_SYSTEM_PROMPT.length;
+  const totalChars = userChars + sysChars;
+  const est = Math.ceil(totalChars / 3.5 + 3500);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[Planner] est=${est}`);
+  }
+
   const messages: LlmMessage[] = [
     { role: 'system', content: PLANNER_SYSTEM_PROMPT },
     { role: 'user', content: userPrompt },
   ];
+
+  const visibleCount = appMap.elements.filter((e) => e.isVisible !== false).length;
 
   const salvagePlan = (res: Extract<ValidationResult, { kind: 'references' }>): TestPlan | null => {
     const validCases = res.plan.testCases.filter((_, idx) => !res.badCaseIndexes.has(idx));
@@ -271,11 +325,56 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     return null;
   };
 
-  const applyFillsAndCache = (plan: TestPlan): TestPlan => {
+  const finalizePlan = async (rawPlan: TestPlan, isSalvaged: boolean, assistantResponseContent?: string): Promise<TestPlan> => {
+    let plan = rawPlan;
+    // 1. Deterministic pass: keep only the first navigation-only test
+    plan.testCases = filterNavigationOnlyTests(plan.testCases, appMap);
+    capAndRenumberTestPlan(plan);
+
+    // 2. Expansion call if < 4 cases AND >= 6 visible interactive elements
+    if (!isSalvaged && plan.testCases.length < 4 && visibleCount >= 6 && assistantResponseContent) {
+      try {
+        const expansionMessages: LlmMessage[] = [
+          ...messages,
+          { role: 'assistant', content: assistantResponseContent },
+          {
+            role: 'user',
+            content: `The plan has ${plan.testCases.length} test cases. Add up to ${8 - plan.testCases.length} more that cover categories not yet covered. Return the COMPLETE JSON plan.`,
+          },
+        ];
+        const expansionResponse = await callLlm({
+          messages: expansionMessages,
+          jsonMode: true,
+          maxTokens: 3500,
+          tier: 'reasoning',
+          signal: options?.signal,
+        });
+        const expansionResult = validateAndNormalizePlan(
+          expansionResponse.content,
+          knownIds,
+          appMap.url,
+          pageScope,
+        );
+        if (expansionResult.ok && expansionResult.plan.testCases.length > plan.testCases.length) {
+          plan = expansionResult.plan;
+          plan.testCases = filterNavigationOnlyTests(plan.testCases, appMap);
+          capAndRenumberTestPlan(plan);
+        }
+      } catch (expErr) {
+        console.warn(`[Planner] Expansion call failed: ${expErr instanceof Error ? expErr.message : String(expErr)}`);
+      }
+    }
+
     if (resolvedData && resolvedData.fills.size > 0) {
       enforceTestData(plan, resolvedData.fills);
     }
-    setCachedPlan(cacheKey, plan);
+
+    // Cache rules: never cache salvaged plans; never cache plans with < 3 cases unless page has <= 3 visible elements
+    const canCache = !isSalvaged && !(plan.testCases.length < 3 && visibleCount > 3);
+    if (canCache) {
+      setCachedPlan(cacheKey, plan);
+    }
+
     return plan;
   };
 
@@ -283,13 +382,13 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   const response = await callLlm({
     messages,
     jsonMode: true,
-    maxTokens: 3000,
+    maxTokens: 3500,
     tier: 'reasoning',
     signal: options?.signal,
   });
   const firstResult = validateAndNormalizePlan(response.content, knownIds, appMap.url, pageScope);
   if (firstResult.ok) {
-    return applyFillsAndCache(firstResult.plan);
+    return finalizePlan(firstResult.plan, false, response.content);
   }
 
   // Self-repair (one attempt)
@@ -307,20 +406,20 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   const repairResponse = await callLlm({
     messages: repairMessages,
     jsonMode: true,
-    maxTokens: 3000,
+    maxTokens: 3500,
     tier: 'reasoning',
     signal: options?.signal,
   });
   const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, pageScope);
   if (repairResult.ok) {
-    return applyFillsAndCache(repairResult.plan);
+    return finalizePlan(repairResult.plan, false, repairResponse.content);
   }
 
   // Graceful degradation for reference-only errors after repair
   if (repairResult.kind === 'references') {
     const salvaged = salvagePlan(repairResult);
     if (salvaged) {
-      return applyFillsAndCache(salvaged);
+      return finalizePlan(salvaged, true);
     }
   }
 
@@ -328,7 +427,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   if (firstResult.kind === 'references') {
     const salvaged = salvagePlan(firstResult);
     if (salvaged) {
-      return applyFillsAndCache(salvaged);
+      return finalizePlan(salvaged, true);
     }
   }
 

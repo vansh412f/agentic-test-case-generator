@@ -132,6 +132,7 @@ export interface PlannedTestCase {
   title: string;
   description: string;
   steps: PlanStep[];
+  origin?: 'llm' | 'baseline';
 }
 
 export interface TestPlan {

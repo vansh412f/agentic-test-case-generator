@@ -291,10 +291,12 @@ router.post('/generate', async (req, res) => {
 
   // 9. Create job rows synchronously (fail-fast) so every returned jobId exists.
   const runGroupId = randomUUID();
+  const fresh = parsed.data.fresh;
   const jobs: QueuedJob[] = urls.map((url, idx) => ({
     id: randomUUID(),
     url,
     deepCrawl,
+    fresh,
     ...(idx === 0
       ? {
           testData: parsed.data.testData,

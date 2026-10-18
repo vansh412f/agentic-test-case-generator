@@ -56,7 +56,24 @@ export function TestResultCard({ test, plannedCase }: TestResultCardProps) {
           {isFailed ? '!' : <Check aria-hidden="true" className="h-3.5 w-3.5" />}
         </span>
         <span className="test-name">
-          <strong>{title}</strong>
+          <strong>
+            {title}
+            {(plannedCase?.origin === 'baseline' || test.testCaseId.startsWith('smoke-')) && (
+              <span
+                style={{
+                  color: '#0369a1',
+                  background: '#e0f2fe',
+                  borderRadius: '4px',
+                  padding: '2px 6px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  marginLeft: '8px',
+                }}
+              >
+                Baseline · no AI
+              </span>
+            )}
+          </strong>
           <small>
             {test.totalAttempts} {test.totalAttempts === 1 ? 'attempt' : 'attempts'}
             {isCorrected ? ' · auto-corrected' : ''}

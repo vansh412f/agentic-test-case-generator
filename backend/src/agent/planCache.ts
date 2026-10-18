@@ -17,7 +17,7 @@ export function buildPlanCacheKey(params: {
   focus?: unknown;
 }): string {
   const payload = JSON.stringify({
-    v: 1,
+    v: 2,
     view: params.view,
     data: params.data ?? null,
     focus: params.focus ?? null,
