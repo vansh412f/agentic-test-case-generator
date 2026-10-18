@@ -14,7 +14,7 @@ export interface CorrectionResult {
 
 const FENCE_REGEX = /```(?:typescript|ts)?\s*\n([\s\S]*?)\n```/;
 
-export { correctionPreservesAssertions } from '../assertionGuard.ts';
+export { correctionPreservesAssertions, correctionPreservesSecrets } from '../assertionGuard.ts';
 
 export async function correctTest(
   failingCode: string,

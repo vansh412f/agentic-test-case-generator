@@ -21,7 +21,8 @@ You will receive a failing Playwright TypeScript test, the error output, and the
 5. If the error indicates a locator matched multiple elements, use a more specific selector from the provided elements list (prefer getByTestId > getByRole > getByPlaceholder > getByLabel > getByText > css).
 6. If the error indicates an element was not found, check the provided elements list for the correct selector — the element may have a different role or text than what the test assumes.
 7. Preserve the test structure: same test() block, same page.goto(), same test name.
-8. The selectors in the elements list are complete Playwright locator expressions (e.g., getByTestId('text-input'), getByRole('button', { name: 'Submit' })). Use them verbatim prefixed with page.`;
+8. The selectors in the elements list are complete Playwright locator expressions (e.g., getByTestId('text-input'), getByRole('button', { name: 'Submit' })). Use them verbatim prefixed with page.
+9. Keep every __AGT_SECRET_n__ literal unchanged.`;
 
 export function buildCorrectorUserPrompt(params: {
   code: string;

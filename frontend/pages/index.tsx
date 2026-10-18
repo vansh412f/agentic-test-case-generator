@@ -30,6 +30,7 @@ import {
   startGeneration,
   hasConfiguredKeys,
   getApiMode,
+  type TestDataParam,
 } from '@/lib/api';
 import type { AppMap, JobsListResponse } from '@/types/api';
 
@@ -50,6 +51,7 @@ interface HomeState {
   error: string | null;
   startedAt: number | null;
   deepCrawl: boolean;
+  testData: Record<string, { value: string; sensitive: boolean }>;
 }
 
 type HomeAction =
@@ -57,6 +59,7 @@ type HomeAction =
   | { type: 'CRAWL_SUCCEEDED'; appMap: AppMap }
   | { type: 'TOGGLE_URL'; url: string }
   | { type: 'SET_DEEP_CRAWL'; enabled: boolean }
+  | { type: 'SET_TEST_DATA'; elementId: string; value: string; sensitive: boolean }
   | { type: 'GENERATION_STARTED'; urls: string[] }
   | { type: 'JOBS_ACCEPTED'; jobIds: string[] }
   | { type: 'FAILED'; message: string }
@@ -71,6 +74,7 @@ const initialState: HomeState = {
   error: null,
   startedAt: null,
   deepCrawl: false,
+  testData: {},
 };
 
 function reducer(state: HomeState, action: HomeAction): HomeState {
@@ -88,6 +92,7 @@ function reducer(state: HomeState, action: HomeAction): HomeState {
         appMap: action.appMap,
         selectedUrls: [action.appMap.url],
         deepCrawl: false,
+        testData: {},
         error: null,
       };
 
@@ -114,6 +119,19 @@ function reducer(state: HomeState, action: HomeAction): HomeState {
       return {
         ...state,
         deepCrawl: action.enabled,
+      };
+    }
+
+    case 'SET_TEST_DATA': {
+      return {
+        ...state,
+        testData: {
+          ...state.testData,
+          [action.elementId]: {
+            value: action.value,
+            sensitive: action.sensitive,
+          },
+        },
       };
     }
 
@@ -251,8 +269,7 @@ export default function HomePage() {
       if (error instanceof ApiError) {
         if (
           error.code === 'UPSTREAM_UNAVAILABLE' ||
-          error.code === 'BROWSER_LAUNCH_FAILED' ||
-          error.code === 'CRAWL_FAILED'
+          error.code === 'BROWSER_LAUNCH_FAILED'
         ) {
           toast.error(error.message);
           dispatch({ type: 'FAILED', message: error.message });
@@ -285,9 +302,26 @@ export default function HomePage() {
 
     dispatch({ type: 'GENERATION_STARTED', urls });
 
+    const testDataEntries: TestDataParam[] = [];
+    if (state.appMap) {
+      for (const [elementId, entry] of Object.entries(state.testData)) {
+        if (!entry.value.trim()) continue;
+        const elem = state.appMap.elements.find((el) => el.id === elementId);
+        if (elem?.selectors?.css) {
+          testDataEntries.push({
+            elementId,
+            css: elem.selectors.css,
+            value: entry.value,
+            sensitive: entry.sensitive,
+          });
+        }
+      }
+    }
+
     try {
       const { jobIds } = await startGeneration(urls, payloadToUse, {
         deepCrawl: state.deepCrawl,
+        testData: testDataEntries.length > 0 ? testDataEntries : undefined,
       });
       dispatch({ type: 'JOBS_ACCEPTED', jobIds });
       if (jobIds.length > 1) {
@@ -411,7 +445,11 @@ export default function HomePage() {
           }}
           onToggleDeepCrawl={(v) => dispatch({ type: 'SET_DEEP_CRAWL', enabled: v })}
           onToggleUrl={(url) => dispatch({ type: 'TOGGLE_URL', url })}
+          onUpdateTestData={(elementId, value, sensitive) =>
+            dispatch({ type: 'SET_TEST_DATA', elementId, value, sensitive })
+          }
           selectedUrls={state.selectedUrls}
+          testData={state.testData}
         />
       ) : null}
 

@@ -97,7 +97,14 @@ export function TestResultCard({ test, plannedCase }: TestResultCardProps) {
           </div>
 
           {tab === 'code' ? (
-            <CodeViewer code={test.finalCode} filename={test.filename} />
+            <>
+              {test.finalCode.includes('__AGT_SECRET_') && (
+                <div style={{ padding: '6px 12px', fontSize: '11px', color: '#6b7280', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                  Secret values were injected at run time and are not stored.
+                </div>
+              )}
+              <CodeViewer code={test.finalCode} filename={test.filename} />
+            </>
           ) : null}
 
           {tab === 'diff' && hasDiff && originalAttempt ? (

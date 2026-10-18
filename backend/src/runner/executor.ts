@@ -110,9 +110,28 @@ function collectSpecs(suite: PlaywrightJsonSuite): PlaywrightJsonSpec[] {
   return specs;
 }
 
+export function redactSecrets(text: string, secrets?: Map<string, string>): string {
+  if (!secrets || secrets.size === 0 || !text) return text;
+  let redacted = text;
+  for (const [token, secretValue] of secrets.entries()) {
+    if (!secretValue) continue;
+    const jsonEscaped = JSON.stringify(secretValue).slice(1, -1);
+    if (jsonEscaped) {
+      redacted = redacted.split(jsonEscaped).join(token);
+    }
+    redacted = redacted.split(secretValue).join(token);
+  }
+  return redacted;
+}
+
+export interface ExecuteTestsOptions {
+  secrets?: Map<string, string>;
+}
+
 export async function executeTests(
   runId: string,
   files: Array<{ filename: string; code: string }>,
+  options?: ExecuteTestsOptions,
 ): Promise<ExecutionResult> {
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
   const resultsPath = path.join(runDir, 'results.json');
@@ -123,11 +142,18 @@ export async function executeTests(
       throw new RunnerError('BROWSER_ERROR', `Playwright CLI not found at ${PLAYWRIGHT_CLI}`);
     }
 
-    // 1. Write files to disk
+    // 1. Write files to disk (replacing secret tokens with escaped real values)
     await fs.mkdir(runDir, { recursive: true });
     for (const file of files) {
+      let codeToWrite = file.code;
+      if (options?.secrets && options.secrets.size > 0) {
+        for (const [token, secretValue] of options.secrets.entries()) {
+          const escaped = JSON.stringify(secretValue).slice(1, -1);
+          codeToWrite = codeToWrite.split(token).join(escaped);
+        }
+      }
       const filePath = path.join(runDir, file.filename);
-      await fs.writeFile(filePath, file.code, 'utf-8');
+      await fs.writeFile(filePath, codeToWrite, 'utf-8');
     }
 
     // Ensure stale results.json from previous runs is removed
@@ -249,11 +275,13 @@ export async function executeTests(
         });
       } else {
         const errorText = firstErrorMessage || 'Test failed';
+        const trimmed = trimError(errorText);
+        const redacted = redactSecrets(trimmed, options?.secrets);
         results.push({
           testCaseId,
           passed: false,
           durationMs,
-          error: trimError(errorText),
+          error: redacted,
           failureClass: classifyExecutionError(errorText),
         });
       }

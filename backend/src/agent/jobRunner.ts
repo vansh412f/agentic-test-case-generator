@@ -4,10 +4,14 @@ import { withRequestLlmKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
 import { pipelineGate } from '../security/concurrencyGate.ts';
 import { deliverJobWebhook, type WebhookTarget, type JobWebhookPayload } from '../notify/webhook.ts';
 
+import type { ElementRef, TestDataEntry } from '../api/schemas.ts';
+
 export interface QueuedJob {
   id: string;
   url: string;
   deepCrawl?: boolean;
+  testData?: TestDataEntry[];
+  focus?: ElementRef[];
 }
 
 export type RunOne = (job: QueuedJob) => Promise<Pick<PipelineResult, 'generatedTests'> | void>;

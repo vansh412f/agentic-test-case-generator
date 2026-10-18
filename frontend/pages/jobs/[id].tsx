@@ -383,6 +383,12 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             </div>
           </div>
 
+          {job.generatedTests.some((t) => t.finalCode.includes('__AGT_SECRET_')) && (
+            <p style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280' }}>
+              Secret values were injected at run time and are not stored.
+            </p>
+          )}
+
           {job.generatedTests.length === 0 ? (
             <p className="mt-6 text-small text-muted-foreground">
               Tests will appear here as each test case completes generation and execution.

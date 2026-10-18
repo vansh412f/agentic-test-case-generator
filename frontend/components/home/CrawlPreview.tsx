@@ -1,5 +1,6 @@
-import { ArrowRight, Check, Globe, Warning } from '@phosphor-icons/react';
-import type { AppMap } from '@/types/api';
+import { ArrowRight, Check, Globe, Warning, Lock, LockOpen } from '@phosphor-icons/react';
+import { useMemo, useState } from 'react';
+import type { AppMap, InteractiveElement } from '@/types/api';
 
 interface CrawlPreviewProps {
   appMap: AppMap;
@@ -7,8 +8,10 @@ interface CrawlPreviewProps {
   generating: boolean;
   disabled?: boolean;
   deepCrawl?: boolean;
+  testData: Record<string, { value: string; sensitive: boolean }>;
   onToggleDeepCrawl?: (enabled: boolean) => void;
   onToggleUrl: (url: string) => void;
+  onUpdateTestData: (elementId: string, value: string, sensitive: boolean) => void;
   onGenerate: () => void;
   onReset: () => void;
 }
@@ -37,14 +40,29 @@ function formatPageTitle(urlStr: string, defaultTitle?: string): string {
   }
 }
 
+const EXCLUDED_INPUT_TYPES = new Set([
+  'hidden',
+  'submit',
+  'button',
+  'checkbox',
+  'radio',
+  'file',
+  'image',
+  'reset',
+  'range',
+  'color',
+]);
+
 export function CrawlPreview({
   appMap,
   selectedUrls,
   generating,
   disabled = false,
   deepCrawl = false,
+  testData,
   onToggleDeepCrawl,
   onToggleUrl,
+  onUpdateTestData,
   onGenerate,
   onReset,
 }: CrawlPreviewProps) {
@@ -54,6 +72,55 @@ export function CrawlPreview({
     onToggleDeepCrawl !== undefined &&
     selectedUrls.length === 1 &&
     appMap.discoveredLinks.length > 0;
+
+  const eligibleFields = useMemo(() => {
+    return appMap.elements
+      .filter((el) => {
+        if (el.page !== undefined && el.page > 1) return false;
+        if (el.isVisible === false) return false;
+        if (el.isReadOnly) return false;
+        if (!['input', 'textarea', 'select'].includes(el.type)) return false;
+        if (el.inputType && EXCLUDED_INPUT_TYPES.has(el.inputType.toLowerCase())) return false;
+        return true;
+      })
+      .slice(0, 30);
+  }, [appMap.elements]);
+
+  const hasLoginOrSignup = useMemo(() => {
+    return (appMap.forms ?? []).some(
+      (f) => f.purpose === 'login' || f.purpose === 'signup',
+    );
+  }, [appMap.forms]);
+
+  const [isTestDataExpanded, setIsTestDataExpanded] = useState<boolean>(() => hasLoginOrSignup);
+
+  const groupedFields = useMemo(() => {
+    const groups: Array<{ id: string; title: string; fields: InteractiveElement[] }> = [];
+    const assigned = new Set<string>();
+
+    for (const form of appMap.forms ?? []) {
+      const fields = eligibleFields.filter((f) => form.fieldIds.includes(f.id));
+      if (fields.length > 0) {
+        fields.forEach((f) => assigned.add(f.id));
+        const title =
+          form.purpose === 'login'
+            ? 'Login form'
+            : form.purpose === 'signup'
+              ? 'Sign-up form'
+              : form.purpose === 'search'
+                ? 'Search'
+                : 'Form';
+        groups.push({ id: form.id, title, fields });
+      }
+    }
+
+    const otherFields = eligibleFields.filter((f) => !assigned.has(f.id));
+    if (otherFields.length > 0) {
+      groups.push({ id: 'other', title: 'Other inputs', fields: otherFields });
+    }
+
+    return groups;
+  }, [appMap.forms, eligibleFields]);
 
   return (
     <section aria-labelledby="app-map-title" className="app-map">
@@ -127,6 +194,115 @@ export function CrawlPreview({
           );
         })}
       </div>
+
+      {/* Test Data Section */}
+      {eligibleFields.length > 0 && (
+        <div style={{ marginTop: '20px', border: '1px solid #e0e5de', borderRadius: '10px', background: '#fff', overflow: 'hidden' }}>
+          <button
+            type="button"
+            onClick={() => setIsTestDataExpanded(!isTestDataExpanded)}
+            style={{
+              width: '100%',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '12px 16px',
+              background: '#f8faf7',
+              border: 'none',
+              borderBottom: isTestDataExpanded ? '1px solid #e0e5de' : 'none',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: 600,
+              color: '#243027',
+            }}
+          >
+            <span>Test data · {eligibleFields.length} fields · optional</span>
+            <span style={{ fontSize: '11px', color: '#7a857e' }}>{isTestDataExpanded ? '▲ Collapse' : '▼ Expand'}</span>
+          </button>
+
+          {isTestDataExpanded && (
+            <div style={{ padding: '16px' }}>
+              {hasLoginOrSignup && (
+                <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '6px', padding: '10px 12px', fontSize: '12px', color: '#92400e', marginBottom: '16px' }}>
+                  Provide test credentials, or leave blank (login tests will likely fail).
+                </div>
+              )}
+
+              {groupedFields.map((group) => (
+                <div key={group.id} style={{ marginBottom: '16px' }}>
+                  <h4 style={{ fontSize: '11px', fontWeight: 700, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
+                    {group.title}
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {group.fields.map((field) => {
+                      const label = field.ariaLabel || field.placeholder || field.name || field.text || field.id;
+                      const entry = testData[field.id] ?? {
+                        value: '',
+                        sensitive: field.inputType === 'password',
+                      };
+                      return (
+                        <div key={field.id} style={{ display: 'grid', gridTemplateColumns: '140px 1fr auto', gap: '8px', alignItems: 'center' }}>
+                          <label htmlFor={`td-${field.id}`} style={{ fontSize: '12px', color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={label}>
+                            {label}
+                          </label>
+                          <input
+                            id={`td-${field.id}`}
+                            type={entry.sensitive ? 'password' : 'text'}
+                            value={entry.value}
+                            placeholder={field.placeholder || 'Value...'}
+                            onChange={(e) => onUpdateTestData(field.id, e.target.value, entry.sensitive)}
+                            disabled={generating || disabled}
+                            style={{
+                              padding: '6px 10px',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '6px',
+                              fontSize: '12px',
+                              width: '100%',
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => onUpdateTestData(field.id, entry.value, !entry.sensitive)}
+                            disabled={generating || disabled}
+                            title={entry.sensitive ? 'Marked as Secret (never sent to AI, never stored)' : 'Plain text'}
+                            style={{
+                              padding: '5px 8px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              borderRadius: '6px',
+                              border: entry.sensitive ? '1px solid #dc2626' : '1px solid #d1d5db',
+                              background: entry.sensitive ? '#fef2f2' : '#f9fafb',
+                              color: entry.sensitive ? '#b91c1c' : '#6b7280',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                            }}
+                          >
+                            {entry.sensitive ? (
+                              <>
+                                <Lock aria-hidden="true" className="h-3 w-3" /> Secret
+                              </>
+                            ) : (
+                              <>
+                                <LockOpen aria-hidden="true" className="h-3 w-3" /> Plain
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              <p style={{ fontSize: '11px', color: '#6b7280', margin: '8px 0 0 0', lineHeight: 1.4 }}>
+                Use test accounts only. Secret values are used only while tests run — never sent to the AI, never stored, redacted from results. Exported code reads them from env vars.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {canDeepCrawl && (
         <label className="deep-crawl-toggle">

@@ -11,7 +11,9 @@ import { planTests } from './steps/planner.ts';
 import { generateTest } from './steps/generator.ts';
 import type { GeneratedTest } from './steps/generator.ts';
 import { compileTest, CompileError } from './steps/compiler.ts';
-import { correctTest, correctionPreservesAssertions } from './steps/corrector.ts';
+import { correctTest, correctionPreservesAssertions, correctionPreservesSecrets } from './steps/corrector.ts';
+import { resolveTestData } from './testData.ts';
+import type { ElementRef, TestDataEntry } from '../api/schemas.ts';
 import { validateTestCode } from '../runner/validator.ts';
 import { executeTests, type FailureClass } from '../runner/executor.ts';
 import { RUNNER_TESTS_DIR } from '../runner/config.ts';
@@ -97,11 +99,25 @@ async function crawlForJob(url: string, deepCrawl: boolean): Promise<AppMap> {
 }
 
 // The job row must already exist (createPendingJobs at admission).
-export function runPipeline(job: { id: string; url: string; deepCrawl?: boolean }): Promise<PipelineResult> {
-  return withPersistence(() => runPersistedPipeline(job.id, job.url, job.deepCrawl ?? false));
+export function runPipeline(job: {
+  id: string;
+  url: string;
+  deepCrawl?: boolean;
+  testData?: TestDataEntry[];
+  focus?: ElementRef[];
+}): Promise<PipelineResult> {
+  return withPersistence(() =>
+    runPersistedPipeline(job.id, job.url, job.deepCrawl ?? false, job.testData, job.focus),
+  );
 }
 
-async function runPersistedPipeline(jobId: string, url: string, deepCrawl: boolean): Promise<PipelineResult> {
+async function runPersistedPipeline(
+  jobId: string,
+  url: string,
+  deepCrawl: boolean,
+  testData?: TestDataEntry[],
+  focus?: ElementRef[],
+): Promise<PipelineResult> {
   const runId = `run-${jobId}`;
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
 
@@ -110,8 +126,13 @@ async function runPersistedPipeline(jobId: string, url: string, deepCrawl: boole
     announcePhase(jobId, 'crawling');
     const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(url, deepCrawl), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
+
+    const resolvedData = testData && testData.length > 0 ? resolveTestData(appMap, testData) : undefined;
+
     announcePhase(jobId, 'planning');
-    const testPlan = await withLlmStep({ jobId }, 'plan', () => planTests(appMap));
+    const testPlan = await withLlmStep({ jobId }, 'plan', () =>
+      planTests(appMap, { testData, focus }),
+    );
     await safeWrite('setTestPlan', () => setTestPlan(jobId, testPlan));
     announcePhase(jobId, 'generating');
 
@@ -197,6 +218,10 @@ async function runPersistedPipeline(jobId: string, url: string, deepCrawl: boole
                 console.warn(
                   `[Runner] ${testCase.id} | correction rejected: assertions altered`,
                 );
+              } else if (!correctionPreservesSecrets(currentCode, correction.code)) {
+                console.warn(
+                  `[Runner] ${testCase.id} | correction rejected: secrets altered`,
+                );
               } else {
                 currentCode = correction.code;
                 continue;
@@ -213,7 +238,7 @@ async function runPersistedPipeline(jobId: string, url: string, deepCrawl: boole
         announcePhase(jobId, 'executing');
         const executionResult = await withMeasuredStep(
           context, 'execute',
-          () => executeTests(runId, [{ filename, code: currentCode }]),
+          () => executeTests(runId, [{ filename, code: currentCode }], { secrets: resolvedData?.secrets }),
           (result) => ({ success: result.success, error: result.results.find((r) => !r.passed)?.error }),
         );
         const testCaseResult =
@@ -271,6 +296,10 @@ async function runPersistedPipeline(jobId: string, url: string, deepCrawl: boole
             if (!correctionPreservesAssertions(currentCode, correction.code)) {
               console.warn(
                 `[Runner] ${testCase.id} | correction rejected: assertions altered`,
+              );
+            } else if (!correctionPreservesSecrets(currentCode, correction.code)) {
+              console.warn(
+                `[Runner] ${testCase.id} | correction rejected: secrets altered`,
               );
             } else {
               currentCode = correction.code;

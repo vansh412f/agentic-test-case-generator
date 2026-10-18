@@ -270,30 +270,46 @@ export function crawlPage(url: string): Promise<AppMap> {
   return postJson<AppMap, { url: string }>('/api/crawl', { url });
 }
 
+export interface TestDataParam {
+  elementId: string;
+  css: string;
+  value: string;
+  sensitive: boolean;
+}
+
+export interface FocusParam {
+  elementId: string;
+  css: string;
+}
+
 export function startGeneration(
   urls: string[],
   altcha?: string,
-  options: { deepCrawl?: boolean } = {},
+  options: {
+    deepCrawl?: boolean;
+    testData?: TestDataParam[];
+    focus?: FocusParam[];
+  } = {},
 ): Promise<GenerateAcceptedResponse> {
-  type GenerateBody =
-    | { url: string; altcha?: string; deepCrawl?: boolean }
-    | { urls: string[]; altcha?: string };
+  const base = {
+    ...(altcha ? { altcha } : {}),
+    ...(options.testData && options.testData.length > 0 ? { testData: options.testData } : {}),
+    ...(options.focus && options.focus.length > 0 ? { focus: options.focus } : {}),
+  };
 
-  let body: GenerateBody;
-  if (urls.length === 1) {
-    body = {
-      url: urls[0] ?? '',
-      ...(altcha ? { altcha } : {}),
-      ...(options.deepCrawl ? { deepCrawl: true } : {}),
-    };
-  } else {
-    body = {
-      urls,
-      ...(altcha ? { altcha } : {}),
-    };
-  }
+  const body =
+    urls.length === 1
+      ? {
+          url: urls[0] ?? '',
+          ...(options.deepCrawl ? { deepCrawl: true } : {}),
+          ...base,
+        }
+      : {
+          urls,
+          ...base,
+        };
 
-  return postJson<GenerateAcceptedResponse, GenerateBody>('/api/generate', body);
+  return postJson<GenerateAcceptedResponse, typeof body>('/api/generate', body);
 }
 
 export function getJob(jobId: string): Promise<JobDetail> {

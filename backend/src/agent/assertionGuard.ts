@@ -169,3 +169,17 @@ export function correctionPreservesAssertions(before: string, after: string): bo
     return false;
   }
 }
+
+const SECRET_TOKEN_REGEX = /__AGT_SECRET_\d+__/g;
+
+export function correctionPreservesSecrets(prev: string, next: string): boolean {
+  const prevTokens = prev.match(SECRET_TOKEN_REGEX);
+  if (!prevTokens || prevTokens.length === 0) return true;
+  for (const token of prevTokens) {
+    if (!next.includes(token)) {
+      return false;
+    }
+  }
+  return true;
+}
+

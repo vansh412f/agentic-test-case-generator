@@ -2,13 +2,15 @@ import type { z } from 'zod';
 import { callLlm } from '../../llm/client.ts';
 import { LlmError } from '../../llm/types.ts';
 import type { LlmMessage } from '../../llm/types.ts';
-import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt, TestPlanSchema } from '../prompts/plannerPrompt.ts';
+import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt, TestPlanSchema, type PlanStep } from '../prompts/plannerPrompt.ts';
 import type { TestPlan } from '../prompts/plannerPrompt.ts';
-import type { AppMap } from '../../crawler/types.ts';
+import type { AppMap, InteractiveElement } from '../../crawler/types.ts';
+import type { ElementRef, TestDataEntry } from '../../api/schemas.ts';
 import { canonicalPageUrl } from '../../crawler/mergeAppMaps.ts';
 import { toPlannerView } from '../plannerView.ts';
 import { buildPlanCacheKey, getCachedPlan, setCachedPlan } from '../planCache.ts';
 import { MAX_TEST_CASES } from '../run.config.ts';
+import { resolveTestData, resolveElementRef, type ResolvedTestData } from '../testData.ts';
 
 function formatZodErrors(error: z.ZodError): string {
   return error.issues
@@ -173,19 +175,51 @@ export function capAndRenumberTestPlan(plan: TestPlan): TestPlan {
   return plan;
 }
 
+export function enforceTestData(plan: TestPlan, fills: Map<string, string>): TestPlan {
+  if (fills.size === 0) return plan;
+  for (const tc of plan.testCases) {
+    const keptSteps: PlanStep[] = [];
+    for (const step of tc.steps) {
+      if ((step.action === 'fill' || step.action === 'select') && step.elementId && fills.has(step.elementId)) {
+        step.value = fills.get(step.elementId)!;
+      }
+      if (
+        (step.action === 'assert_visible' || step.action === 'assert_text' || step.action === 'assert_url') &&
+        step.value &&
+        /__AGT_SECRET_\d+__/.test(step.value)
+      ) {
+        continue;
+      }
+      keptSteps.push(step);
+    }
+    tc.steps = keptSteps;
+  }
+  return plan;
+}
+
 export interface PlanTestsOptions {
-  testData?: unknown;
-  focus?: unknown;
+  testData?: TestDataEntry[];
+  focus?: ElementRef[];
   keepHiddenIds?: Set<string>;
   extraPromptBlock?: string;
 }
 
 export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Promise<TestPlan> {
-  const plannerView = toPlannerView(appMap, { keepHiddenIds: options?.keepHiddenIds });
+  let resolvedData: ResolvedTestData | undefined;
+  if (options?.testData && options.testData.length > 0) {
+    resolvedData = resolveTestData(appMap, options.testData);
+  }
+
+  let effectiveKeepHidden = options?.keepHiddenIds;
+  if (options?.focus && options.focus.length > 0) {
+    effectiveKeepHidden = new Set(appMap.elements.map((e) => e.id));
+  }
+
+  const plannerView = toPlannerView(appMap, { keepHiddenIds: effectiveKeepHidden });
   const cacheKey = buildPlanCacheKey({
     view: plannerView,
-    data: options?.testData,
-    focus: options?.focus,
+    data: resolvedData ? Object.fromEntries(resolvedData.fills.entries()) : undefined,
+    focus: options?.focus ? options.focus.map((f) => f.elementId) : undefined,
   });
 
   const cached = getCachedPlan(cacheKey);
@@ -198,6 +232,23 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   const knownIds = new Set(appMap.elements.map((e) => e.id));
   const pageScope = buildPageScope(appMap);
   let userPrompt = buildPlannerUserPrompt(appMapJson, { multiPage: pageScope !== null });
+  if (resolvedData?.promptBlock) {
+    userPrompt += `\n\n${resolvedData.promptBlock}`;
+  }
+  if (options?.focus && options.focus.length > 0) {
+    const resolvedFocus = options.focus
+      .map((ref) => resolveElementRef(appMap, ref))
+      .filter((el): el is InteractiveElement => el !== undefined);
+    if (resolvedFocus.length > 0) {
+      const focusList = resolvedFocus
+        .map((el) => {
+          const label = el.ariaLabel ?? el.placeholder ?? el.name ?? el.text ?? el.id;
+          return `${el.id} ("${label}")`;
+        })
+        .join(', ');
+      userPrompt += `\n\nFOCUS: generate 2–4 test cases focused on these elements: ${focusList}.\nEvery test case must start by interacting with a focus element and verify what it reveals.`;
+    }
+  }
   if (options?.extraPromptBlock) {
     userPrompt += `\n\n${options.extraPromptBlock}`;
   }
@@ -220,12 +271,19 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     return null;
   };
 
+  const applyFillsAndCache = (plan: TestPlan): TestPlan => {
+    if (resolvedData && resolvedData.fills.size > 0) {
+      enforceTestData(plan, resolvedData.fills);
+    }
+    setCachedPlan(cacheKey, plan);
+    return plan;
+  };
+
   // First attempt
   const response = await callLlm({ messages, jsonMode: true, maxTokens: 3000, tier: 'reasoning' });
   const firstResult = validateAndNormalizePlan(response.content, knownIds, appMap.url, pageScope);
   if (firstResult.ok) {
-    setCachedPlan(cacheKey, firstResult.plan);
-    return firstResult.plan;
+    return applyFillsAndCache(firstResult.plan);
   }
 
   // Self-repair (one attempt)
@@ -243,16 +301,14 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   const repairResponse = await callLlm({ messages: repairMessages, jsonMode: true, maxTokens: 3000, tier: 'reasoning' });
   const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, pageScope);
   if (repairResult.ok) {
-    setCachedPlan(cacheKey, repairResult.plan);
-    return repairResult.plan;
+    return applyFillsAndCache(repairResult.plan);
   }
 
   // Graceful degradation for reference-only errors after repair
   if (repairResult.kind === 'references') {
     const salvaged = salvagePlan(repairResult);
     if (salvaged) {
-      setCachedPlan(cacheKey, salvaged);
-      return salvaged;
+      return applyFillsAndCache(salvaged);
     }
   }
 
@@ -260,8 +316,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   if (firstResult.kind === 'references') {
     const salvaged = salvagePlan(firstResult);
     if (salvaged) {
-      setCachedPlan(cacheKey, salvaged);
-      return salvaged;
+      return applyFillsAndCache(salvaged);
     }
   }
 

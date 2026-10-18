@@ -81,14 +81,20 @@ export interface InteractiveElement {
   tagName: string;
   type: string;
   detectedBy: string;
+  inputType?: string | null;
   text?: string | null;
+  name?: string | null;
   placeholder?: string | null;
   ariaLabel?: string | null;
+  ariaRole?: string | null;
   testId?: string | null;
+  value?: string | null;
   href?: string | null;
   page?: number;
   isVisible: boolean;
   isEnabled: boolean;
+  isRequired?: boolean;
+  isReadOnly?: boolean;
   selectors: ElementSelectorMap;
 }
 

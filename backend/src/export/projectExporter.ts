@@ -11,6 +11,15 @@ const runnerVersion = z.object({
   dependencies: z.object({ '@playwright/test': z.string().regex(/^\d+\.\d+\.\d+$/) }),
 }).parse(packageJson).dependencies['@playwright/test'];
 
+export function transformSecretTokens(code: string): { code: string; tokens: string[] } {
+  const foundTokens = new Set<string>();
+  const transformed = code.replace(/(['"])(__AGT_SECRET_(\d+)__)\1/g, (_, _quote, _token, num) => {
+    foundTokens.add(`AGT_SECRET_${num}`);
+    return `(process.env.AGT_SECRET_${num} ?? '')`;
+  });
+  return { code: transformed, tokens: [...foundTokens].sort() };
+}
+
 export async function exportProject(job: LoadedJob, destination: Writable): Promise<void> {
   const tests = job.generatedTests.filter((test) => test.finalStatus !== 'gave_up');
   const names = new Set<string>();
@@ -32,6 +41,7 @@ export async function exportProject(job: LoadedJob, destination: Writable): Prom
       scripts: { test: 'npx playwright test' },
       devDependencies: { '@playwright/test': runnerVersion },
     }, null, 2), { name: 'package.json' });
+
     archive.append(`import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
@@ -49,7 +59,34 @@ export default defineConfig({
   },
 });
 `, { name: 'playwright.config.ts' });
-    for (const test of tests) archive.append(test.finalCode, { name: `tests/${test.filename}` });
+
+    const allSecretTokens = new Set<string>();
+    for (const test of tests) {
+      const { code, tokens } = transformSecretTokens(test.finalCode);
+      tokens.forEach((t) => allSecretTokens.add(t));
+      archive.append(code, { name: `tests/${test.filename}` });
+    }
+
+    const secretList = [...allSecretTokens].sort();
+    if (secretList.length > 0) {
+      const envExampleContent = secretList.map((token) => `${token}=`).join('\n') + '\n';
+      archive.append(envExampleContent, { name: '.env.example' });
+    }
+
+    const envReadmeSection = secretList.length > 0 ? `
+## Environment Variables
+This test suite uses environment variables for sensitive test credentials:
+${secretList.map((t) => `- \`${t}\``).join('\n')}
+
+Set these variables before running the tests:
+
+PowerShell:
+${secretList.map((t) => `$env:${t}="your_secret_value"`).join('\n')}
+
+Bash:
+${secretList.map((t) => `export ${t}="your_secret_value"`).join('\n')}
+` : '';
+
     archive.append(`# Generated Playwright test project
 
 Job: ${job.id}
@@ -71,7 +108,8 @@ On a Linux machine without browser system dependencies, use:
 
 The baseURL is set in playwright.config.ts. Tests may also contain absolute URLs;
 update those if you move the target application. A localhost target must run on the machine executing these tests.
-`, { name: 'README.md' });
+${envReadmeSection}`, { name: 'README.md' });
+
     await Promise.all([completed, archive.finalize()]);
   } catch (cause) {
     archive.destroy(cause instanceof Error ? cause : new Error(String(cause)));

@@ -3,7 +3,7 @@ import { Router } from 'express';
 import jobsRouter from './jobsRoutes.ts';
 import { CrawlRequestSchema, GenerateRequestSchema } from './schemas.ts';
 import { crawlPage } from '../crawler/pageCrawler.ts';
-import { startDetachedRun } from '../agent/jobRunner.ts';
+import { startDetachedRun, type QueuedJob } from '../agent/jobRunner.ts';
 import { toHttpError } from './errors.ts';
 import { visitorMiddleware } from './visitorMiddleware.ts';
 import { webhookUrlProblem, createWebhookTarget } from '../notify/webhook.ts';
@@ -238,7 +238,17 @@ router.post('/generate', generateIpLimiter, generateByokIpLimiter, visitorDailyL
   }
 
   // 7. Create job rows synchronously (fail-fast) so every returned jobId exists.
-  const jobs = urls.map((url) => ({ id: randomUUID(), url, deepCrawl }));
+  const jobs: QueuedJob[] = urls.map((url, idx) => ({
+    id: randomUUID(),
+    url,
+    deepCrawl,
+    ...(idx === 0
+      ? {
+          testData: parsed.data.testData,
+          focus: parsed.data.focus,
+        }
+      : {}),
+  }));
   try {
     await createPendingJobs(
       jobs.map((job) => ({ id: job.id, targetUrl: job.url })),
