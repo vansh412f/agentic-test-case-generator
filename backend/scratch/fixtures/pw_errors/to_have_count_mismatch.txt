@@ -1,0 +1,20 @@
+Error: expect(locator).toHaveCount(expected) failed
+
+Locator:  locator('.item')
+Expected: 5
+Received: 2
+Timeout:  1500ms
+
+Call log:
+  - Expect "toHaveCount" locator('.item') with timeout 1500ms
+  - waiting for locator('.item')
+    15 × locator resolved to 2 elements
+       - unexpected value "2"
+
+
+  2 | test('tc-3', async ({ page }) => {
+  3 |   await page.goto('http://127.0.0.1:49205/');
+> 4 |   await expect(page.locator('.item')).toHaveCount(5, { timeout: 1500 });
+    |                                       ^
+  5 | });
+    at D:\Files\programs\agentic-test-generator\backend\playwright-runner\tests\capture-to_have_count_mismatch\to_have_count_mismatch.spec.ts:4:39

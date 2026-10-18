@@ -1,0 +1,11 @@
+TimeoutError: locator.click: Timeout 1500ms exceeded.
+Call log:
+  - waiting for locator('#no-such-button')
+
+
+  2 | test('tc-6', async ({ page }) => {
+  3 |   await page.goto('http://127.0.0.1:49205/');
+> 4 |   await page.locator('#no-such-button').click({ timeout: 1500 });
+    |                                         ^
+  5 | });
+    at D:\Files\programs\agentic-test-generator\backend\playwright-runner\tests\capture-action_timeout_missing_element\action_timeout_missing_element.spec.ts:4:41

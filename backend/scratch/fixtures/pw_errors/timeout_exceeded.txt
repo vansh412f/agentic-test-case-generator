@@ -1,0 +1,10 @@
+Test timeout of 1000ms exceeded.
+
+Error: page.waitForTimeout: Test timeout of 1000ms exceeded.
+
+  2 | test('tc-7', async ({ page }) => {
+  3 |   test.setTimeout(1000);
+> 4 |   await page.waitForTimeout(4000);
+    |              ^
+  5 | });
+    at D:\Files\programs\agentic-test-generator\backend\playwright-runner\tests\capture-timeout_exceeded\timeout_exceeded.spec.ts:4:14

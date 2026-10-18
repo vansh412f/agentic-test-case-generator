@@ -277,16 +277,51 @@ async function testSafeWritePersistenceResilience() {
   console.log('✓ Test 5 passed\n');
 }
 
+async function testClassifyExecutionErrorTable() {
+  console.log('--- Test 6: classifyExecutionError table-driven test over real fixtures (WP3) ---');
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const { classifyExecutionError } = await import('../src/runner/executor.ts');
+
+  const fixtureDir = path.resolve(process.cwd(), 'scratch/fixtures/pw_errors');
+  const table = [
+    { file: 'to_have_text_mismatch.txt', expected: 'finding' },
+    { file: 'to_have_url_mismatch.txt', expected: 'finding' },
+    { file: 'to_have_count_mismatch.txt', expected: 'finding' },
+    { file: 'to_be_visible_missing.txt', expected: 'locator' },
+    { file: 'strict_mode_violation.txt', expected: 'locator' },
+    { file: 'action_timeout_missing_element.txt', expected: 'timeout' },
+    { file: 'timeout_exceeded.txt', expected: 'timeout' },
+    { file: 'thrown_error.txt', expected: 'other' },
+  ];
+
+  console.log('Fixture -> Classification Table:');
+  console.log('| Fixture File | Expected | Actual | Match |');
+  console.log('| :--- | :---: | :---: | :---: |');
+
+  for (const item of table) {
+    const filePath = path.join(fixtureDir, item.file);
+    const content = await fs.readFile(filePath, 'utf-8');
+    const actual = classifyExecutionError(content);
+    const match = actual === item.expected ? 'PASS' : 'FAIL';
+    console.log(`| ${item.file} | ${item.expected} | ${actual} | ${match} |`);
+    assert.equal(actual, item.expected, `Fixture ${item.file} expected ${item.expected} but got ${actual}`);
+  }
+
+  console.log('\n✓ Test 6 passed\n');
+}
+
 async function main() {
   console.log('====================================================');
-  console.log('    Phase 11.1C Regression Tests - WP1 & WP2        ');
+  console.log('    Phase 11.1C Regression Tests - WP1, WP2, WP3    ');
   console.log('====================================================\n');
   await testTscFailCorrectedNextRoundExec();
   await testAttemptNumbersStrictlyIncreasingNoDuplicates();
   await testMissingResultAttribution();
   await testCanCorrectFalseTokenBudget();
   await testSafeWritePersistenceResilience();
-  console.log('All WP1 & WP2 tests passed successfully!');
+  await testClassifyExecutionErrorTable();
+  console.log('All WP1, WP2, and WP3 tests passed successfully!');
 }
 
 main().catch((err) => {

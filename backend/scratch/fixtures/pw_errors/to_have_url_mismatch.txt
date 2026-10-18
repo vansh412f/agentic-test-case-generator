@@ -1,0 +1,18 @@
+Error: expect(page).toHaveURL(expected) failed
+
+Expected: "http://127.0.0.1:49205/not-here"
+Received: "http://127.0.0.1:49205/"
+Timeout:  1500ms
+
+Call log:
+  - Expect "toHaveURL" with timeout 1500ms
+    15 × locator resolved to <html>…</html>
+       - unexpected value "http://127.0.0.1:49205/"
+
+
+  2 | test('tc-2', async ({ page }) => {
+  3 |   await page.goto('http://127.0.0.1:49205/');
+> 4 |   await expect(page).toHaveURL('http://127.0.0.1:49205/not-here', { timeout: 1500 });
+    |                      ^
+  5 | });
+    at D:\Files\programs\agentic-test-generator\backend\playwright-runner\tests\capture-to_have_url_mismatch\to_have_url_mismatch.spec.ts:4:22

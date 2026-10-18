@@ -1,0 +1,8 @@
+Error: Custom runtime exception in test code
+
+  1 | import { test } from '@playwright/test';
+  2 | test('tc-8', async () => {
+> 3 |   throw new Error('Custom runtime exception in test code');
+    |         ^
+  4 | });
+    at D:\Files\programs\agentic-test-generator\backend\playwright-runner\tests\capture-thrown_error\thrown_error.spec.ts:3:9

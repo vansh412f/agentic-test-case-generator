@@ -1,0 +1,18 @@
+Error: expect(locator).toBeVisible() failed
+
+Locator: locator('#non-existent-element')
+Expected: visible
+Timeout: 1500ms
+Error: element(s) not found
+
+Call log:
+  - Expect "toBeVisible" locator('#non-existent-element') with timeout 1500ms
+  - waiting for locator('#non-existent-element')
+
+
+  2 | test('tc-4', async ({ page }) => {
+  3 |   await page.goto('http://127.0.0.1:49205/');
+> 4 |   await expect(page.locator('#non-existent-element')).toBeVisible({ timeout: 1500 });
+    |                                                       ^
+  5 | });
+    at D:\Files\programs\agentic-test-generator\backend\playwright-runner\tests\capture-to_be_visible_missing\to_be_visible_missing.spec.ts:4:55

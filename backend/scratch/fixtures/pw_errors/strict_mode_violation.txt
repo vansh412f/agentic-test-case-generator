@@ -1,0 +1,14 @@
+Error: locator.click: Error: strict mode violation: locator('.dup') resolved to 2 elements:
+    1) <button class="dup">Btn 1</button> aka getByRole('button', { name: 'Btn 1' })
+    2) <button class="dup">Btn 2</button> aka getByRole('button', { name: 'Btn 2' })
+
+Call log:
+  - waiting for locator('.dup')
+
+
+  2 | test('tc-5', async ({ page }) => {
+  3 |   await page.goto('http://127.0.0.1:49205/');
+> 4 |   await page.locator('.dup').click({ timeout: 1500 });
+    |                              ^
+  5 | });
+    at D:\Files\programs\agentic-test-generator\backend\playwright-runner\tests\capture-strict_mode_violation\strict_mode_violation.spec.ts:4:30

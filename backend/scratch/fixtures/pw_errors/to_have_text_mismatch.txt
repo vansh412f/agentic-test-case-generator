@@ -1,0 +1,20 @@
+Error: expect(locator).toHaveText(expected) failed
+
+Locator:  locator('#title')
+Expected: "Goodbye World"
+Received: "Hello World"
+Timeout:  1500ms
+
+Call log:
+  - Expect "toHaveText" locator('#title') with timeout 1500ms
+  - waiting for locator('#title')
+    15 × locator resolved to <h1 id="title">Hello World</h1>
+       - unexpected value "Hello World"
+
+
+  2 | test('tc-1', async ({ page }) => {
+  3 |   await page.goto('http://127.0.0.1:49205/');
+> 4 |   await expect(page.locator('#title')).toHaveText('Goodbye World', { timeout: 1500 });
+    |                                        ^
+  5 | });
+    at D:\Files\programs\agentic-test-generator\backend\playwright-runner\tests\capture-to_have_text_mismatch\to_have_text_mismatch.spec.ts:4:40

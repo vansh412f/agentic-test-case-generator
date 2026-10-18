@@ -67,24 +67,42 @@ export function stripAnsi(s: string): string {
   return s.replace(/\u001b\[[0-9;]*m/g, '');
 }
 
-const LOCATOR_REGEX = /element\(s\) not found|strict mode violation/;
-const TIMEOUT_REGEX = /waiting for|Timeout/;
+const LOCATOR_REGEX =
+  /element\(s\) not found|strict mode violation|resolved to \d+ elements|waiting for (?:getBy|locator)\(.*\)$(?![\s\S]*resolved to)/m;
+const TEST_TIMEOUT_REGEX = /Test timeout of \d+ms exceeded/;
+const ACTION_TIMEOUT_REGEX = /locator\.\w+:\s*Timeout/;
+const RECEIVED_LINE_REGEX = /Received(?:\s+\w+)?:(?:\s*)(.*)/;
+const CALL_LOG_RESOLVED_REGEX = /locator resolved to|unexpected value/;
 
 export function classifyExecutionError(message: string): FailureClass {
-  const hasExpected = message.includes('Expected:');
-  const hasReceived = message.includes('Received:');
-  const matchesLocator = LOCATOR_REGEX.test(message);
-  const matchesTimeout = TIMEOUT_REGEX.test(message);
+  // 1. finding: an expect() failure where the element/page DID resolve:
+  // a Received…: line whose value is not <element(s) not found>, OR the call log contains
+  // `locator resolved to` / `unexpected value`. Do not exclude on `Timeout:`, because expect retries always print it.
+  const hasExpect = message.includes('expect(') || message.includes('Expected:');
+  const receivedMatch = RECEIVED_LINE_REGEX.exec(message);
+  if (hasExpect) {
+    if (receivedMatch) {
+      const receivedVal = receivedMatch[1]?.trim() ?? '';
+      if (!receivedVal.includes('<element(s) not found>')) {
+        return 'finding';
+      }
+    }
+    if (CALL_LOG_RESOLVED_REGEX.test(message) && message.includes('unexpected value')) {
+      return 'finding';
+    }
+  }
 
-  if (hasExpected && hasReceived && !matchesLocator && !matchesTimeout) {
-    return 'finding';
-  }
-  if (matchesLocator) {
-    return 'locator';
-  }
-  if (matchesTimeout) {
+  // 2. timeout: `Test timeout of`, or an action timeout (`locator.<action>: Timeout`) with no expect diff
+  if (TEST_TIMEOUT_REGEX.test(message) || ACTION_TIMEOUT_REGEX.test(message)) {
     return 'timeout';
   }
+
+  // 3. locator: element(s) not found | strict mode violation | resolved to N elements | waiting for locator without resolved to
+  if (LOCATOR_REGEX.test(message)) {
+    return 'locator';
+  }
+
+  // 4. other: everything else
   return 'other';
 }
 
