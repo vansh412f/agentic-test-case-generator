@@ -12,6 +12,7 @@ import { redactSecrets } from '../src/runner/executor.ts';
 import { correctionPreservesSecrets } from '../src/agent/assertionGuard.ts';
 import { transformSecretTokens, exportProject } from '../src/export/projectExporter.ts';
 import { childProcessEnv } from '../src/runner/childEnv.ts';
+import { openAiCompatibleChat } from '../src/llm/providers/openAiCompatible.ts';
 import { GenerateRequestSchema } from '../src/api/schemas.ts';
 import { validateTestCode } from '../src/runner/validator.ts';
 import { config } from '../src/config.ts';
@@ -339,6 +340,37 @@ async function runTests() {
       });
       assert.equal(groqCalls, 1, 'Groq must NOT be skipped when it is the sole provider');
       assert.equal(geminiCalls, 0);
+
+      // Case C (Bug sweep h): reasoning_effort 400 fallback retries once without param
+      let retryAttempts = 0;
+      let lastBody = '';
+      globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        retryAttempts++;
+        lastBody = String(init?.body);
+        if (retryAttempts === 1) {
+          return new Response(JSON.stringify({ error: { message: 'reasoning_effort is not supported' } }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: 'ok after retry' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }) as typeof globalThis.fetch;
+
+      const retryRes = await openAiCompatibleChat({
+        providerName: 'groq',
+        endpointUrl: 'https://api.groq.com/openai/v1/chat/completions',
+        apiKey: 'test-key',
+        defaultModel: 'openai/gpt-oss-120b',
+        reasoningEffort: 'low',
+        request: { messages: [{ role: 'user', content: 'test' }] },
+        signal: AbortSignal.timeout(5000),
+      });
+      assert.equal(retryRes.content, 'ok after retry');
+      assert.equal(retryAttempts, 2, 'Must retry once without reasoning_effort');
+      assert.ok(!lastBody.includes('reasoning_effort'), 'Retried request must omit reasoning_effort');
 
       config.GROQ_API_KEY = prevGroq;
       config.GEMINI_API_KEY = prevGemini;
