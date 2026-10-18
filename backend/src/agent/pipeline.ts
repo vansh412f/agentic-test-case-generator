@@ -344,7 +344,7 @@ async function runPersistedPipeline(
       },
       emitTerminal: async (test) => {
         const finalStatus = test.status === 'open' ? 'gave_up' : test.status;
-        await safeWrite('recordGeneratedTest', () =>
+        const res = await safeWrite('recordGeneratedTest', () =>
           recordGeneratedTest({
             jobId,
             testCaseId: test.testCase.id,
@@ -354,6 +354,9 @@ async function runPersistedPipeline(
             attempts: test.attempts,
           }),
         );
+        if (res !== undefined) {
+          test.recorded = true;
+        }
         publishJobEvent(jobId, {
           type: 'test_completed',
           data: {
@@ -364,6 +367,26 @@ async function runPersistedPipeline(
         });
       },
     });
+
+    // Retry unrecorded tests once
+    for (const test of tests) {
+      if (!test.recorded) {
+        const finalStatus = test.status === 'open' ? 'gave_up' : test.status;
+        const res = await safeWrite('recordGeneratedTest:retry', () =>
+          recordGeneratedTest({
+            jobId,
+            testCaseId: test.testCase.id,
+            filename: test.filename,
+            finalCode: test.code,
+            finalStatus,
+            attempts: test.attempts,
+          }),
+        );
+        if (res !== undefined) {
+          test.recorded = true;
+        }
+      }
+    }
 
     const generatedTests: GeneratedTestResult[] = tests.map((t) => ({
       testCaseId: t.testCase.id,
@@ -378,7 +401,7 @@ async function runPersistedPipeline(
       }),
     }));
 
-    await safeWrite('completeJob', () => completeJob(jobId));
+    await safeWrite('completeJob', () => completeJob(jobId), { critical: true });
     publishJobEvent(jobId, { type: 'job_finished', data: { status: 'completed', errorCode: null } });
     return { jobId, appMap, testPlan, generatedTests };
   } catch (error) {
@@ -388,15 +411,21 @@ async function runPersistedPipeline(
       signal?.aborted
     ) {
       const now = new Date();
-      await safeWrite('cancelJob', () =>
-        prisma.job.update({ where: { id: jobId }, data: { status: 'cancelled', cancelledAt: now } }),
+      await safeWrite(
+        'cancelJob',
+        () =>
+          prisma.job.updateMany({
+            where: { id: jobId, status: { notIn: ['completed', 'failed', 'cancelled'] } },
+            data: { status: 'cancelled', cancelledAt: now },
+          }),
+        { critical: true },
       );
       announcePhase(jobId, 'cancelled');
       publishJobEvent(jobId, { type: 'job_finished', data: { status: 'cancelled', errorCode: null } });
       throw new JobCancelledError();
     }
     const code = toJobErrorCode(error);
-    await safeWrite('failJob', () => failJob(jobId, code, error instanceof Error ? error.message : String(error)));
+    await safeWrite('failJob', () => failJob(jobId, code, error instanceof Error ? error.message : String(error)), { critical: true });
     publishJobEvent(jobId, { type: 'job_finished', data: { status: 'failed', errorCode: code } });
     throw error;
   } finally {

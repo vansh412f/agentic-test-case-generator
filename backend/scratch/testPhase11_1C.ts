@@ -212,18 +212,84 @@ async function testCanCorrectFalseTokenBudget() {
   console.log('✓ Test 4 passed\n');
 }
 
+async function testSafeWritePersistenceResilience() {
+  console.log('--- Test 5: safeWrite resilience (P2002 non-transient, P1001 transient, critical bypass) ---');
+  const { safeWrite, withPersistence, isBreakerOpen } = await import('../src/db/safeWrite.ts');
+
+  // A. P2002 error does NOT trip the breaker
+  await withPersistence(async () => {
+    assert.equal(isBreakerOpen(), false);
+
+    const nonTransientErr = new Error('Unique constraint failed on the fields: (`attemptNumber`)');
+    (nonTransientErr as unknown as { code: string }).code = 'P2002';
+
+    const res1 = await safeWrite('testP2002', async () => {
+      throw nonTransientErr;
+    });
+    assert.equal(res1, undefined);
+    assert.equal(isBreakerOpen(), false, 'P2002 must NOT trip the breaker');
+
+    // Subsequent normal write still works
+    const res2 = await safeWrite('testOk', async () => 'write_success');
+    assert.equal(res2, 'write_success');
+    assert.equal(isBreakerOpen(), false);
+  });
+
+  // B. P1001 error (transient) retries once and then trips the breaker
+  await withPersistence(async () => {
+    assert.equal(isBreakerOpen(), false);
+
+    let attempts = 0;
+    const transientErr = new Error("Can't reach database server at `aws-0-ap-southeast-1.pooler.supabase.com`");
+    (transientErr as unknown as { code: string }).code = 'P1001';
+
+    const res1 = await safeWrite('testP1001', async () => {
+      attempts++;
+      throw transientErr;
+    });
+    assert.equal(res1, undefined);
+    assert.equal(attempts, 2, 'P1001 must retry once after 500ms (2 attempts total)');
+    assert.equal(isBreakerOpen(), true, 'P1001 must trip the breaker after retry fails');
+
+    // Subsequent non-critical write is skipped
+    let nonCriticalRan = false;
+    const res2 = await safeWrite('testSkipped', async () => {
+      nonCriticalRan = true;
+      return 123;
+    });
+    assert.equal(res2, undefined);
+    assert.equal(nonCriticalRan, false, 'Non-critical write must be skipped when breaker is open');
+
+    // C. Critical operation bypasses the tripped breaker and succeeds
+    let criticalRan = false;
+    const res3 = await safeWrite(
+      'completeJob',
+      async () => {
+        criticalRan = true;
+        return { completed: true };
+      },
+      { critical: true },
+    );
+    assert.equal(criticalRan, true, 'Critical write must run even when breaker is open');
+    assert.deepEqual(res3, { completed: true });
+  });
+
+  console.log('✓ Test 5 passed\n');
+}
+
 async function main() {
   console.log('====================================================');
-  console.log('    Phase 11.1C Regression Tests - WP1 (rounds.ts)  ');
+  console.log('    Phase 11.1C Regression Tests - WP1 & WP2        ');
   console.log('====================================================\n');
   await testTscFailCorrectedNextRoundExec();
   await testAttemptNumbersStrictlyIncreasingNoDuplicates();
   await testMissingResultAttribution();
   await testCanCorrectFalseTokenBudget();
-  console.log('All WP1 tests passed successfully!');
+  await testSafeWritePersistenceResilience();
+  console.log('All WP1 & WP2 tests passed successfully!');
 }
 
 main().catch((err) => {
-  console.error('WP1 Test Failed:', err);
+  console.error('Test Failed:', err);
   process.exit(1);
 });

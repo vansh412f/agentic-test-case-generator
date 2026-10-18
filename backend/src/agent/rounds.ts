@@ -333,7 +333,6 @@ export async function runRounds(
     // 5. Emit terminal events for any tests that reached final status in this round
     for (const test of tests) {
       if (test.status !== 'open' && !test.recorded) {
-        test.recorded = true;
         await deps.emitTerminal?.(test);
       }
     }
@@ -345,7 +344,6 @@ export async function runRounds(
       test.status = 'gave_up';
     }
     if (!test.recorded) {
-      test.recorded = true;
       await deps.emitTerminal?.(test);
     }
   }
