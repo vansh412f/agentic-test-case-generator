@@ -33,7 +33,7 @@ export function LocalTargetPanel({
   const [localAgentNotice, setLocalAgentNotice] = useState<string | null>(null);
 
   const port = extractTargetPort(targetUrl, 3000);
-  const command = `cloudflared tunnel --url http://localhost:${port}`;
+  const command = `cloudflared tunnel --url http://localhost:${port} --http-host-header localhost:${port}`;
 
   async function copyToClipboard(text: string) {
     try {
@@ -161,6 +161,26 @@ export function LocalTargetPanel({
             <strong>Security note:</strong> This tunnel makes your local app public while it runs. Stop cloudflared when testing is complete.
           </span>
         </div>
+
+        <details className="mt-3 text-xs text-[#5c6b61]">
+          <summary className="cursor-pointer font-medium hover:text-[#17201b] select-none">
+            Still blocked? (Vite, CRA, Angular, Next.js host header tips)
+          </summary>
+          <div className="mt-2 space-y-1.5 rounded-lg border border-[#e2e7df] bg-[#f4f6f3] p-3 text-[#3d4740]">
+            <p>
+              <strong>Vite:</strong> In <code>vite.config.ts</code>, add <code>server: &#123; allowedHosts: true &#125;</code> (or pass <code>--host</code>).
+            </p>
+            <p>
+              <strong>Create React App:</strong> In <code>.env.development.local</code>, set <code>DANGEROUSLY_DISABLE_HOST_CHECK=true</code>.
+            </p>
+            <p>
+              <strong>Angular:</strong> Run with <code>ng serve --disable-host-check</code>.
+            </p>
+            <p>
+              <strong>Next.js:</strong> The <code>--http-host-header</code> flag satisfies Next.js by rewriting the host header to localhost.
+            </p>
+          </div>
+        </details>
 
         <p className="alternative">
           Prefer not to expose it?{' '}
