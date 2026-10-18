@@ -8,22 +8,18 @@ import { toHttpError } from './errors.ts';
 import { visitorMiddleware } from './visitorMiddleware.ts';
 import { webhookUrlProblem, createWebhookTarget } from '../notify/webhook.ts';
 import {
-  generateIpLimiter,
-  generateByokIpLimiter,
   crawlIpLimiter,
   powChallengeLimiter,
-  visitorDailyLimiter,
   byokValidateLimiter,
 } from './rateLimits.ts';
 import { checkProviderKey } from '../llm/keyCheck.ts';
 import { powService } from '../security/pow.ts';
 import {
-  jobsCreatedToday,
+  ipHashFor,
+  tryReserveRun,
+  budgetStatus,
   nextUtcMidnight,
-  tryReserve,
-  releaseReservation,
-  getReservedCount,
-} from '../security/dailyQuota.ts';
+} from '../security/dailyBudget.ts';
 import { pipelineGate, crawlGate } from '../security/concurrencyGate.ts';
 import { rememberCrawl } from '../crawler/crawlCache.ts';
 import { hasOwnKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
@@ -145,7 +141,31 @@ router.post('/byok/validate', byokValidateLimiter, async (req, res) => {
   res.status(200).json({ valid: status === 'valid' });
 });
 
-router.post('/generate', generateIpLimiter, generateByokIpLimiter, visitorDailyLimiter, async (req, res) => {
+router.get('/budget', async (req, res) => {
+  const byok = hasOwnKeys(req);
+  if (byok) {
+    res.json({
+      byok: true,
+      maxUrlsPerRun: config.BYOK_MAX_URLS_PER_RUN,
+      remaining: null,
+      resetsAt: nextUtcMidnight().toISOString(),
+      scopes: [],
+    });
+    return;
+  }
+
+  const ipHash = ipHashFor(req.ip ?? '');
+  const status = await budgetStatus({ visitorId: req.visitorId, ipHash });
+  res.json({
+    byok: false,
+    maxUrlsPerRun: config.FREE_MAX_URLS_PER_RUN,
+    remaining: status.remaining,
+    resetsAt: status.resetsAt,
+    scopes: status.scopes,
+  });
+});
+
+router.post('/generate', async (req, res) => {
   // 1. Parse body
   const parsed = GenerateRequestSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -176,6 +196,16 @@ router.post('/generate', generateIpLimiter, generateByokIpLimiter, visitorDailyL
   };
   const usesOwnKeys = hasOwnKeys(req);
 
+  const maxUrls = usesOwnKeys ? config.BYOK_MAX_URLS_PER_RUN : config.FREE_MAX_URLS_PER_RUN;
+  if (requested > maxUrls) {
+    res.status(400).json({
+      error: 'TOO_MANY_URLS',
+      message: `A single run may contain at most ${maxUrls} URLs.`,
+      details: { max: maxUrls },
+    });
+    return;
+  }
+
   // 4. Key pre-flight check before quota/PoW/gate
   if (usesOwnKeys) {
     for (const provider of ['groq', 'gemini'] as const) {
@@ -195,30 +225,36 @@ router.post('/generate', generateIpLimiter, generateByokIpLimiter, visitorDailyL
     }
   }
 
-  // 5. Daily quota check & reservation BEFORE consuming ALTCHA (skipped for BYOK)
+  const ipHash = ipHashFor(req.ip ?? '');
+
+  // 5. Daily budget check & reservation BEFORE consuming ALTCHA (skipped for BYOK)
+  let reservation: Awaited<ReturnType<typeof tryReserveRun>> | undefined;
   if (!usesOwnKeys) {
-    const admitted = await tryReserve(requested);
-    if (!admitted) {
-      const dbCount = await jobsCreatedToday();
-      const used = dbCount + getReservedCount();
+    reservation = await tryReserveRun({
+      visitorId: req.visitorId,
+      ipHash,
+      n: requested,
+    });
+    if (!reservation.ok) {
       res.status(429).json({
         error: 'DAILY_QUOTA_EXHAUSTED',
-        message: 'The free daily demo quota is exhausted.',
+        message: 'Daily quota exhausted.',
         details: {
-          limit: config.GENERATE_DAILY_LIMIT,
-          used,
-          resetsAt: nextUtcMidnight().toISOString(),
+          scope: reservation.scope,
+          limit: reservation.limit,
+          used: reservation.used,
+          resetsAt: reservation.resetsAt,
         },
       });
       return;
     }
   }
 
-  // 5. Enforce ALTCHA proof-of-work if not using own keys
+  // 6. Enforce ALTCHA proof-of-work if not using own keys
   if (!usesOwnKeys) {
     const payload = parsed.data.altcha;
     if (!payload || !(await powService.verifyAndConsume(payload))) {
-      releaseReservation(requested);
+      if (reservation?.ok) reservation.release();
       res.status(400).json({
         error: 'POW_FAILED',
         message: 'Bot verification failed. Please retry.',
@@ -227,9 +263,9 @@ router.post('/generate', generateIpLimiter, generateByokIpLimiter, visitorDailyL
     }
   }
 
-  // 6. Concurrency gate: ONE slot per run group. Ownership transfers to startDetachedRun.
+  // 7. Concurrency gate: ONE slot per run group. Ownership transfers to startDetachedRun.
   if (!pipelineGate.tryAcquire()) {
-    if (!usesOwnKeys) releaseReservation(requested);
+    if (reservation?.ok) reservation.release();
     res.status(429).json({
       error: 'QUEUE_FULL',
       message: 'The execution queue is currently full. Please retry shortly.',
@@ -237,7 +273,8 @@ router.post('/generate', generateIpLimiter, generateByokIpLimiter, visitorDailyL
     return;
   }
 
-  // 7. Create job rows synchronously (fail-fast) so every returned jobId exists.
+  // 8. Create job rows synchronously (fail-fast) so every returned jobId exists.
+  const runGroupId = randomUUID();
   const jobs: QueuedJob[] = urls.map((url, idx) => ({
     id: randomUUID(),
     url,
@@ -252,7 +289,7 @@ router.post('/generate', generateIpLimiter, generateByokIpLimiter, visitorDailyL
   try {
     await createPendingJobs(
       jobs.map((job) => ({ id: job.id, targetUrl: job.url })),
-      { visitorId: req.visitorId, usedOwnKeys: usesOwnKeys },
+      { visitorId: req.visitorId, usedOwnKeys: usesOwnKeys, ipHash, runGroupId },
     );
   } catch (err) {
     pipelineGate.release();
@@ -263,15 +300,14 @@ router.post('/generate', generateIpLimiter, generateByokIpLimiter, visitorDailyL
     }
     throw err;
   } finally {
-    // Committed rows are now counted by jobsCreatedToday(); holding the
-    // reservation any longer would double-count them for the whole run.
-    if (!usesOwnKeys) releaseReservation(requested);
+    if (reservation?.ok) reservation.release();
   }
 
-  // 8. Detach. BYOK ALS context is entered inside startDetachedRun.
+  // 9. Detach. BYOK ALS context is entered inside startDetachedRun.
   startDetachedRun(jobs, requestKeys, { webhook });
   res.status(202).json({
     jobIds: jobs.map((job) => job.id),
+    runGroupId,
     ...(webhook ? { webhookSecret: webhook.secret } : {}),
   });
 });

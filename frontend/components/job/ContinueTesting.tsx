@@ -9,8 +9,8 @@ import {
   apiBase,
   fetcher,
   hasConfiguredKeys,
-  MAX_URLS_PER_RUN,
   startGeneration,
+  type BudgetResponse,
 } from '@/lib/api';
 import { handleGenerationError } from '@/lib/generationErrors';
 import { isTerminalJobStatus } from '@/lib/utils';
@@ -42,6 +42,9 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
 
   const [createdJobIds, setCreatedJobIds] = useState<string[] | null>(null);
   const [submittedUrls, setSubmittedUrls] = useState<string[]>([]);
+
+  const { data: budget } = useSWR<BudgetResponse, Error>('/api/budget', fetcher);
+  const maxAllowedUrls = budget?.maxUrlsPerRun ?? (hasCustomKeys ? 5 : 3);
 
   useEffect(() => {
     setHasCustomKeys(hasConfiguredKeys());
@@ -96,7 +99,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
     setSelectedPages((prev) =>
       prev.includes(url)
         ? prev.filter((p) => p !== url)
-        : prev.length < MAX_URLS_PER_RUN
+        : prev.length < maxAllowedUrls
           ? [...prev, url]
           : prev,
     );
@@ -226,7 +229,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
           {eligiblePages.length > 0 && (
             <div>
               <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#374151', marginBottom: '8px' }}>
-                Discovered Pages (Select up to {MAX_URLS_PER_RUN})
+                Discovered Pages (Select up to {maxAllowedUrls})
               </h3>
               <div
                 style={{
@@ -243,7 +246,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
               >
                 {eligiblePages.map((pageUrl) => {
                   const isSelected = selectedPages.includes(pageUrl);
-                  const isMax = selectedPages.length >= MAX_URLS_PER_RUN;
+                  const isMax = selectedPages.length >= maxAllowedUrls;
                   return (
                     <label
                       key={pageUrl}

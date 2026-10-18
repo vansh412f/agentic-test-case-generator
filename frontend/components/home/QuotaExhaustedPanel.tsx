@@ -3,19 +3,28 @@ import { Clock, Key, X } from '@phosphor-icons/react';
 interface QuotaExhaustedPanelProps {
   limit?: number;
   resetsAt?: string;
+  scope?: string;
   onDismiss?: () => void;
   onOpenKeys?: () => void;
 }
 
 export function QuotaExhaustedPanel({
-  limit = 20,
+  limit = 8,
   resetsAt,
+  scope = 'visitor',
   onDismiss,
   onOpenKeys,
 }: QuotaExhaustedPanelProps) {
   const formattedReset = resetsAt
-    ? `at ${new Date(resetsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} UTC`
-    : 'tomorrow at 00:00 UTC';
+    ? `at ${new Date(resetsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : 'tomorrow';
+
+  const heading =
+    scope === 'visitor'
+      ? `You’ve used all ${limit} free runs for today`
+      : scope === 'ip'
+      ? `This network has used all ${limit} free runs for today`
+      : "Today's free demo capacity is used up";
 
   const handleOpenByok = () => {
     if (onOpenKeys) {
@@ -44,9 +53,9 @@ export function QuotaExhaustedPanel({
 
       <div className="state-copy">
         <p className="eyebrow">Daily limit reached</p>
-        <h3 id="quota-panel-title">You’ve used today’s {limit} free generations</h3>
+        <h3 id="quota-panel-title">{heading}</h3>
         <p>
-          Your quota resets {formattedReset}. Add your own provider key (Groq or Gemini) to keep generating now.
+          Resets {formattedReset}. Add your own free Groq key for unlimited runs.
         </p>
         <button className="primary-button" onClick={handleOpenByok} type="button">
           <Key aria-hidden="true" className="h-4 w-4" /> Add API key

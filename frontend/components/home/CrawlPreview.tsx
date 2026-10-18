@@ -1,6 +1,7 @@
 import { ArrowRight, Check, Globe, Warning, Lock, LockOpen } from '@phosphor-icons/react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { AppMap, InteractiveElement } from '@/types/api';
+import type { BudgetResponse } from '@/lib/api';
 
 interface CrawlPreviewProps {
   appMap: AppMap;
@@ -9,6 +10,8 @@ interface CrawlPreviewProps {
   disabled?: boolean;
   deepCrawl?: boolean;
   testData: Record<string, { value: string; sensitive: boolean }>;
+  budget?: BudgetResponse | null;
+  maxUrlsPerRun?: number;
   onToggleDeepCrawl?: (enabled: boolean) => void;
   onToggleUrl: (url: string) => void;
   onUpdateTestData: (elementId: string, value: string, sensitive: boolean) => void;
@@ -60,18 +63,44 @@ export function CrawlPreview({
   disabled = false,
   deepCrawl = false,
   testData,
+  budget,
+  maxUrlsPerRun,
   onToggleDeepCrawl,
   onToggleUrl,
   onUpdateTestData,
   onGenerate,
   onReset,
 }: CrawlPreviewProps) {
+  const confirmDialogRef = useRef<HTMLDialogElement>(null);
   const totalPagesCount = 1 + appMap.discoveredLinks.length;
-  const maxReached = selectedUrls.length >= 5;
+  const maxAllowedUrls = maxUrlsPerRun ?? budget?.maxUrlsPerRun ?? (budget?.byok ? 5 : 3);
+  const maxReached = selectedUrls.length >= maxAllowedUrls;
   const canDeepCrawl =
     onToggleDeepCrawl !== undefined &&
     selectedUrls.length === 1 &&
     appMap.discoveredLinks.length > 0;
+
+  const visitorScope = budget?.scopes?.find((s) => s.scope === 'visitor');
+  const limit = visitorScope?.limit ?? 8;
+  const remaining = budget?.remaining ?? null;
+  const budgetCopy = budget?.byok
+    ? 'Unlimited with your key, one run at a time'
+    : remaining !== null
+    ? `${remaining} of ${limit} free runs left today`
+    : null;
+
+  const handleGenerateClick = () => {
+    if (selectedUrls.length > 1) {
+      confirmDialogRef.current?.showModal();
+    } else {
+      onGenerate();
+    }
+  };
+
+  const handleConfirmRun = () => {
+    confirmDialogRef.current?.close();
+    onGenerate();
+  };
 
   const eligibleFields = useMemo(() => {
     return appMap.elements
@@ -326,7 +355,12 @@ export function CrawlPreview({
           {selectedUrls.length} of {totalPagesCount} pages selected
           {canDeepCrawl && deepCrawl ? ' · deep crawl on' : ''}
         </span>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          {budgetCopy && (
+            <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 500 }}>
+              {budgetCopy}
+            </span>
+          )}
           <button
             className="secondary-button"
             disabled={generating}
@@ -338,7 +372,7 @@ export function CrawlPreview({
           <button
             className="primary-button"
             disabled={disabled || generating || selectedUrls.length === 0}
-            onClick={onGenerate}
+            onClick={handleGenerateClick}
             type="button"
           >
             {generating
@@ -350,6 +384,43 @@ export function CrawlPreview({
           </button>
         </div>
       </div>
+
+      <dialog
+        ref={confirmDialogRef}
+        style={{
+          background: '#ffffff',
+          borderRadius: '12px',
+          border: '1px solid #e5e7eb',
+          padding: '24px',
+          maxWidth: '460px',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+        }}
+      >
+        <h3 style={{ fontSize: '16px', fontWeight: 700, margin: '0 0 10px 0', color: '#111827' }}>
+          Run {selectedUrls.length} pages?
+        </h3>
+        <p style={{ fontSize: '13px', color: '#4b5563', margin: '0 0 20px 0', lineHeight: 1.5 }}>
+          {budget?.byok
+            ? `Run ${selectedUrls.length} pages? Pages run one after another (~2–4 min each).`
+            : `Run ${selectedUrls.length} pages? This uses ${selectedUrls.length} of your ${remaining ?? 0} free runs today. Pages run one after another (~2–4 min each).`}
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+          <button
+            className="secondary-button"
+            onClick={() => confirmDialogRef.current?.close()}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="primary-button"
+            onClick={handleConfirmRun}
+            type="button"
+          >
+            Run {selectedUrls.length} pages
+          </button>
+        </div>
+      </dialog>
     </section>
   );
 }

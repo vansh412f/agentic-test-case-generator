@@ -1,84 +1,57 @@
 import type { Request, Response } from 'express';
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
-import { hasOwnKeys } from '../llm/requestKeys.ts';
+import { config } from '../config.ts';
+import { checkProviderKey } from '../llm/keyCheck.ts';
 
-function computeRetryAfterSeconds(res: Response, windowMs: number): number {
-  const header = res.getHeader('Retry-After');
-  if (typeof header === 'number') return header;
-  if (typeof header === 'string') {
-    const parsed = Number.parseInt(header, 10);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return Math.ceil(windowMs / 1000);
-}
-
-function createRateLimitHandler(windowMs: number) {
-  return (_req: Request, res: Response): void => {
-    const retryAfterSeconds = computeRetryAfterSeconds(res, windowMs);
-    res.status(429).json({
-      error: 'RATE_LIMITED',
-      message: 'Too many requests. Please slow down.',
-      details: { retryAfterSeconds },
-    });
-  };
-}
-
-const ONE_HOUR_MS = 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-export const generateIpLimiter = rateLimit({
-  windowMs: ONE_HOUR_MS,
-  limit: 3,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  keyGenerator: (req) => ipKeyGenerator(req.ip ?? ''),
-  handler: createRateLimitHandler(ONE_HOUR_MS),
-  skip: (req) => hasOwnKeys(req),
-});
-
-export const generateByokIpLimiter = rateLimit({
-  windowMs: ONE_HOUR_MS,
-  limit: 20,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  keyGenerator: (req) => ipKeyGenerator(req.ip ?? ''),
-  handler: createRateLimitHandler(ONE_HOUR_MS),
-  skip: (req) => !hasOwnKeys(req),
-});
+function rateLimitHandler(req: Request, res: Response): void {
+  const resetTime = (req as Request & { rateLimit?: { resetTime?: Date } }).rateLimit?.resetTime;
+  const resetsAt = resetTime ? resetTime.toISOString() : new Date(Date.now() + ONE_DAY_MS).toISOString();
+  res.status(429).json({
+    error: 'RATE_LIMITED',
+    message: 'Daily limit reached.',
+    details: { resetsAt },
+  });
+}
 
 export const crawlIpLimiter = rateLimit({
-  windowMs: ONE_HOUR_MS,
-  limit: 10,
+  windowMs: ONE_DAY_MS,
+  limit: config.CRAWL_DAILY_LIMIT_PER_IP,
+  skipFailedRequests: true,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(req.ip ?? ''),
-  handler: createRateLimitHandler(ONE_HOUR_MS),
+  handler: rateLimitHandler,
+  skip: async (req) => {
+    const groqKey = req.header('x-groq-api-key')?.trim();
+    if (groqKey) {
+      const status = await checkProviderKey('groq', groqKey);
+      if (status === 'valid') return true;
+    }
+    const geminiKey = req.header('x-gemini-api-key')?.trim();
+    if (geminiKey) {
+      const status = await checkProviderKey('gemini', geminiKey);
+      if (status === 'valid') return true;
+    }
+    return false;
+  },
 });
 
 export const powChallengeLimiter = rateLimit({
-  windowMs: ONE_HOUR_MS,
-  limit: 30,
+  windowMs: ONE_DAY_MS,
+  limit: config.POW_DAILY_LIMIT_PER_IP,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(req.ip ?? ''),
-  handler: createRateLimitHandler(ONE_HOUR_MS),
+  handler: rateLimitHandler,
 });
 
 export const byokValidateLimiter = rateLimit({
-  windowMs: ONE_HOUR_MS,
-  limit: 10,
+  windowMs: ONE_DAY_MS,
+  limit: config.BYOK_VALIDATE_DAILY_LIMIT_PER_IP,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(req.ip ?? ''),
-  handler: createRateLimitHandler(ONE_HOUR_MS),
-});
-
-export const visitorDailyLimiter = rateLimit({
-  windowMs: ONE_DAY_MS,
-  limit: 5,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  keyGenerator: (req) => req.visitorId,
-  handler: createRateLimitHandler(ONE_DAY_MS),
-  skip: (req) => hasOwnKeys(req),
+  handler: rateLimitHandler,
 });

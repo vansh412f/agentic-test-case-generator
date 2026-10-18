@@ -321,3 +321,22 @@ export function getJob(jobId: string): Promise<JobDetail> {
 export function getJobs(page: number, limit: number): Promise<JobsListResponse> {
   return fetcher<JobsListResponse>(`/api/jobs?page=${page}&limit=${limit}`);
 }
+
+export interface BudgetScope {
+  scope: 'global' | 'visitor' | 'ip';
+  limit: number;
+  used: number;
+}
+
+export interface BudgetResponse {
+  byok: boolean;
+  maxUrlsPerRun: number;
+  remaining: number | null;
+  resetsAt: string;
+  scopes: BudgetScope[];
+}
+
+export function getBudget(): Promise<BudgetResponse> {
+  return fetcher<BudgetResponse>('/api/budget');
+}
+

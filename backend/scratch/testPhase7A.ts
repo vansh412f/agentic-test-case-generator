@@ -11,11 +11,11 @@ const { mintVisitorToken, parseVisitorToken } = await import('../src/security/vi
 const {
   startOfUtcDay,
   nextUtcMidnight,
-  tryReserve,
-  releaseReservation,
-  setJobCountProviderForTest,
-  getReservedCount,
-} = await import('../src/security/dailyQuota.ts');
+  tryReserveRun,
+  setBudgetCountProviderForTest,
+  getReservedCounts,
+  resetReservationsForTest,
+} = await import('../src/security/dailyBudget.ts');
 const { ConcurrencyGate } = await import('../src/security/concurrencyGate.ts');
 const { powService } = await import('../src/security/pow.ts');
 const { buildCorrectorUserPrompt } = await import('../src/agent/prompts/correctorPrompt.ts');
@@ -33,51 +33,58 @@ assert.equal(parseVisitorToken(undefined), null, 'undefined token returns null')
 assert.equal(parseVisitorToken(''), null, 'empty token returns null');
 console.log('[PASS] visitor: token minting, verification, and tamper rejection');
 
-// --- 2. Daily quota & reservations ---------------------------------------
+// --- 2. Daily budget & reservations ---------------------------------------
 const midDay = new Date('2026-06-15T14:30:00.000Z');
 const startDay = startOfUtcDay(midDay);
 assert.equal(startDay.toISOString(), '2026-06-15T00:00:00.000Z', 'startOfUtcDay normalizes to UTC midnight');
 const nextDay = nextUtcMidnight(midDay);
 assert.equal(nextDay.toISOString(), '2026-06-16T00:00:00.000Z', 'nextUtcMidnight is next UTC midnight');
 
-// Reservation math: reserve up to limit, next fails, release re-admits
-let mockCount = 17;
-setJobCountProviderForTest(async () => mockCount);
-const limit = 20;
+// Reservation math: reserve up to limit (visitor 8), next fails, release re-admits
+let mockCounts = { global: 10, visitor: 6, ip: 6 };
+setBudgetCountProviderForTest(async () => mockCounts);
 
-const res1 = await tryReserve(2, limit);
-assert.equal(res1, true, 'reserving within limit succeeds');
-assert.equal(getReservedCount(), 2, 'reservation counter increments');
+const res1 = await tryReserveRun({ visitorId: 'vis-1', ipHash: 'ip-1', n: 2 });
+assert.equal(res1.ok, true, 'reserving within limit succeeds');
+assert.equal(getReservedCounts().visitor.get('vis-1'), 2, 'reservation counter increments');
 
-const res2 = await tryReserve(2, limit);
-assert.equal(res2, false, 'reserving beyond limit fails');
-assert.equal(getReservedCount(), 2, 'failed reservation leaves counter unchanged');
+const res2 = await tryReserveRun({ visitorId: 'vis-1', ipHash: 'ip-1', n: 1 });
+assert.equal(res2.ok, false, 'reserving beyond limit fails');
+assert.equal(res2.scope, 'visitor');
+assert.equal(getReservedCounts().visitor.get('vis-1'), 2, 'failed reservation leaves counter unchanged');
 
-releaseReservation(2);
-assert.equal(getReservedCount(), 0, 'releasing decrements reservation counter');
+if (res1.ok) res1.release();
+// wait microtask for promise chain in mutex
+await new Promise((r) => setTimeout(r, 10));
+assert.equal(getReservedCounts().visitor.get('vis-1') ?? 0, 0, 'releasing decrements reservation counter');
 
-const res3 = await tryReserve(2, limit);
-assert.equal(res3, true, 're-reserving after release succeeds');
-releaseReservation(2);
+const res3 = await tryReserveRun({ visitorId: 'vis-1', ipHash: 'ip-1', n: 2 });
+assert.equal(res3.ok, true, 're-reserving after release succeeds');
+if (res3.ok) res3.release();
+await new Promise((r) => setTimeout(r, 10));
 
-// Concurrent reservation race check (Issue 5 verification):
-// With limit = mockCount + 3, fire 3 concurrent batches of 2 (6 requested)
-// Total admitted across all responses must never exceed 3 reserved runs.
-mockCount = 10;
-const raceLimit = 13;
+// Concurrent reservation race check:
+// With visitor count = 6 (limit 8), fire 3 concurrent batches of 2 (6 requested)
+// Total admitted across all responses must never exceed 1 batch of 2 runs.
+mockCounts = { global: 10, visitor: 6, ip: 6 };
+resetReservationsForTest();
 const results = await Promise.all([
-  tryReserve(2, raceLimit),
-  tryReserve(2, raceLimit),
-  tryReserve(2, raceLimit),
+  tryReserveRun({ visitorId: 'vis-race', ipHash: 'ip-race', n: 2 }),
+  tryReserveRun({ visitorId: 'vis-race', ipHash: 'ip-race', n: 2 }),
+  tryReserveRun({ visitorId: 'vis-race', ipHash: 'ip-race', n: 2 }),
 ]);
-const admittedCount = results.filter(Boolean).length;
+const admittedCount = results.filter((r) => r.ok).length;
 assert.equal(admittedCount, 1, 'concurrent requests cannot exceed quota (only 1 batch of 2 admitted)');
-assert.equal(getReservedCount(), 2, 'reserved count matches admitted runs');
-releaseReservation(2);
-assert.equal(getReservedCount(), 0, 'reserved count returns to 0 after release');
+assert.equal(getReservedCounts().visitor.get('vis-race'), 2, 'reserved count matches admitted runs');
+for (const r of results) {
+  if (r.ok) r.release();
+}
+await new Promise((r) => setTimeout(r, 10));
+assert.equal(getReservedCounts().visitor.get('vis-race') ?? 0, 0, 'reserved count returns to 0 after release');
 
-setJobCountProviderForTest(null);
-console.log('[PASS] dailyQuota: UTC day boundaries, reservation math, and concurrent TOCTOU protection');
+setBudgetCountProviderForTest(null);
+resetReservationsForTest();
+console.log('[PASS] dailyBudget: UTC day boundaries, reservation math, and concurrent TOCTOU protection');
 
 // --- 3. Concurrency Gate --------------------------------------------------
 const gate = new ConcurrencyGate(2);

@@ -1,8 +1,17 @@
 import { toast } from 'sonner';
 import { ApiError, errorDetail } from './api';
 
+function formatLocalResetTime(iso?: string): string {
+  if (!iso) return 'midnight UTC';
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return iso;
+  }
+}
+
 export interface HandleGenerationErrorOptions {
-  onQuota?: (details: { limit: number; resetsAt?: string }) => void;
+  onQuota?: (details: { limit: number; resetsAt?: string; scope?: string }) => void;
 }
 
 export function handleGenerationError(
@@ -12,24 +21,35 @@ export function handleGenerationError(
   if (error instanceof ApiError) {
     switch (error.code) {
       case 'RATE_LIMITED': {
-        const retryAfter = errorDetail(error, 'retryAfterSeconds');
-        const wait =
-          retryAfter !== undefined
-            ? ` Please retry in ${retryAfter}s.`
-            : ' Please slow down.';
-        const msg = `Rate limit reached.${wait}`;
+        const resetsAt = errorDetail(error, 'resetsAt');
+        const localTime = formatLocalResetTime(typeof resetsAt === 'string' ? resetsAt : undefined);
+        const msg = `Daily limit reached. Resets at ${localTime}.`;
         toast.error(msg);
         return msg;
       }
 
       case 'DAILY_QUOTA_EXHAUSTED': {
+        const scope = errorDetail(error, 'scope') as string | undefined;
         const limit = errorDetail(error, 'limit');
         const resetsAt = errorDetail(error, 'resetsAt');
+        const limitNum = typeof limit === 'number' ? limit : 8;
+        const isoReset = typeof resetsAt === 'string' ? resetsAt : undefined;
+        const localTime = formatLocalResetTime(isoReset);
+
         options?.onQuota?.({
-          limit: typeof limit === 'number' ? limit : 20,
-          resetsAt: typeof resetsAt === 'string' ? resetsAt : undefined,
+          limit: limitNum,
+          resetsAt: isoReset,
+          scope,
         });
-        const msg = 'The free daily demo quota is exhausted. Add your own API key to continue.';
+
+        let prefix = "Today's free demo capacity is used up.";
+        if (scope === 'visitor') {
+          prefix = `You've used all ${limitNum} free runs for today.`;
+        } else if (scope === 'ip') {
+          prefix = `This network has used all ${limitNum} free runs for today.`;
+        }
+
+        const msg = `${prefix} Resets at ${localTime}. Add your own free Groq key for unlimited runs.`;
         toast.error(msg);
         return msg;
       }

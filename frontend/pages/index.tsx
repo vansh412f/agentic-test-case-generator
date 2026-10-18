@@ -31,6 +31,7 @@ import {
   hasConfiguredKeys,
   getApiMode,
   type TestDataParam,
+  type BudgetResponse,
 } from '@/lib/api';
 import type { AppMap, JobsListResponse } from '@/types/api';
 
@@ -205,7 +206,12 @@ export default function HomePage() {
   const [altchaPayload, setAltchaPayload] = useState<string | null>(null);
   const [powEpoch, setPowEpoch] = useState(0);
   const [localTargetUrl, setLocalTargetUrl] = useState<string | null>(null);
-  const [quotaDetails, setQuotaDetails] = useState<{ limit?: number; resetsAt?: string } | null>(null);
+  const [quotaDetails, setQuotaDetails] = useState<{ limit?: number; resetsAt?: string; scope?: string } | null>(null);
+
+  const { data: budget, mutate: mutateBudget } = useSWR<BudgetResponse, Error>(
+    '/api/budget',
+    fetcher,
+  );
 
   useEffect(() => {
     setHasCustomKeys(hasConfiguredKeys());
@@ -324,10 +330,12 @@ export default function HomePage() {
         testData: testDataEntries.length > 0 ? testDataEntries : undefined,
       });
       dispatch({ type: 'JOBS_ACCEPTED', jobIds });
+      void mutateBudget();
       if (jobIds.length > 1) {
         toast.success(`${jobIds.length} jobs queued. They run one after another.`);
       }
     } catch (error) {
+      void mutateBudget();
       const msg = handleGenerationError(error, {
         onQuota: (details) => setQuotaDetails(details),
       });
@@ -408,6 +416,7 @@ export default function HomePage() {
           limit={quotaDetails.limit}
           onDismiss={() => setQuotaDetails(null)}
           resetsAt={quotaDetails.resetsAt}
+          scope={quotaDetails.scope}
         />
       ) : null}
 
@@ -435,6 +444,7 @@ export default function HomePage() {
       {state.appMap && state.phase !== 'submitting' && !groupRunning ? (
         <CrawlPreview
           appMap={state.appMap}
+          budget={budget}
           deepCrawl={state.deepCrawl}
           disabled={!hasCustomKeys && !altchaPayload}
           generating={false}
