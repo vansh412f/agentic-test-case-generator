@@ -11,6 +11,7 @@ import {
 import { RunnerError } from './errors.ts';
 import { playwrightRunnerEnv } from './childEnv.ts';
 import { JobCancelledError } from '../agent/cancellation.ts';
+import { ensureEgressProxy } from '../security/egressProxy.ts';
 
 export type FailureClass = 'finding' | 'locator' | 'timeout' | 'other';
 
@@ -163,6 +164,8 @@ export async function executeTests(
     if (!fsSync.existsSync(PLAYWRIGHT_CLI)) {
       throw new RunnerError('BROWSER_ERROR', `Playwright CLI not found at ${PLAYWRIGHT_CLI}`);
     }
+
+    await ensureEgressProxy();
 
     // 1. Write files to disk (replacing secret tokens with escaped real values)
     await fs.mkdir(runDir, { recursive: true });

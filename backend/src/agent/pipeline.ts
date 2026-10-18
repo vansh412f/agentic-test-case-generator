@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { rm } from 'node:fs/promises';
 import { crawlPage, crawlSite } from '../crawler/pageCrawler.ts';
+import { assertPublicTarget } from '../security/netPolicy.ts';
 import { takeFreshCrawl } from '../crawler/crawlCache.ts';
 import {
   DEEP_CRAWL_MAX_PAGES,
@@ -152,6 +153,7 @@ async function runPersistedPipeline(
 
   try {
     signal?.throwIfAborted();
+    await assertPublicTarget(url);
     await safeWrite('markJobStarted', () => markJobStarted(jobId));
     announcePhase(jobId, 'crawling');
     const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, deepCrawl, signal), () => ({ success: true }));

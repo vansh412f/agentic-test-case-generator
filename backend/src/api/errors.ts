@@ -30,6 +30,7 @@ const CRAWL_ERROR_STATUS: Record<CrawlErrorCode, number> = {
   BROWSER_LAUNCH_FAILED: 503,
   TARGET_WAKING: 503,
   TUNNEL_HOST_BLOCKED: 422,
+  TARGET_NOT_ALLOWED: 400,
 };
 
 const LLM_ERROR_STATUS: Record<LlmErrorCode, number> = {

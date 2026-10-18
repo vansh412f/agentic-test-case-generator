@@ -3,6 +3,7 @@ import ts from 'typescript';
 const ALLOWED_MODULES = new Set(['@playwright/test', '@axe-core/playwright']);
 const FORBIDDEN_IDENTIFIERS = new Set([
   'process', 'require', 'eval', 'Function', 'globalThis', 'module', '__dirname', '__filename',
+  'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource',
 ]);
 
 export function findUnsafeConstructs(code: string, filename = 'test.spec.ts'): string[] {

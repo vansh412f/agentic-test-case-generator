@@ -5,6 +5,7 @@ import { CrawlRequestSchema, GenerateRequestSchema } from './schemas.ts';
 import { crawlPage } from '../crawler/pageCrawler.ts';
 import type { QueuedJob } from '../agent/jobRunner.ts';
 import { toHttpError } from './errors.ts';
+import { assertPublicTarget } from '../security/netPolicy.ts';
 import { visitorMiddleware } from './visitorMiddleware.ts';
 import { webhookUrlProblem, createWebhookTarget } from '../notify/webhook.ts';
 import {
@@ -129,6 +130,17 @@ router.post('/crawl', crawlIpLimiter, async (req, res) => {
     return;
   }
 
+  try {
+    await assertPublicTarget(parsed.data.url);
+  } catch (err) {
+    const httpErr = toHttpError(err);
+    if (httpErr) {
+      res.status(httpErr.status).json(httpErr.body);
+      return;
+    }
+    throw err;
+  }
+
   let release: (() => void) | undefined;
   try {
     release = await crawlSemaphore.acquire();
@@ -227,6 +239,18 @@ router.post('/generate', async (req, res) => {
 
   // 2. A run group of N unique URLs consumes N runs of daily quota
   const urls = 'urls' in parsed.data ? [...new Set(parsed.data.urls)] : [parsed.data.url];
+  for (const targetUrl of urls) {
+    try {
+      await assertPublicTarget(targetUrl);
+    } catch (err) {
+      const httpErr = toHttpError(err);
+      if (httpErr) {
+        res.status(httpErr.status).json(httpErr.body);
+        return;
+      }
+      throw err;
+    }
+  }
   const deepCrawl = 'url' in parsed.data && parsed.data.deepCrawl === true;
   const requested = urls.length;
 

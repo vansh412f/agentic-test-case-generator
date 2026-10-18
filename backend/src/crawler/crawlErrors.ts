@@ -6,6 +6,7 @@ export const CRAWL_ERROR_CODES = [
   'BROWSER_LAUNCH_FAILED',
   'TARGET_WAKING',
   'TUNNEL_HOST_BLOCKED',
+  'TARGET_NOT_ALLOWED',
 ] as const;
 
 export type CrawlErrorCode = (typeof CRAWL_ERROR_CODES)[number];

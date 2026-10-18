@@ -25,5 +25,6 @@ export function playwrightRunnerEnv(resultsPath: string): NodeJS.ProcessEnv {
   return childProcessEnv({
     PLAYWRIGHT_JSON_OUTPUT_FILE: resultsPath,
     HEADLESS: config.HEADLESS ? 'true' : 'false', // explicit, from validated config
+    ...(process.env.AGT_EGRESS_PROXY ? { AGT_EGRESS_PROXY: process.env.AGT_EGRESS_PROXY } : {}),
   });
 }

@@ -311,9 +311,166 @@ async function testClassifyExecutionErrorTable() {
   console.log('\n✓ Test 6 passed\n');
 }
 
+async function testEgressGuardAndSsrf() {
+  console.log('--- Test 7: Egress guard, SSRF protection, and codeSafety (WP4) ---');
+  const http = await import('node:http');
+  const { assertPublicTarget } = await import('../src/security/netPolicy.ts');
+  const { ensureEgressProxy, getBlockedCount, resetBlockedCount, stopEgressProxy } = await import('../src/security/egressProxy.ts');
+  const { findUnsafeConstructs } = await import('../src/runner/codeSafety.ts');
+  const { executeTests } = await import('../src/runner/executor.ts');
+  const { crawlPage } = await import('../src/crawler/pageCrawler.ts');
+  const { config } = await import('../src/config.ts');
+  const { chromium } = await import('playwright');
+
+  // A. Public-looking hostname resolving to 127.0.0.1 -> TARGET_NOT_ALLOWED
+  let targetErr: any;
+  try {
+    await assertPublicTarget('http://attacker-controlled.com/path', async () => [
+      { address: '127.0.0.1', family: 4 },
+    ]);
+  } catch (err) {
+    targetErr = err;
+  }
+  assert(targetErr, 'assertPublicTarget must reject hostname resolving to 127.0.0.1');
+  assert.equal(targetErr.code, 'TARGET_NOT_ALLOWED');
+  console.log('✓ Hostname resolving to 127.0.0.1 threw TARGET_NOT_ALLOWED');
+
+  // Direct IP literal 169.254.169.254 -> TARGET_NOT_ALLOWED
+  let metaErr: any;
+  try {
+    await assertPublicTarget('http://169.254.169.254/latest/meta-data');
+  } catch (err) {
+    metaErr = err;
+  }
+  assert(metaErr, 'assertPublicTarget must reject metadata IP');
+  assert.equal(metaErr.code, 'TARGET_NOT_ALLOWED');
+  console.log('✓ Metadata IP 169.254.169.254 threw TARGET_NOT_ALLOWED');
+
+  // B. Crawl of a page whose <img> / fetch hits http://127.0.0.1:<port> -> 0 requests received
+  resetBlockedCount();
+  let victimHits = 0;
+  const victimServer = http.createServer((_req, res) => {
+    victimHits++;
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('secret_internal_data');
+  });
+
+  const victimPort = await new Promise<number>((resolve) => {
+    victimServer.listen(0, '127.0.0.1', () => {
+      resolve((victimServer.address() as any).port);
+    });
+  });
+
+  const proxyUrl = await ensureEgressProxy();
+  assert(proxyUrl, 'Egress proxy must start');
+
+  const browser = await chromium.launch({
+    headless: true,
+    proxy: { server: proxyUrl },
+    args: [
+      '--proxy-bypass-list=<-loopback>',
+      '--disable-quic',
+      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+    ],
+  });
+
+  const page = await browser.newPage();
+  await page.setContent(`
+    <!DOCTYPE html>
+    <html>
+      <body>
+        <h1>Testing SSRF Protection</h1>
+        <img src="http://127.0.0.1:${victimPort}/evil.png" />
+        <script>
+          fetch("http://127.0.0.1:${victimPort}/leak").catch(() => {});
+        </script>
+      </body>
+    </html>
+  `);
+
+  // Allow network requests to trigger and get blocked by proxy
+  await new Promise((r) => setTimeout(r, 1200));
+  await browser.close();
+  await new Promise<void>((r) => victimServer.close(() => r()));
+
+  assert.equal(victimHits, 0, 'Internal server at 127.0.0.1 must receive ZERO requests from Chromium');
+  assert(getBlockedCount() >= 1, `Egress proxy must have blocked requests (blocked: ${getBlockedCount()})`);
+  console.log(`✓ Chromium page subresources to 127.0.0.1 were blocked by egress proxy (victim hits: 0, blocked: ${getBlockedCount()})`);
+
+  // C. Page on 127.0.0.1 with LOCAL_AGENT_MODE=true works
+  const originalLocalAgentMode = config.LOCAL_AGENT_MODE;
+  (config as any).LOCAL_AGENT_MODE = true;
+
+  const localTargetServer = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<!DOCTYPE html><html><body><h1>Local Agent Target</h1><button id="ok">Submit</button></body></html>');
+  });
+
+  const localPort = await new Promise<number>((resolve) => {
+    localTargetServer.listen(0, '127.0.0.1', () => {
+      resolve((localTargetServer.address() as any).port);
+    });
+  });
+
+  const localUrl = `http://127.0.0.1:${localPort}`;
+  await assertPublicTarget(localUrl); // should not throw
+
+  const localAppMap = await crawlPage(localUrl);
+  assert(localAppMap.elements.length > 0, 'crawlPage must extract elements when LOCAL_AGENT_MODE=true');
+  console.log(`✓ Crawling 127.0.0.1 with LOCAL_AGENT_MODE=true succeeded (extracted ${localAppMap.elements.length} elements)`);
+
+  await new Promise<void>((r) => localTargetServer.close(() => r()));
+  (config as any).LOCAL_AGENT_MODE = originalLocalAgentMode;
+
+  // D. Runner spec doing page.request.get('http://127.0.0.1:<port>') -> fails and server gets zero hits
+  let runnerVictimHits = 0;
+  const runnerVictimServer = http.createServer((_req, res) => {
+    runnerVictimHits++;
+    res.writeHead(200);
+    res.end('leak');
+  });
+
+  const runnerVictimPort = await new Promise<number>((resolve) => {
+    runnerVictimServer.listen(0, '127.0.0.1', () => {
+      resolve((runnerVictimServer.address() as any).port);
+    });
+  });
+
+  const specCode = `
+import { test, expect } from '@playwright/test';
+
+test('ssrf attempt via request fixture', async ({ request }) => {
+  const resp = await request.get('http://127.0.0.1:${runnerVictimPort}/secret');
+  expect(resp.status()).toBe(200);
+});
+`;
+
+  const execRes = await executeTests('run-test-ssrf', [
+    { filename: 'tc-ssrf.spec.ts', code: specCode },
+  ]);
+
+  await new Promise<void>((r) => runnerVictimServer.close(() => r()));
+
+  assert.equal(execRes.results[0].passed, false, 'Runner spec targeting 127.0.0.1 must fail');
+  assert.equal(runnerVictimHits, 0, 'Internal server must receive ZERO hits from page.request');
+  console.log('✓ Runner spec targeting 127.0.0.1 failed and victim server received 0 hits');
+
+  // E. codeSafety rejects bare fetch(
+  const fetchProblems = findUnsafeConstructs('const res = await fetch("http://example.com");');
+  assert(fetchProblems.some((p) => p.includes('fetch')), 'codeSafety must reject bare fetch(');
+
+  const wsProblems = findUnsafeConstructs('const ws = new WebSocket("ws://example.com");');
+  assert(wsProblems.some((p) => p.includes('WebSocket')), 'codeSafety must reject WebSocket');
+
+  console.log('✓ codeSafety rejects fetch and WebSocket');
+
+  await stopEgressProxy();
+  console.log('\n✓ Test 7 passed\n');
+}
+
 async function main() {
   console.log('====================================================');
-  console.log('    Phase 11.1C Regression Tests - WP1, WP2, WP3    ');
+  console.log(' Phase 11.1C Regression Tests - WP1, WP2, WP3, WP4 ');
   console.log('====================================================\n');
   await testTscFailCorrectedNextRoundExec();
   await testAttemptNumbersStrictlyIncreasingNoDuplicates();
@@ -321,7 +478,8 @@ async function main() {
   await testCanCorrectFalseTokenBudget();
   await testSafeWritePersistenceResilience();
   await testClassifyExecutionErrorTable();
-  console.log('All WP1, WP2, and WP3 tests passed successfully!');
+  await testEgressGuardAndSsrf();
+  console.log('All WP1, WP2, WP3, and WP4 tests passed successfully!');
 }
 
 main().catch((err) => {

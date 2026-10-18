@@ -7,6 +7,9 @@ import { buildAppMap } from './appMapBuilder.ts';
 import { mergeAppMaps, pickDeepCrawlLinks, type CrawledPage } from './mergeAppMaps.ts';
 import type { AppMap } from './types.ts';
 
+import { assertPublicTarget } from '../security/netPolicy.ts';
+import { ensureEgressProxy } from '../security/egressProxy.ts';
+
 function assertCrawlableUrl(url: string): void {
   let parsed: URL;
   try { parsed = new URL(url); } catch { throw new CrawlError('INVALID_URL', `Cannot parse URL: "${url}"`); }
@@ -17,7 +20,18 @@ function assertCrawlableUrl(url: string): void {
 
 async function launchBrowser(): Promise<Browser> {
   try {
-    return await chromium.launch({ headless: config.HEADLESS });
+    const proxyUrl = await ensureEgressProxy();
+    const proxy = proxyUrl ? { server: proxyUrl } : undefined;
+    const args = proxyUrl ? [
+      '--proxy-bypass-list=<-loopback>',
+      '--disable-quic',
+      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+    ] : undefined;
+    return await chromium.launch({
+      headless: config.HEADLESS,
+      proxy,
+      args,
+    });
   } catch (err) {
     // Launch errors embed executable paths / missing libs: log, never return.
     console.error(`[Crawler] Browser launch failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -100,6 +114,7 @@ export async function crawlPage(
   options?: { signal?: AbortSignal },
 ): Promise<AppMap> {
   assertCrawlableUrl(url);
+  await assertPublicTarget(url);
   options?.signal?.throwIfAborted();
   const browser = await launchBrowser();
   const onAbort = () => {
@@ -125,6 +140,7 @@ export interface DeepCrawlOptions {
 // Start page is mandatory; extra pages that fail are skipped. One browser, sequential contexts.
 export async function crawlSite(url: string, options: DeepCrawlOptions): Promise<AppMap> {
   assertCrawlableUrl(url);
+  await assertPublicTarget(url);
   options?.signal?.throwIfAborted();
   const browser = await launchBrowser();
   const onAbort = () => {
@@ -138,6 +154,7 @@ export async function crawlSite(url: string, options: DeepCrawlOptions): Promise
     for (const link of pickDeepCrawlLinks(start, options.maxPages - 1)) {
       options?.signal?.throwIfAborted();
       try {
+        await assertPublicTarget(link);
         extras.push({ requestedUrl: link, map: await crawlInBrowser(browser, link, options.extraPageElementCap) });
       } catch (err) {
         if (options?.signal?.aborted) throw err;
