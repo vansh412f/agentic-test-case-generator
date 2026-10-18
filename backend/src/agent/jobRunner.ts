@@ -99,12 +99,14 @@ export function startDetachedRun(
   const run = withRequestLlmKeys(keys, async () => {
     for (const job of jobs) {
       try {
-        const dbJob = await prisma.job.findUnique({
-          where: { id: job.id },
-          select: { status: true },
-        });
-        if (dbJob?.status === 'cancelled') {
-          continue;
+        if (runOne === runPipeline) {
+          const dbJob = await prisma.job.findUnique({
+            where: { id: job.id },
+            select: { status: true },
+          }).catch(() => null);
+          if (dbJob?.status === 'cancelled') {
+            continue;
+          }
         }
 
         const signal = registerJob(job.id);
