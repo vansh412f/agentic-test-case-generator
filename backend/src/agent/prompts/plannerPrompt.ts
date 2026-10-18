@@ -1,6 +1,5 @@
 import { z } from 'zod';
-
-export const MAX_TEST_CASES = 8;
+import { MAX_AI_TEST_CASES } from '../run.config.ts';
 
 export const PlanStepActionSchema = z.enum([
   'click', 'dblclick', 'fill', 'navigate',
@@ -259,7 +258,7 @@ Field legend: role=ariaRole, label=ariaLabel, disabled=!isEnabled, hidden=!isVis
 
 Analyze the App Map and produce a comprehensive Test Plan consisting of \
 high-value test cases that cover the most critical user journeys.
-Return 5–8 test cases, highest value first, written the way a production QA suite would be. Cover what the App Map supports:
+Return 5–${MAX_AI_TEST_CASES} test cases, highest value first, written the way a production QA suite would be. Cover what the App Map supports:
 (1) the primary happy path end to end; (2) validation / negative paths (empty or invalid input; assert the app did NOT advance:
 URL unchanged, field still visible, or value kept); (3) state changes verified with state assertions (assert_value, assert_checked,
 assert_count, assert_hidden), not just visibility; (4) persistence: reload, then re-assert the state; (5) every distinct form;

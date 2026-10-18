@@ -109,20 +109,39 @@ export async function listJobs(page: number, limit: number, visitorId?: string |
         take: limit,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         select: {
-          id: true, targetUrl: true, status: true, createdAt: true, completedAt: true,
+          id: true, targetUrl: true, status: true, createdAt: true, completedAt: true, startedAt: true,
           _count: { select: { generatedTests: true } },
         },
       }),
       prisma.job.count({ where }),
     ]);
-    const counts = rows.length === 0 ? [] : await prisma.generatedTest.groupBy({
-      by: ['jobId', 'finalStatus'],
-      where: { jobId: { in: rows.map((job) => job.id) } },
-      _count: { _all: true },
-    });
+    const [counts, healedCounts] = rows.length === 0 ? [[], []] : await Promise.all([
+      prisma.generatedTest.groupBy({
+        by: ['jobId', 'finalStatus'],
+        where: { jobId: { in: rows.map((job) => job.id) } },
+        _count: { _all: true },
+      }),
+      prisma.generatedTest.groupBy({
+        by: ['jobId'],
+        where: {
+          jobId: { in: rows.map((job) => job.id) },
+          finalStatus: 'passed',
+          totalAttempts: { gt: 1 },
+        },
+        _count: { _all: true },
+      }),
+    ]);
     const jobs = rows.map(({ _count, ...job }) => {
       const count = (status: string) => counts.find((c) => c.jobId === job.id && c.finalStatus === status)?._count._all ?? 0;
-      return { ...job, testCount: _count.generatedTests, passedCount: count('passed'), failedCount: count('failed'), gaveUpCount: count('gave_up') };
+      const healedCount = healedCounts.find((h) => h.jobId === job.id)?._count._all ?? 0;
+      return {
+        ...job,
+        testCount: _count.generatedTests,
+        passedCount: count('passed'),
+        failedCount: count('failed'),
+        gaveUpCount: count('gave_up'),
+        healedCount,
+      };
     });
     return { jobs, total, page, totalPages: Math.ceil(total / limit) };
   } catch (cause) {

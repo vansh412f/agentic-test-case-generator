@@ -240,11 +240,13 @@ export interface JobSummary {
   status: JobStatus;
   runGroupId?: string | null;
   createdAt: string;
+  startedAt?: string | null;
   completedAt: string | null;
   testCount: number;
   passedCount: number;
   failedCount: number;
   gaveUpCount: number;
+  healedCount?: number;
 }
 
 export interface JobsListResponse {

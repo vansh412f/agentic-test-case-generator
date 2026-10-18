@@ -192,6 +192,8 @@ router.get('/:id/export.zip', async (req, res) => {
     const job = await getJobById(parsed.data.id);
     if (!job) throw new JobError('JOB_NOT_FOUND', 'Job not found.');
     if (job.generatedTests.length === 0) throw new JobError('EXPORT_NOT_READY', 'No generated tests are available.');
+    const exportable = job.generatedTests.filter((test) => test.finalStatus !== 'gave_up');
+    if (exportable.length === 0) throw new JobError('NO_EXPORTABLE_TESTS', 'No exportable tests are available for this job.');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.type('application/zip');

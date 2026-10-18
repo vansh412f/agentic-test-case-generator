@@ -89,7 +89,13 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-async function crawlForJob(jobId: string, url: string, deepCrawl: boolean, signal?: AbortSignal): Promise<AppMap> {
+async function crawlForJob(
+  jobId: string,
+  url: string,
+  deepCrawl: boolean,
+  signal?: AbortSignal,
+  fresh?: boolean,
+): Promise<AppMap> {
   let attempt = 0;
   while (true) {
     try {
@@ -101,7 +107,8 @@ async function crawlForJob(jobId: string, url: string, deepCrawl: boolean, signa
           signal,
         });
       }
-      const cached = takeFreshCrawl(url);
+      const maxAgeMs = fresh ? 60_000 : 10 * 60_000;
+      const cached = takeFreshCrawl(url, maxAgeMs);
       if (cached) {
         console.log(`[Pipeline] Crawl cache hit for ${url}`);
         return cached;
@@ -156,7 +163,7 @@ async function runPersistedPipeline(
     await assertPublicTarget(url);
     await safeWrite('markJobStarted', () => markJobStarted(jobId));
     announcePhase(jobId, 'crawling');
-    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, deepCrawl, signal), () => ({ success: true }));
+    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, deepCrawl, signal, fresh), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
 
     signal?.throwIfAborted();

@@ -550,9 +550,77 @@ async function testCancelAndBudgetCorrectness() {
   console.log('\n✓ Test 8 passed\n');
 }
 
+async function testUiAndDataCorrectnessWP6() {
+  console.log('--- Test 9: UI & Data Correctness (B15, B11, B17, B12, B10) ---');
+
+  // 1. B15: Crawl Cache normalization and alias eviction
+  const { rememberCrawl, takeFreshCrawl, clearCrawlCache, normalizeCrawlKey } = await import(
+    '../src/crawler/crawlCache.ts'
+  );
+  clearCrawlCache();
+
+  const reqUrl = 'https://EXAMPLE.com:443/app/';
+  const finalUrl = 'https://example.com/app';
+  assert.equal(normalizeCrawlKey(reqUrl), 'https://example.com/app');
+  assert.equal(normalizeCrawlKey(finalUrl), 'https://example.com/app');
+
+  const dummyAppMap: any = {
+    url: 'https://example.com/app/dashboard',
+    title: 'Dashboard',
+    crawledAt: new Date().toISOString(),
+    viewport: { width: 1280, height: 800 },
+    elements: [],
+    forms: [],
+    discoveredLinks: [],
+    totalElementsFound: 0,
+    isTruncated: false,
+  };
+
+  rememberCrawl('https://example.com/app/login', dummyAppMap);
+  // Alias lookup by requested URL
+  const hit1 = takeFreshCrawl('https://example.com/app/login');
+  assert.ok(hit1, 'Should find crawl by requested URL');
+  // Since takeFreshCrawl deletes both aliases, lookup by final URL should now return null
+  const hit2 = takeFreshCrawl('https://example.com/app/dashboard');
+  assert.equal(hit2, null, 'Taking crawl should remove both aliases');
+  console.log('✓ Crawl cache normalizes keys and takeFreshCrawl cleans up all aliases (B15)');
+
+  // 2. B11: takeFreshCrawl maxAgeMs
+  rememberCrawl('https://example.com/app/fresh-test', dummyAppMap);
+  // With maxAgeMs = -1, age > maxAgeMs is immediately true
+  const expiredHit = takeFreshCrawl('https://example.com/app/fresh-test', -1);
+  assert.equal(expiredHit, null, 'Crawl older than maxAgeMs must return null');
+  console.log('✓ takeFreshCrawl respects maxAgeMs for fresh crawl bypass (B11)');
+
+  // 3. B17: MAX_AI_TEST_CASES
+  const { MAX_AI_TEST_CASES } = await import('../src/agent/run.config.ts');
+  assert.equal(MAX_AI_TEST_CASES, 8, 'MAX_AI_TEST_CASES must equal 8');
+
+  const { capAndRenumberTestPlan } = await import('../src/agent/steps/planner.ts');
+  const dummyPlan: any = {
+    testCases: Array.from({ length: 12 }, (_, i) => ({
+      id: `tc-${i + 1}`,
+      title: `Case ${i + 1}`,
+      description: 'Desc',
+      steps: [],
+    })),
+  };
+  const capped = capAndRenumberTestPlan(dummyPlan);
+  assert.equal(capped.testCases.length, 8, 'capAndRenumberTestPlan must cap to MAX_AI_TEST_CASES (8)');
+  console.log('✓ MAX_AI_TEST_CASES is 8 and capAndRenumberTestPlan slices to 8 (B17)');
+
+  // 4. B12: NO_EXPORTABLE_TESTS error code
+  const { JobError } = await import('../src/api/jobErrors.ts');
+  const expErr = new JobError('NO_EXPORTABLE_TESTS', 'No exportable tests');
+  assert.equal(expErr.code, 'NO_EXPORTABLE_TESTS');
+  console.log('✓ JobError supports NO_EXPORTABLE_TESTS (B12)');
+
+  console.log('\n✓ Test 9 passed\n');
+}
+
 async function main() {
   console.log('====================================================');
-  console.log(' Phase 11.1C Regression Tests - WP1 to WP5          ');
+  console.log(' Phase 11.1C Regression Tests - WP1 to WP6          ');
   console.log('====================================================\n');
   await testTscFailCorrectedNextRoundExec();
   await testAttemptNumbersStrictlyIncreasingNoDuplicates();
@@ -562,7 +630,8 @@ async function main() {
   await testClassifyExecutionErrorTable();
   await testEgressGuardAndSsrf();
   await testCancelAndBudgetCorrectness();
-  console.log('All WP1, WP2, WP3, WP4, and WP5 tests passed successfully!');
+  await testUiAndDataCorrectnessWP6();
+  console.log('All WP1, WP2, WP3, WP4, WP5, and WP6 tests passed successfully!');
 }
 
 main().catch((err) => {

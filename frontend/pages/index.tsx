@@ -213,6 +213,9 @@ export default function HomePage() {
   const [powEpoch, setPowEpoch] = useState(0);
   const [localTargetUrl, setLocalTargetUrl] = useState<string | null>(null);
   const [quotaDetails, setQuotaDetails] = useState<{ limit?: number; resetsAt?: string; scope?: string } | null>(null);
+  const [isFresh, setIsFresh] = useState(false);
+  const [queryUrl, setQueryUrl] = useState<string | undefined>(undefined);
+  const autoCrawlDoneRef = useRef(false);
 
   interface WakingCrawlState {
     url: string;
@@ -299,6 +302,26 @@ export default function HomePage() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  useEffect(() => {
+    if (!router.isReady || autoCrawlDoneRef.current) return;
+    const urlParam = router.query.url;
+    const freshParam = router.query.fresh;
+    const targetUrl = typeof urlParam === 'string' ? urlParam : Array.isArray(urlParam) ? urlParam[0] : null;
+    const freshRequested = freshParam === '1' || freshParam === 'true';
+
+    if (freshRequested) {
+      setIsFresh(true);
+    }
+
+    if (targetUrl) {
+      setQueryUrl(targetUrl);
+      if (!autoCrawlDoneRef.current) {
+        autoCrawlDoneRef.current = true;
+        void handleCrawl(targetUrl);
+      }
+    }
+  }, [router.isReady, router.query]);
 
   const groupRunning = state.phase === 'running' && activeJobId !== null;
   const busy = state.phase === 'crawling' || state.phase === 'submitting' || groupRunning;
@@ -423,6 +446,7 @@ export default function HomePage() {
       const { jobIds } = await startGeneration(urls, payloadToUse, {
         deepCrawl: state.deepCrawl,
         testData: testDataEntries.length > 0 ? testDataEntries : undefined,
+        fresh: isFresh,
       });
       dispatch({ type: 'JOBS_ACCEPTED', jobIds });
       void mutateBudget();
@@ -487,6 +511,7 @@ export default function HomePage() {
                 : 'Pipeline Running…'
             }
             onCrawl={handleCrawl}
+            initialUrl={queryUrl}
           />
         </div>
 

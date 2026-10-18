@@ -1,18 +1,21 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowRight, CircleNotch, Globe } from '@phosphor-icons/react';
 import { useForm } from 'react-hook-form';
+import { useEffect } from 'react';
 import { targetUrlSchema, type TargetUrlForm } from '@/lib/validation';
 
 interface UrlGenerateFormProps {
   busy: boolean;
   busyLabel: string;
   onCrawl: (url: string) => Promise<void>;
+  initialUrl?: string;
 }
 
 export function UrlGenerateForm({
   busy,
   busyLabel,
   onCrawl,
+  initialUrl,
 }: UrlGenerateFormProps) {
   const {
     register,
@@ -22,9 +25,15 @@ export function UrlGenerateForm({
   } = useForm<TargetUrlForm>({
     resolver: zodResolver(targetUrlSchema),
     defaultValues: {
-      url: '',
+      url: initialUrl ?? '',
     },
   });
+
+  useEffect(() => {
+    if (initialUrl) {
+      setValue('url', initialUrl);
+    }
+  }, [initialUrl, setValue]);
 
   const disabled = busy || isSubmitting;
 

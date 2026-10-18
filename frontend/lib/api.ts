@@ -296,12 +296,14 @@ export function startGeneration(
     deepCrawl?: boolean;
     testData?: TestDataParam[];
     focus?: FocusParam[];
+    fresh?: boolean;
   } = {},
 ): Promise<GenerateAcceptedResponse> {
   const base = {
     ...(altcha ? { altcha } : {}),
     ...(options.testData && options.testData.length > 0 ? { testData: options.testData } : {}),
     ...(options.focus && options.focus.length > 0 ? { focus: options.focus } : {}),
+    ...(options.fresh ? { fresh: true } : {}),
   };
 
   const body =

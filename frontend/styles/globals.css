@@ -1057,6 +1057,8 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
 .badge-red .badge-dot { background: #d95a53; }
 .badge-grey { color: #64748b; background: #f1f5f9; }
 .badge-grey .badge-dot { background: #94a3b8; }
+.badge-amber { color: #b45309; background: #fef3c7; }
+.badge-amber .badge-dot { background: #d97706; }
 
 .history-skeleton {
   border: 1px solid #e0e4de;
@@ -1325,6 +1327,7 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
 
 .test-status-icon svg { width: 12px; }
 .test-status-icon.failed { background: #f9e6e3; color: #b3443e; font-weight: 800; }
+.test-status-icon.gave-up { background: #fef3c7; color: #b45309; }
 
 .test-name { flex: 1; display: flex; flex-direction: column; }
 .test-name strong { font-size: 11px; }

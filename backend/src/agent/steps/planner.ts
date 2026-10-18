@@ -9,7 +9,7 @@ import type { ElementRef, TestDataEntry } from '../../api/schemas.ts';
 import { canonicalPageUrl } from '../../crawler/mergeAppMaps.ts';
 import { toPlannerView } from '../plannerView.ts';
 import { buildPlanCacheKey, getCachedPlan, setCachedPlan } from '../planCache.ts';
-import { MAX_TEST_CASES } from '../run.config.ts';
+import { MAX_AI_TEST_CASES } from '../run.config.ts';
 import { resolveTestData, resolveElementRef, type ResolvedTestData } from '../testData.ts';
 
 function formatZodErrors(error: z.ZodError): string {
@@ -203,7 +203,7 @@ function filterNavigationOnlyTests(testCases: TestCase[], appMap: AppMap): TestC
 }
 
 export function capAndRenumberTestPlan(plan: TestPlan): TestPlan {
-  plan.testCases = plan.testCases.slice(0, MAX_TEST_CASES);
+  plan.testCases = plan.testCases.slice(0, MAX_AI_TEST_CASES);
   plan.testCases.forEach((tc, idx) => {
     tc.id = `tc-${idx + 1}`;
   });
@@ -339,7 +339,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
           { role: 'assistant', content: assistantResponseContent },
           {
             role: 'user',
-            content: `The plan has ${plan.testCases.length} test cases. Add up to ${8 - plan.testCases.length} more that cover categories not yet covered. Return the COMPLETE JSON plan.`,
+            content: `The plan has ${plan.testCases.length} test cases. Add up to ${MAX_AI_TEST_CASES - plan.testCases.length} more that cover categories not yet covered. Return the COMPLETE JSON plan.`,
           },
         ];
         const expansionResponse = await callLlm({

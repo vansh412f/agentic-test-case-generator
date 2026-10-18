@@ -65,13 +65,17 @@ export function JobsTable({ jobs }: JobsTableProps) {
             </span>
 
             <span>
-              <b>{job.gaveUpCount > 0 ? job.gaveUpCount : 0}</b>
-              <small>{job.gaveUpCount > 0 ? 'retried' : 'clean'}</small>
+              <b>{job.healedCount ?? 0} / {job.gaveUpCount ?? 0}</b>
+              <small>healed / gave up</small>
             </span>
 
             <span>
-              <b>{formatJobDuration(job.createdAt, job.completedAt)}</b>
-              <small>standard</small>
+              <b>{formatJobDuration(job.startedAt ?? job.createdAt, job.completedAt)}</b>
+              <small>
+                {job.startedAt && new Date(job.startedAt).getTime() - new Date(job.createdAt).getTime() > 2000
+                  ? `queued ${Math.round((new Date(job.startedAt).getTime() - new Date(job.createdAt).getTime()) / 1000)}s`
+                  : 'standard'}
+              </small>
             </span>
 
             <span>

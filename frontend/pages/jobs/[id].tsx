@@ -222,12 +222,24 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
 
   const terminal = isTerminal;
 
-  const durationStr = formatJobDuration(job.createdAt, job.completedAt);
+  const durationStr = formatJobDuration(
+    job.startedAt ?? job.createdAt,
+    job.completedAt,
+  );
+  const queueWaitMs =
+    job.startedAt && job.createdAt
+      ? new Date(job.startedAt).getTime() - new Date(job.createdAt).getTime()
+      : 0;
+  const queuedStr = queueWaitMs > 2000 ? `queued ${Math.round(queueWaitMs / 1000)}s` : null;
+
   const passedCount = job.generatedTests.filter(
     (t) => t.finalStatus === 'passed',
   ).length;
   const failedCount = job.generatedTests.filter(
     (t) => t.finalStatus === 'failed',
+  ).length;
+  const exportableCount = job.generatedTests.filter(
+    (t) => t.finalStatus !== 'gave_up',
   ).length;
   const correctedCount = job.generatedTests.filter((t) =>
     t.executionResults.some((r) => r.corrected),
@@ -303,7 +315,15 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
 
           <div className="job-actions">
             {terminal && !isShareView && (
-              <ShareButton jobId={job.id} targetUrl={job.targetUrl} />
+              <>
+                <Link
+                  className="secondary-button"
+                  href={`/?url=${encodeURIComponent(job.targetUrl)}&fresh=1`}
+                >
+                  <ArrowCounterClockwise aria-hidden="true" className="h-4 w-4" /> Regenerate
+                </Link>
+                <ShareButton jobId={job.id} targetUrl={job.targetUrl} />
+              </>
             )}
 
             {terminal ? (
@@ -318,13 +338,25 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             ) : null}
 
             {job.generatedTests.length > 0 ? (
-              <a
-                className="primary-button"
-                download
-                href={`${base}/api/jobs/${job.id}/export.zip`}
-              >
-                <DownloadSimple aria-hidden="true" className="h-4 w-4" /> Export Playwright Project (.zip)
-              </a>
+              exportableCount > 0 ? (
+                <a
+                  className="primary-button"
+                  download
+                  href={`${base}/api/jobs/${job.id}/export.zip`}
+                >
+                  <DownloadSimple aria-hidden="true" className="h-4 w-4" /> Export Playwright Project (.zip)
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled
+                  title="No exportable tests (all tests gave up)"
+                  aria-label="No exportable tests (all tests gave up)"
+                >
+                  <DownloadSimple aria-hidden="true" className="h-4 w-4" /> Export Playwright Project (.zip)
+                </button>
+              )
             ) : null}
 
             {job.canCancel && (
@@ -450,7 +482,14 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             <span>PASS RATE</span>
           </div>
           <div>
-            <strong>{durationStr}</strong>
+            <strong>
+              {durationStr}
+              {queuedStr && (
+                <small style={{ display: 'block', fontSize: '11px', fontWeight: 'normal', color: 'var(--ink-subtle)' }}>
+                  ({queuedStr})
+                </small>
+              )}
+            </strong>
             <span>DURATION</span>
           </div>
           <div>
@@ -467,7 +506,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
                 <h2>Execution timeline</h2>
               </div>
               <span>
-                {job.agentSteps.length} steps · {durationStr} total
+                {job.agentSteps.length} steps · {durationStr} total{queuedStr ? ` (${queuedStr})` : ''}
               </span>
             </div>
 

@@ -1,5 +1,5 @@
-import { CaretRight, Check } from '@phosphor-icons/react';
-import { useState } from 'react';
+import { CaretRight, Check, Warning } from '@phosphor-icons/react';
+import React, { useState } from 'react';
 import { CodeViewer } from '@/components/code/CodeViewer';
 import { DiffViewer } from '@/components/code/DiffViewer';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -11,11 +11,12 @@ interface TestResultCardProps {
   plannedCase?: PlannedTestCase;
 }
 
-export function TestResultCard({ test, plannedCase }: TestResultCardProps) {
+export const TestResultCard = React.memo(function TestResultCard({ test, plannedCase }: TestResultCardProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'code' | 'diff' | 'error'>('code');
 
   const isFailed = test.finalStatus === 'failed';
+  const isGaveUp = test.finalStatus === 'gave_up';
   const isCorrected = test.executionResults.some((r) => r.corrected);
   const originalAttempt = test.executionResults.find((r) => r.attemptNumber === 1);
   const lastFailedAttempt = [...test.executionResults]
@@ -26,11 +27,16 @@ export function TestResultCard({ test, plannedCase }: TestResultCardProps) {
     isCorrected &&
     originalAttempt !== undefined &&
     originalAttempt.code !== test.finalCode;
-  const hasError = isFailed || Boolean(lastFailedAttempt?.executionError);
+  const hasError =
+    isFailed ||
+    test.executionResults.some((r) => r.validationPassed === false) ||
+    Boolean(lastFailedAttempt?.executionError) ||
+    isGaveUp;
 
   const title = plannedCase?.title ?? test.filename;
   const failureCategory =
-    lastFailedAttempt?.failureClass ?? (isFailed ? 'finding' : null);
+    lastFailedAttempt?.failureClass ??
+    (lastFailedAttempt?.validationErrors ? 'VALIDATION' : isFailed ? 'finding' : isGaveUp ? 'gave_up' : null);
 
   const errorString =
     lastFailedAttempt?.executionError ??
@@ -52,8 +58,14 @@ export function TestResultCard({ test, plannedCase }: TestResultCardProps) {
           aria-hidden="true"
           className={cn('chev h-4 w-4 shrink-0', open && 'rotated')}
         />
-        <span className={cn('test-status-icon shrink-0', isFailed && 'failed')}>
-          {isFailed ? '!' : <Check aria-hidden="true" className="h-3.5 w-3.5" />}
+        <span className={cn('test-status-icon shrink-0', isFailed && 'failed', isGaveUp && 'gave-up')}>
+          {isFailed ? (
+            '!'
+          ) : isGaveUp ? (
+            <Warning aria-hidden="true" className="h-3.5 w-3.5" />
+          ) : (
+            <Check aria-hidden="true" className="h-3.5 w-3.5" />
+          )}
         </span>
         <span className="test-name">
           <strong>
@@ -148,4 +160,4 @@ export function TestResultCard({ test, plannedCase }: TestResultCardProps) {
       )}
     </article>
   );
-}
+});
