@@ -1,4 +1,6 @@
+import { toast } from 'sonner';
 import { Seo } from '@/components/common/Seo';
+import { forgetAllRememberedTestData } from '@/lib/rememberedTestData';
 
 const sections = [
   {
@@ -87,6 +89,23 @@ export default function PrivacyPage() {
             ))}
           </section>
         ))}
+
+        <section className="mt-10 rounded-panel border bg-surface p-6">
+          <h2 className="text-card-title font-bold">Locally Remembered Test Data</h2>
+          <p className="mt-2 text-body text-muted-foreground">
+            Any credentials and input values you enter on the crawl preview screen are stored strictly in your browser’s localStorage for up to 30 days to save you time when re-testing the same site. They are never sent to third parties or stored on the server.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              forgetAllRememberedTestData();
+              toast.success('All remembered test data cleared from this browser');
+            }}
+            className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/20"
+          >
+            Forget all remembered test data
+          </button>
+        </section>
 
         <section className="mt-10 rounded-panel border bg-surface p-6">
           <h2 className="text-card-title font-bold">Operator contact</h2>

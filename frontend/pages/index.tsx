@@ -33,6 +33,7 @@ import {
   type TestDataParam,
   type BudgetResponse,
 } from '@/lib/api';
+import { loadRememberedTestData } from '@/lib/rememberedTestData';
 import type { AppMap, JobsListResponse } from '@/types/api';
 
 type RunPhase =
@@ -57,7 +58,11 @@ interface HomeState {
 
 type HomeAction =
   | { type: 'CRAWL_STARTED' }
-  | { type: 'CRAWL_SUCCEEDED'; appMap: AppMap }
+  | {
+      type: 'CRAWL_SUCCEEDED';
+      appMap: AppMap;
+      prefillTestData?: Record<string, { value: string; sensitive: boolean }>;
+    }
   | { type: 'TOGGLE_URL'; url: string }
   | { type: 'SET_DEEP_CRAWL'; enabled: boolean }
   | { type: 'SET_TEST_DATA'; elementId: string; value: string; sensitive: boolean }
@@ -93,7 +98,7 @@ function reducer(state: HomeState, action: HomeAction): HomeState {
         appMap: action.appMap,
         selectedUrls: [action.appMap.url],
         deepCrawl: false,
-        testData: {},
+        testData: action.prefillTestData ?? {},
         error: null,
       };
 
@@ -223,8 +228,14 @@ export default function HomePage() {
     try {
       const appMap = await crawlPage(url);
       setWakingCrawl(null);
-      toast.success(`App map discovered: ${appMap.elements.length} interactive elements.`);
-      dispatch({ type: 'CRAWL_SUCCEEDED', appMap });
+      const prefillTestData = loadRememberedTestData(url, appMap.elements);
+      const prefillCount = Object.keys(prefillTestData).length;
+      if (prefillCount > 0) {
+        toast.success(`App map discovered: ${appMap.elements.length} elements (prefilled ${prefillCount} remembered field${prefillCount === 1 ? '' : 's'}).`);
+      } else {
+        toast.success(`App map discovered: ${appMap.elements.length} interactive elements.`);
+      }
+      dispatch({ type: 'CRAWL_SUCCEEDED', appMap, prefillTestData });
     } catch (err) {
       if (err instanceof ApiError && (err.code === 'TARGET_WAKING' || err.status === 503)) {
         if (attempt >= 4) {
@@ -325,8 +336,14 @@ export default function HomePage() {
 
     try {
       const appMap = await crawlPage(url);
-      toast.success(`App map discovered: ${appMap.elements.length} interactive elements.`);
-      dispatch({ type: 'CRAWL_SUCCEEDED', appMap });
+      const prefillTestData = loadRememberedTestData(url, appMap.elements);
+      const prefillCount = Object.keys(prefillTestData).length;
+      if (prefillCount > 0) {
+        toast.success(`App map discovered: ${appMap.elements.length} elements (prefilled ${prefillCount} remembered field${prefillCount === 1 ? '' : 's'}).`);
+      } else {
+        toast.success(`App map discovered: ${appMap.elements.length} interactive elements.`);
+      }
+      dispatch({ type: 'CRAWL_SUCCEEDED', appMap, prefillTestData });
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.code === 'TUNNEL_HOST_BLOCKED') {

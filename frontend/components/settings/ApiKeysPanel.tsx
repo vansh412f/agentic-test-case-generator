@@ -12,6 +12,7 @@ import {
   clearStoredKeys,
   validateApiKey,
 } from '@/lib/api';
+import { forgetAllRememberedTestData } from '@/lib/rememberedTestData';
 
 interface ApiKeysPanelProps {
   open: boolean;
@@ -256,14 +257,27 @@ export function ApiKeysPanel({
         </div>
 
         <div className="flex flex-col gap-3 pt-4 border-t border-[#dde2da] sm:flex-row sm:items-center sm:justify-between">
-          <button
-            className="text-xs font-semibold text-danger hover:underline disabled:opacity-40 text-left"
-            disabled={!groqKey && !geminiKey}
-            onClick={handleClear}
-            type="button"
-          >
-            Clear stored keys
-          </button>
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+            <button
+              className="text-xs font-semibold text-danger hover:underline disabled:opacity-40 text-left"
+              disabled={!groqKey && !geminiKey}
+              onClick={handleClear}
+              type="button"
+            >
+              Clear stored keys
+            </button>
+            <span className="hidden sm:inline text-[#cbd5e1]">·</span>
+            <button
+              className="text-xs font-semibold text-[#8c5000] hover:underline text-left"
+              onClick={() => {
+                forgetAllRememberedTestData();
+                toast.success('Cleared all remembered test data for all sites');
+              }}
+              type="button"
+            >
+              Forget all test data
+            </button>
+          </div>
 
           <div className="flex gap-3 justify-end">
             <button

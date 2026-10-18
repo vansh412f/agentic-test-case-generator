@@ -1,7 +1,13 @@
 import { ArrowRight, Check, Globe, Warning, Lock, LockOpen } from '@phosphor-icons/react';
 import { useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import type { AppMap, InteractiveElement } from '@/types/api';
 import type { BudgetResponse } from '@/lib/api';
+import {
+  saveRememberedTestData,
+  forgetRememberedTestData,
+  hasRememberedTestData,
+} from '@/lib/rememberedTestData';
 
 interface CrawlPreviewProps {
   appMap: AppMap;
@@ -89,7 +95,12 @@ export function CrawlPreview({
     ? `${remaining} of ${limit} free runs left today`
     : null;
 
+  const [rememberOnBrowser, setRememberOnBrowser] = useState(true);
+
   const handleGenerateClick = () => {
+    if (rememberOnBrowser) {
+      saveRememberedTestData(appMap.url, testData, appMap.elements);
+    }
     if (selectedUrls.length > 1) {
       confirmDialogRef.current?.showModal();
     } else {
@@ -98,6 +109,9 @@ export function CrawlPreview({
   };
 
   const handleConfirmRun = () => {
+    if (rememberOnBrowser) {
+      saveRememberedTestData(appMap.url, testData, appMap.elements);
+    }
     confirmDialogRef.current?.close();
     onGenerate();
   };
@@ -328,6 +342,45 @@ export function CrawlPreview({
               <p style={{ fontSize: '11px', color: '#6b7280', margin: '8px 0 0 0', lineHeight: 1.4 }}>
                 Use test accounts only. Secret values are used only while tests run — never sent to the AI, never stored, redacted from results. Exported code reads them from env vars.
               </p>
+
+              <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#4b5563', cursor: 'pointer', userSelect: 'none' }}>
+                  <input
+                    type="checkbox"
+                    checked={rememberOnBrowser}
+                    onChange={(e) => {
+                      setRememberOnBrowser(e.target.checked);
+                      if (!e.target.checked) {
+                        forgetRememberedTestData(appMap.url);
+                      }
+                    }}
+                  />
+                  <span>Remember on this browser (30 days)</span>
+                </label>
+                {hasRememberedTestData(appMap.url) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      forgetRememberedTestData(appMap.url);
+                      for (const field of eligibleFields) {
+                        onUpdateTestData(field.id, '', field.inputType === 'password');
+                      }
+                      toast.success('Forgot remembered test data for this site');
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#dc2626',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      padding: '2px 6px',
+                    }}
+                  >
+                    Forget saved data
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
