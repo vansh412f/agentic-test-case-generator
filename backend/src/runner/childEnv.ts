@@ -11,7 +11,9 @@ const PASSTHROUGH = [
 ] as const;
 
 export function childProcessEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
+  const env: NodeJS.ProcessEnv = {
+    HEADLESS: config.HEADLESS ? 'true' : 'false',
+  };
   for (const key of PASSTHROUGH) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;

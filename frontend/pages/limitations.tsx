@@ -43,6 +43,14 @@ const sections = [
       'To generate tests for local applications, switch to Local Agent mode or establish a secure public tunnel using Cloudflare Tunnels or ngrok.',
     ],
   },
+  {
+    title: 'What is sent to free LLM providers',
+    body: [
+      'During planning and self-correction, page structure (elements, attributes, form outlines) and non-sensitive test data are sent to LLM providers.',
+      'Google Gemini free tier and certain third-party LLM providers may use submitted prompts and outputs to train or improve their models.',
+      'Sensitive test values marked as secrets are never sent to any LLM provider. They are replaced by placeholder tokens before prompt generation and only injected into test runners in memory at execution time.',
+    ],
+  },
 ];
 
 export default function LimitationsPage() {
