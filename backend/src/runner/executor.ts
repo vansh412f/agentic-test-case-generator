@@ -126,6 +126,7 @@ export function redactSecrets(text: string, secrets?: Map<string, string>): stri
 
 export interface ExecuteTestsOptions {
   secrets?: Map<string, string>;
+  timeoutMs?: number;
 }
 
 export async function executeTests(
@@ -136,6 +137,7 @@ export async function executeTests(
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
   const resultsPath = path.join(runDir, 'results.json');
   const outputDir = path.join(runDir, 'artifacts');
+  const executionTimeout = options?.timeoutMs ?? EXECUTION_TIMEOUT_MS;
 
   try {
     if (!fsSync.existsSync(PLAYWRIGHT_CLI)) {
@@ -172,7 +174,7 @@ export async function executeTests(
         [PLAYWRIGHT_CLI, 'test', testArg, '--output', outputDir],
         {
           cwd: RUNNER_DIR,
-          timeout: EXECUTION_TIMEOUT_MS,
+          timeout: executionTimeout,
           env: playwrightRunnerEnv(resultsPath),
         },
         (err) => {
@@ -182,17 +184,18 @@ export async function executeTests(
               reject(
                 new RunnerError(
                   'EXECUTION_TIMEOUT',
-                  `Execution timed out after ${EXECUTION_TIMEOUT_MS}ms`,
+                  `Execution timed out after ${executionTimeout}ms`,
                   err,
                 ),
               );
               return;
             }
             if (typeof errnoErr.code === 'string') {
+              const msg = redactSecrets(err.message, options?.secrets);
               reject(
                 new RunnerError(
                   'BROWSER_ERROR',
-                  `Failed to spawn Playwright runner: ${err.message}`,
+                  `Failed to spawn Playwright runner: ${msg}`,
                   err,
                 ),
               );
@@ -212,14 +215,16 @@ export async function executeTests(
     try {
       rawJson = await fs.readFile(resultsPath, 'utf-8');
     } catch (err) {
-      throw new RunnerError('NO_RESULTS', 'Playwright produced no results file', err);
+      const msg = redactSecrets(err instanceof Error ? err.message : String(err), options?.secrets);
+      throw new RunnerError('NO_RESULTS', `Playwright produced no results file: ${msg}`, err);
     }
 
     let report: PlaywrightJsonReport;
     try {
       report = JSON.parse(rawJson) as PlaywrightJsonReport;
     } catch (err) {
-      throw new RunnerError('PARSE_ERROR', 'Failed to parse Playwright results', err);
+      const msg = redactSecrets(err instanceof Error ? err.message : String(err), options?.secrets);
+      throw new RunnerError('PARSE_ERROR', `Failed to parse Playwright results: ${msg}`, err);
     }
 
     const results: TestCaseResult[] = [];
@@ -256,7 +261,8 @@ export async function executeTests(
               const errorText = stripAnsi(rawError);
 
               if (errorText.includes('browserType.launch')) {
-                throw new RunnerError('BROWSER_ERROR', errorText);
+                const redactedLaunch = redactSecrets(errorText, options?.secrets);
+                throw new RunnerError('BROWSER_ERROR', redactedLaunch);
               }
 
               if (!firstErrorMessage) {
@@ -275,14 +281,14 @@ export async function executeTests(
         });
       } else {
         const errorText = firstErrorMessage || 'Test failed';
-        const trimmed = trimError(errorText);
-        const redacted = redactSecrets(trimmed, options?.secrets);
+        const redacted = redactSecrets(errorText, options?.secrets);
+        const trimmed = trimError(redacted);
         results.push({
           testCaseId,
           passed: false,
           durationMs,
-          error: redacted,
-          failureClass: classifyExecutionError(errorText),
+          error: trimmed,
+          failureClass: classifyExecutionError(redacted),
         });
       }
     }

@@ -10,14 +10,47 @@ import { findUnsafeConstructs } from './codeSafety.ts';
 export interface ValidationResult {
   valid: boolean;
   errors: string[];
+  perFile: Map<string, string[]>;
+}
+
+function parseFilenameFromDiagnostic(
+  line: string,
+  files: Array<{ filename: string }>,
+): string | null {
+  for (const file of files) {
+    const escaped = file.filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(?:[/\\\\]|^)${escaped}\\b`);
+    if (regex.test(line)) {
+      return file.filename;
+    }
+  }
+  return null;
 }
 
 export async function validateTestCode(
   runId: string,
   files: Array<{ filename: string; code: string }>,
 ): Promise<ValidationResult> {
-  const unsafe = files.flatMap((file) => findUnsafeConstructs(file.code, file.filename));
-  if (unsafe.length > 0) return { valid: false, errors: unsafe };
+  const perFile = new Map<string, string[]>();
+  for (const file of files) {
+    perFile.set(file.filename, []);
+  }
+
+  const unsafeErrors: string[] = [];
+  for (const file of files) {
+    const unsafe = findUnsafeConstructs(file.code, file.filename);
+    if (unsafe.length > 0) {
+      unsafeErrors.push(...unsafe);
+      perFile.get(file.filename)!.push(...unsafe);
+    }
+  }
+  if (unsafeErrors.length > 0) {
+    return { valid: false, errors: unsafeErrors, perFile };
+  }
+
+  if (files.length === 0) {
+    return { valid: true, errors: [], perFile };
+  }
 
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
   const tsconfigRunPath = path.join(RUNNER_DIR, `tsconfig.${runId}.json`);
@@ -51,10 +84,7 @@ export async function validateTestCode(
         [tscJs, '--noEmit', '--project', tsconfigRunPath],
         { cwd: RUNNER_DIR, env: childProcessEnv() },
         (error, stdout, stderr) => {
-          // If error is null, tsc exited 0 (clean).
-          // If error is present with a non-zero exit code, diagnostics are in stdout.
           if (error && typeof (error as NodeJS.ErrnoException).code === 'string') {
-            // Process-level spawn error (e.g. ENOENT)
             reject(error);
           } else {
             resolve({ stdout, stderr });
@@ -85,7 +115,11 @@ export async function validateTestCode(
     if (timer) clearTimeout(timer);
 
     if ('timeout' in result) {
-      return { valid: false, errors: ['Static validation timed out'] };
+      const timeoutMsg = 'Static validation timed out';
+      for (const file of files) {
+        perFile.get(file.filename)!.push(timeoutMsg);
+      }
+      return { valid: false, errors: [timeoutMsg], perFile };
     }
 
     const stdoutLines = result.stdout
@@ -93,23 +127,33 @@ export async function validateTestCode(
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
 
-    if (stdoutLines.length > 0) {
-      return { valid: false, errors: stdoutLines };
-    }
-
     const stderrLines = result.stderr
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
 
-    if (stderrLines.length > 0) {
-      return { valid: false, errors: stderrLines };
+    const allErrors = [...stdoutLines, ...stderrLines];
+    if (allErrors.length > 0) {
+      for (const line of allErrors) {
+        const matched = parseFilenameFromDiagnostic(line, files);
+        if (matched) {
+          perFile.get(matched)!.push(line);
+        } else {
+          for (const file of files) {
+            perFile.get(file.filename)!.push(line);
+          }
+        }
+      }
+      return { valid: false, errors: allErrors, perFile };
     }
 
-    return { valid: true, errors: [] };
+    return { valid: true, errors: [], perFile };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { valid: false, errors: [message] };
+    for (const file of files) {
+      perFile.get(file.filename)!.push(message);
+    }
+    return { valid: false, errors: [message], perFile };
   } finally {
     // 4. Clean up the run directory and per-run tsconfig
     try {
