@@ -17,7 +17,7 @@ const configSchema = z.object({
     .string()
     .optional()
     .transform((v) => v?.trim().toLowerCase() === 'true'),
-  CRAWL_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
+  CRAWL_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
   MAX_ELEMENTS_PER_PAGE: z.coerce.number().int().positive().default(200),
   NAVIGATION_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   NETWORK_IDLE_WAIT_MS: z.coerce.number().int().nonnegative().default(3000),
@@ -42,7 +42,8 @@ const configSchema = z.object({
   CRAWL_DAILY_LIMIT_PER_IP: z.coerce.number().int().positive().default(40),
   POW_DAILY_LIMIT_PER_IP: z.coerce.number().int().positive().default(200),
   BYOK_VALIDATE_DAILY_LIMIT_PER_IP: z.coerce.number().int().positive().default(50),
-  PIPELINE_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
+  PIPELINE_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
+  QUEUE_MAX_WAITING_GROUPS: z.coerce.number().int().min(1).default(5),
   LOCAL_AGENT_MODE: z.string().default('false').transform((v) => v.toLowerCase() === 'true'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
   FRONTEND_ORIGIN: z.string().optional(),

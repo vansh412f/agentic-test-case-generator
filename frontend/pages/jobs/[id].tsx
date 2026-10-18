@@ -243,6 +243,11 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           <div>
             <div className="job-title-line">
               <StatusBadge status={job.status} />
+              {job.status === 'pending' && typeof job.queuePosition === 'number' && job.queuePosition > 0 && (
+                <span className="queue-pill" style={{ color: '#0369a1', background: '#e0f2fe', borderRadius: '20px', padding: '3px 8px', fontSize: '10px', fontWeight: 600 }}>
+                  Waiting in line · #{job.queuePosition}
+                </span>
+              )}
               <span>#{job.id.slice(0, 8)}</span>
               {job.usedOwnKeys && (
                 <span className="byok-pill" style={{ color: '#4d6919', background: '#edf8db', borderRadius: '20px', padding: '3px 8px', fontSize: '10px', fontWeight: 600 }}>

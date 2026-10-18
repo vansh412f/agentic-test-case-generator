@@ -1,7 +1,6 @@
 import { runPipeline, toJobErrorCode, type PipelineResult } from './pipeline.ts';
 import { openJobChannel } from './jobEvents.ts';
 import { withRequestLlmKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
-import { pipelineGate } from '../security/concurrencyGate.ts';
 import { deliverJobWebhook, type WebhookTarget, type JobWebhookPayload } from '../notify/webhook.ts';
 
 import type { ElementRef, TestDataEntry } from '../api/schemas.ts';
@@ -19,6 +18,7 @@ export type RunOne = (job: QueuedJob) => Promise<Pick<PipelineResult, 'generated
 export interface RunGroupOptions {
   webhook?: WebhookTarget;
   runOne?: RunOne;
+  onSettled?: () => void;
 }
 
 const inFlightJobIds = new Set<string>();
@@ -82,7 +82,7 @@ function webhookPayload(
 export function startDetachedRun(
   jobs: readonly QueuedJob[],
   keys: RequestLlmKeys,
-  { webhook, runOne = runPipeline }: RunGroupOptions = {},
+  { webhook, runOne = runPipeline, onSettled }: RunGroupOptions = {},
 ): void {
   for (const job of jobs) {
     inFlightJobIds.add(job.id);
@@ -114,6 +114,6 @@ export function startDetachedRun(
     })
     .finally(() => {
       for (const job of jobs) inFlightJobIds.delete(job.id);
-      pipelineGate.release();
+      onSettled?.();
     });
 }

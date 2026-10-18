@@ -162,6 +162,8 @@ export interface PipelineGeneratedTest {
 // POST /api/generate -> 202. One id per unique URL, in request order.
 export interface GenerateAcceptedResponse {
   jobIds: string[];
+  runGroupId?: string;
+  queuePosition?: number;
   webhookSecret?: string;
 }
 
@@ -222,6 +224,8 @@ export interface JobDetail {
   completedAt: string | null;
   cancelledAt?: string | null;
   runGroupId?: string | null;
+  queuePosition?: number | null;
+  canCancel?: boolean;
   agentSteps: AgentStep[];
   generatedTests: PersistedGeneratedTest[];
   tokenUsage: TokenUsage;

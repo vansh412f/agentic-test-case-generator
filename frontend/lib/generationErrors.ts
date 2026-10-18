@@ -54,6 +54,28 @@ export function handleGenerationError(
         return msg;
       }
 
+      case 'ALREADY_RUNNING': {
+        const rawJobIds = errorDetail(error, 'jobIds');
+        const firstJobId =
+          Array.isArray(rawJobIds) && typeof rawJobIds[0] === 'string'
+            ? rawJobIds[0]
+            : null;
+        const msg = 'You already have a run in progress';
+        if (firstJobId) {
+          toast.error(msg, {
+            action: {
+              label: 'View job',
+              onClick: () => {
+                window.location.href = `/jobs/${firstJobId}`;
+              },
+            },
+          });
+        } else {
+          toast.error(msg);
+        }
+        return msg;
+      }
+
       case 'QUEUE_FULL': {
         const msg = 'The demo server is currently running at maximum capacity. Please retry shortly.';
         toast.error(msg);

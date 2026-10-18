@@ -15,7 +15,7 @@ export function closeAllJobStreams(): void {
   for (const close of [...activeStreams]) close();
 }
 
-function isTerminal(status: JobStatus): boolean {
+export function isTerminal(status: JobStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 

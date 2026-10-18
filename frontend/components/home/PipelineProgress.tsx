@@ -60,20 +60,27 @@ export function PipelineProgress({
     'Suite generation complete',
   ];
 
-  const currentAction = stepTitles[Math.min(active, 6)] ?? 'Processing';
+  const isQueued =
+    (job?.status === 'pending' || liveStatus === 'pending') &&
+    typeof job?.queuePosition === 'number' &&
+    job.queuePosition > 0;
+
+  const currentAction = isQueued
+    ? `Waiting in line · #${job.queuePosition}`
+    : (stepTitles[Math.min(active, 6)] ?? 'Processing');
 
   const subcopy =
     submittedUrls.length === 1
       ? submittedUrls[0]
       : `${submittedUrls.length} pages running as separate jobs`;
 
-  const percent = Math.min(100, Math.round(((Math.min(active, 5) + 1) / steps.length) * 100));
+  const percent = isQueued ? 0 : Math.min(100, Math.round(((Math.min(active, 5) + 1) / steps.length) * 100));
 
   return (
     <section aria-labelledby="pipeline-progress-title" className="progress-panel">
       <div className="progress-top">
         <div>
-          <p className="eyebrow">Agent working</p>
+          <p className="eyebrow">{isQueued ? `Waiting in line · #${job.queuePosition}` : 'Agent working'}</p>
           <h2 id="pipeline-progress-title">Building your test suite</h2>
         </div>
         <span className="time-est">

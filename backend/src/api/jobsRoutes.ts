@@ -57,7 +57,7 @@ router.get('/:id', async (req, res) => {
   try {
     const job = await getJobById(parsed.data.id);
     if (!job) throw new JobError('JOB_NOT_FOUND', 'Job not found.');
-    res.json(buildJobDetail(job));
+    res.json(buildJobDetail(job, { viewerVisitorId: req.visitorId }));
   } catch (error) {
     respondWithError(res, error);
   }

@@ -37,10 +37,15 @@ assert.equal(pipelineGate.tryAcquire(), true);
 const before = pipelineGate.activeCount;
 const seenKeys: Array<string | undefined> = [];
 const order: string[] = [];
+let settled = false;
 startDetachedRun(
   [{ id: 'job-1', url: 'https://a.example' }, { id: 'job-2', url: 'https://b.example' }],
   { groq: 'gsk_test_key' },
   {
+    onSettled: () => {
+      settled = true;
+      pipelineGate.release();
+    },
     runOne: async (job) => {
       await sleep(10); // cross an async boundary like a real pipeline
       seenKeys.push(llmKeyOverride('groq'));
@@ -54,6 +59,7 @@ assert.equal(llmKeyOverride('groq'), undefined, 'keys must not leak into the cal
 await sleep(60);
 assert.deepEqual(order, ['job-1', 'job-2'], 'sequential; one failure does not stop the group');
 assert.deepEqual(seenKeys, ['gsk_test_key', 'gsk_test_key'], 'ALS context survives the detached chain');
+assert.equal(settled, true, 'onSettled invoked');
 assert.equal(pipelineGate.activeCount, before - 1, 'gate released exactly once per group');
 assert.deepEqual(inFlightJobs(), []);
 console.log('[PASS] 8A detached run: ALS propagation, sequential group, gate release');

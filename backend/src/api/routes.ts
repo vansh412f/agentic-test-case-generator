@@ -3,7 +3,7 @@ import { Router } from 'express';
 import jobsRouter from './jobsRoutes.ts';
 import { CrawlRequestSchema, GenerateRequestSchema } from './schemas.ts';
 import { crawlPage } from '../crawler/pageCrawler.ts';
-import { startDetachedRun, type QueuedJob } from '../agent/jobRunner.ts';
+import type { QueuedJob } from '../agent/jobRunner.ts';
 import { toHttpError } from './errors.ts';
 import { visitorMiddleware } from './visitorMiddleware.ts';
 import { webhookUrlProblem, createWebhookTarget } from '../notify/webhook.ts';
@@ -20,7 +20,8 @@ import {
   budgetStatus,
   nextUtcMidnight,
 } from '../security/dailyBudget.ts';
-import { pipelineGate, crawlGate } from '../security/concurrencyGate.ts';
+import { crawlSemaphore, QueueFullError } from '../security/concurrencyGate.ts';
+import { runQueue } from '../agent/runQueue.ts';
 import { rememberCrawl } from '../crawler/crawlCache.ts';
 import { hasOwnKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
 import { z } from 'zod';
@@ -92,9 +93,15 @@ router.post('/crawl', crawlIpLimiter, async (req, res) => {
     return;
   }
 
-  if (!crawlGate.tryAcquire()) {
-    res.status(429).json({ error: 'QUEUE_FULL', message: 'Too many previews are running right now. Please retry in a few seconds.' });
-    return;
+  let release: (() => void) | undefined;
+  try {
+    release = await crawlSemaphore.acquire();
+  } catch (err) {
+    if (err instanceof QueueFullError) {
+      res.status(429).json({ error: 'QUEUE_FULL', message: 'Previews are busy, retry in a moment.' });
+      return;
+    }
+    throw err;
   }
 
   try {
@@ -109,7 +116,7 @@ router.post('/crawl', crawlIpLimiter, async (req, res) => {
     }
     throw err;
   } finally {
-    crawlGate.release();
+    release?.();
   }
 });
 
@@ -226,8 +233,29 @@ router.post('/generate', async (req, res) => {
   }
 
   const ipHash = ipHashFor(req.ip ?? '');
+  const client = { visitorId: req.visitorId, ipHash };
 
-  // 5. Daily budget check & reservation BEFORE consuming ALTCHA (skipped for BYOK)
+  // 5. Active or queued check: one active or queued run group at a time per visitor and per IP
+  const existingGroup = runQueue.activeOrQueuedFor(client);
+  if (existingGroup) {
+    res.status(409).json({
+      error: 'ALREADY_RUNNING',
+      message: 'You already have a run in progress.',
+      details: { jobIds: existingGroup.jobs.map((j) => j.id) },
+    });
+    return;
+  }
+
+  // 6. Queue capacity check
+  if (runQueue.isFull()) {
+    res.status(429).json({
+      error: 'QUEUE_FULL',
+      message: 'The execution queue is currently full. Please retry shortly.',
+    });
+    return;
+  }
+
+  // 7. Daily budget check & reservation BEFORE consuming ALTCHA (skipped for BYOK)
   let reservation: Awaited<ReturnType<typeof tryReserveRun>> | undefined;
   if (!usesOwnKeys) {
     reservation = await tryReserveRun({
@@ -248,13 +276,11 @@ router.post('/generate', async (req, res) => {
       });
       return;
     }
-  }
 
-  // 6. Enforce ALTCHA proof-of-work if not using own keys
-  if (!usesOwnKeys) {
+    // 8. Enforce ALTCHA proof-of-work if not using own keys
     const payload = parsed.data.altcha;
     if (!payload || !(await powService.verifyAndConsume(payload))) {
-      if (reservation?.ok) reservation.release();
+      reservation.release();
       res.status(400).json({
         error: 'POW_FAILED',
         message: 'Bot verification failed. Please retry.',
@@ -263,17 +289,7 @@ router.post('/generate', async (req, res) => {
     }
   }
 
-  // 7. Concurrency gate: ONE slot per run group. Ownership transfers to startDetachedRun.
-  if (!pipelineGate.tryAcquire()) {
-    if (reservation?.ok) reservation.release();
-    res.status(429).json({
-      error: 'QUEUE_FULL',
-      message: 'The execution queue is currently full. Please retry shortly.',
-    });
-    return;
-  }
-
-  // 8. Create job rows synchronously (fail-fast) so every returned jobId exists.
+  // 9. Create job rows synchronously (fail-fast) so every returned jobId exists.
   const runGroupId = randomUUID();
   const jobs: QueuedJob[] = urls.map((url, idx) => ({
     id: randomUUID(),
@@ -292,7 +308,6 @@ router.post('/generate', async (req, res) => {
       { visitorId: req.visitorId, usedOwnKeys: usesOwnKeys, ipHash, runGroupId },
     );
   } catch (err) {
-    pipelineGate.release();
     const httpErr = toHttpError(err);
     if (httpErr) {
       res.status(httpErr.status).json(httpErr.body);
@@ -303,11 +318,20 @@ router.post('/generate', async (req, res) => {
     if (reservation?.ok) reservation.release();
   }
 
-  // 9. Detach. BYOK ALS context is entered inside startDetachedRun.
-  startDetachedRun(jobs, requestKeys, { webhook });
+  // 10. Enqueue run group
+  const queuePosition = runQueue.enqueue({
+    groupId: runGroupId,
+    jobs,
+    keys: requestKeys,
+    webhook,
+    client,
+    enqueuedAt: Date.now(),
+  });
+
   res.status(202).json({
     jobIds: jobs.map((job) => job.id),
     runGroupId,
+    queuePosition,
     ...(webhook ? { webhookSecret: webhook.secret } : {}),
   });
 });

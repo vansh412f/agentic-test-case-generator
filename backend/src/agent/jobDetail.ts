@@ -3,6 +3,8 @@ import { summarizeTokenUsage } from './tokenUsage.ts';
 import type { TokenUsage } from './tokenUsage.ts';
 import { scoreTestConfidence } from './confidence.ts';
 import type { ConfidenceScore } from './confidence.ts';
+import { isTerminal } from '../api/jobStream.ts';
+import { runQueue } from './runQueue.ts';
 
 type PersistedTest = LoadedJob['generatedTests'][number];
 
@@ -14,15 +16,36 @@ export interface JobDetail extends Omit<LoadedJob, 'generatedTests' | 'visitorId
   usedOwnKeys: boolean;
   tokenUsage: TokenUsage;
   generatedTests: JobDetailTest[];
+  queuePosition: number | null;
+  runGroupId: string | null;
+  canCancel: boolean;
+}
+
+export interface BuildJobDetailOptions {
+  viewerVisitorId?: string | null;
 }
 
 // Presentation enrichment for GET /api/jobs/:id. The repository stays pure
 // data access; cost and confidence are derived here, on read, from the
 // persisted steps/tests — nothing is stored back.
-export function buildJobDetail(job: LoadedJob): JobDetail {
-  const { visitorId: _visitorId, ...rest } = job;
+export function buildJobDetail(
+  job: LoadedJob,
+  options?: BuildJobDetailOptions,
+): JobDetail {
+  const { visitorId, ...rest } = job;
+  const terminal = isTerminal(job.status);
+  const canCancel = Boolean(
+    options?.viewerVisitorId &&
+      visitorId &&
+      options.viewerVisitorId === visitorId &&
+      !terminal,
+  );
+
   return {
     ...rest,
+    runGroupId: job.runGroupId ?? null,
+    queuePosition: runQueue.positionOf(job.id),
+    canCancel,
     usedOwnKeys: Boolean(job.usedOwnKeys),
     tokenUsage: summarizeTokenUsage(job.agentSteps),
     generatedTests: job.generatedTests.map((test: PersistedTest) => ({

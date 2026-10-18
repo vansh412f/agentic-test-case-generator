@@ -28,6 +28,7 @@ const JOB_STATUSES: readonly JobStatus[] = [
   'executing',
   'completed',
   'failed',
+  'cancelled',
 ];
 
 function parseJobStatus(event: Event): JobStatus | null {
@@ -113,6 +114,21 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     source.addEventListener('phase_change', handleStatusEvent);
     source.addEventListener('step_recorded', scheduleRefetch);
     source.addEventListener('test_completed', scheduleRefetch);
+    source.addEventListener('queue_position', (e: Event) => {
+      if (closed) return;
+      if (e instanceof MessageEvent && typeof e.data === 'string') {
+        try {
+          const parsed = JSON.parse(e.data);
+          if (typeof parsed?.position === 'number') {
+            void mutateRef.current(
+              (prev) => (prev ? { ...prev, queuePosition: parsed.position } : prev),
+              false,
+            );
+          }
+        } catch {}
+      }
+      scheduleRefetch();
+    });
     source.addEventListener('job_finished', (e: Event) => {
       if (closed) return;
       const status = parseJobStatus(e);
