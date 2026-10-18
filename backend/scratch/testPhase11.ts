@@ -241,7 +241,7 @@ async function runTests() {
     assert.equal(env.DATABASE_URL, undefined);
     assert.equal(env.GROQ_API_KEY, undefined);
     assert.equal(env.PLAYWRIGHT_JSON_OUTPUT_FILE, 'scratch/test-results.json');
-    assert.equal(env.HEADLESS, config.HEADLESS ? 'true' : 'false');
+    assert.equal(env.HEADLESS, 'true');
   }
 
   console.log('--- 7. webhookUrlProblem & signWebhookBody ---');

@@ -487,7 +487,7 @@ pnpm dev
 |---|---|---|---|
 | `PORT` | No | `4000` | Port for Express API server |
 | `NODE_ENV` | No | `development` | Environment mode (`development`, `production`, `test`) |
-| `HEADLESS` | No | `true` | Launch Playwright Chromium in headless mode (ignored in production) |
+| `HEADED_DEBUG` | No | `false` | Launch visible Chromium browser window during dev/debugging (dev only, ignored in production) |
 | `MAX_ELEMENTS_PER_PAGE` | No | `200` | Max interactive DOM elements extracted per page |
 | `NAVIGATION_TIMEOUT_MS` | No | `30000` | Playwright page load timeout (ms) |
 | `DATABASE_URL` | **Yes** | — | Supavisor pooled PostgreSQL connection string |

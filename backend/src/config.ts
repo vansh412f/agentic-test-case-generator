@@ -4,10 +4,19 @@ import { LLM_PROVIDER_ORDER, type LlmProviderName } from './llm/providers.config
 
 dotenv.config();
 
+if (process.env.HEADLESS === 'false') {
+  console.warn(
+    '[Config] HEADLESS is no longer read; browsers run headless. Set HEADED_DEBUG=true to watch them.',
+  );
+}
+
 const configSchema = z.object({
   PORT: z.coerce.number().default(4000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  HEADLESS: z.string().default('true').transform((val) => val.trim().toLowerCase() !== 'false'),
+  HEADED_DEBUG: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim().toLowerCase() === 'true'),
   CRAWL_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
   MAX_ELEMENTS_PER_PAGE: z.coerce.number().int().positive().default(200),
   NAVIGATION_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
@@ -25,7 +34,9 @@ const configSchema = z.object({
   FRONTEND_ORIGIN: z.string().optional(),
 });
 
-export type Config = z.infer<typeof configSchema>;
+export type Config = z.infer<typeof configSchema> & {
+  HEADLESS: boolean;
+};
 
 const parseConfig = (): Config => {
   const result = configSchema.safeParse(process.env);
@@ -36,12 +47,13 @@ const parseConfig = (): Config => {
     process.exit(1);
   }
 
-  if (result.data.NODE_ENV === 'production' && !result.data.HEADLESS) {
-    console.warn('[Config] HEADLESS=false is ignored in production; browsers always run headless.');
-    return { ...result.data, HEADLESS: true };
+  if (result.data.NODE_ENV === 'production' && result.data.HEADED_DEBUG) {
+    console.warn('[Config] HEADED_DEBUG=true is ignored in production; browsers always run headless.');
   }
 
-  return result.data;
+  const headless = result.data.NODE_ENV === 'production' ? true : !result.data.HEADED_DEBUG;
+
+  return { ...result.data, HEADLESS: headless };
 };
 
 export const config: Config = parseConfig();
