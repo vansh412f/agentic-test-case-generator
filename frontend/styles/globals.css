@@ -1208,20 +1208,36 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
 .summary-grid strong { font-size: 25px; display: block; font-weight: 700; }
 .summary-grid span { font-size: 8px; color: #89978d; letter-spacing: 1px; }
 
+.detail-page, .detail-section {
+  min-width: 0;
+}
+
 .detail-section {
   border: 1px solid #dce2da;
   border-radius: 12px;
   background: white;
   padding: 25px;
   margin-bottom: 22px;
+  min-width: 0;
 }
 
 .detail-heading { align-items: center; }
 .detail-heading > span { color: #87928b; font-size: 9px; }
 
-.timeline { display: flex; margin-top: 30px; }
+.timeline {
+  display: flex;
+  margin-top: 30px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  padding-bottom: 10px;
+  max-width: 100%;
+}
 .timeline > div {
-  flex: 1;
+  flex: 0 0 112px;
+  scroll-snap-align: start;
   display: grid;
   grid-template-columns: 26px 1fr;
   grid-template-rows: 26px auto;
@@ -1251,8 +1267,16 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
 }
 
 .timeline > div > span.corrected { background: #f4dda7; color: #7b5919; }
+.timeline > div > span.failed { background: #fee2e2; color: #b91c1c; }
 .timeline svg { width: 12px; }
-.timeline strong { font-size: 10px; align-self: center; padding-left: 7px; }
+.timeline strong {
+  font-size: 10px;
+  align-self: center;
+  padding-left: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .timeline small { grid-column: 2; color: #87928b; font-size: 8px; line-height: 1.5; padding: 6px 0 0 7px; }
 
 .result-pills { display: flex; gap: 6px; }
@@ -1545,9 +1569,6 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
   .table-grid { grid-template-columns: 1.8fr 1fr 1fr; }
   .job-row > span:nth-child(4), .job-row > span:nth-child(6) { display: none; }
   .job-hero { align-items: flex-start; flex-direction: column; }
-  .timeline { flex-wrap: wrap; gap: 20px 0; }
-  .timeline > div { min-width: 33%; }
-  .timeline > div:nth-child(3):after { display: none; }
   footer.reference-footer { grid-template-columns: 1fr 1fr; }
 }
 
@@ -1608,9 +1629,6 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
   .summary-grid { grid-template-columns: 1fr 1fr; }
   .summary-grid div:nth-child(2) { border-right: 0; }
   .summary-grid div:nth-child(-n+2) { border-bottom: 1px solid #344038; }
-  .timeline > div { min-width: 50%; }
-  .timeline > div:nth-child(3):after { display: block; }
-  .timeline > div:nth-child(2n):after { display: none; }
   .detail-heading { gap: 15px; }
   .result-pills { display: none; }
   .diff { grid-template-columns: 1fr; }

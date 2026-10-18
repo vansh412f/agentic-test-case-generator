@@ -1,12 +1,14 @@
 import type { GetServerSideProps } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { useEffect, useRef } from 'react';
 import {
   ArrowCounterClockwise,
   ArrowSquareOut,
   Check,
   DownloadSimple,
   Globe,
+  X,
 } from '@phosphor-icons/react';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { Seo } from '@/components/common/Seo';
@@ -92,6 +94,34 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     transport,
   } = useJobStream(jobId, initialJob ?? undefined);
 
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const userScrolledAwayRef = useRef(false);
+  const stepsCount = job?.agentSteps.length ?? 0;
+  const prevStepsCountRef = useRef(stepsCount);
+  const isTerminal = job ? isTerminalJobStatus(job.status) : false;
+
+  useEffect(() => {
+    if (!job || isTerminal) return;
+    if (stepsCount > prevStepsCountRef.current) {
+      prevStepsCountRef.current = stepsCount;
+      if (!userScrolledAwayRef.current && timelineRef.current) {
+        timelineRef.current.scrollTo({
+          left: timelineRef.current.scrollWidth,
+          behavior: 'smooth',
+        });
+      }
+    } else {
+      prevStepsCountRef.current = stepsCount;
+    }
+  }, [job, stepsCount, isTerminal]);
+
+  const handleTimelineScroll = () => {
+    const el = timelineRef.current;
+    if (!el) return;
+    const distanceFromRight = el.scrollWidth - el.scrollLeft - el.clientWidth;
+    userScrolledAwayRef.current = distanceFromRight > 24;
+  };
+
   if (job === undefined) {
     const isNotFound = error instanceof ApiError && error.status === 404;
 
@@ -155,7 +185,8 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     );
   }
 
-  const terminal = isTerminalJobStatus(job.status);
+  const terminal = isTerminal;
+
   const durationStr = formatJobDuration(job.createdAt, job.completedAt);
   const passedCount = job.generatedTests.filter(
     (t) => t.finalStatus === 'passed',
@@ -293,8 +324,9 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
               </span>
             </div>
 
-            <div className="timeline">
+            <div className="timeline" onScroll={handleTimelineScroll} ref={timelineRef}>
               {job.agentSteps.map((step, i) => {
+                const isFailed = (step as { success?: boolean }).success === false || step.status === 'failure';
                 const isCorrected = step.stepType === 'correct';
                 const duration = step.latencyMs
                   ? `${Math.round(step.latencyMs / 1000)}s`
@@ -302,11 +334,14 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
                 const tokens = (
                   (step.promptTokens ?? 0) + (step.completionTokens ?? 0)
                 ).toLocaleString();
+                const hasLlm = Boolean(step.llmModel);
 
                 return (
                   <div key={step.id || i}>
-                    <span className={isCorrected ? 'corrected' : ''}>
-                      {isCorrected ? (
+                    <span className={isFailed ? 'failed' : isCorrected ? 'corrected' : ''}>
+                      {isFailed ? (
+                        <X aria-hidden="true" className="h-3 w-3" />
+                      ) : isCorrected ? (
                         <ArrowCounterClockwise aria-hidden="true" className="h-3 w-3" />
                       ) : (
                         <Check aria-hidden="true" className="h-3 w-3" />
@@ -316,9 +351,15 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
                       {step.stepType.charAt(0).toUpperCase() + step.stepType.slice(1)}
                     </strong>
                     <small>
+                      {step.testCaseId && (
+                        <>
+                          <span>{step.testCaseId}</span>
+                          <br />
+                        </>
+                      )}
                       {duration}
                       <br />
-                      {tokens} tokens
+                      {hasLlm ? `${tokens} tokens` : 'no LLM'}
                     </small>
                   </div>
                 );
