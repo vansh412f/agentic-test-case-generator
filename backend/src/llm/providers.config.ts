@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { config } from '../config.ts';
 dotenv.config();
 
 export const KNOWN_LLM_PROVIDERS = ['groq', 'gemini', 'nvidia'] as const;
@@ -24,16 +25,16 @@ export const NVIDIA_DEFAULT_MODEL = 'openai/gpt-oss-20b';
 export function modelFor(provider: LlmProviderName, tier: 'reasoning' | 'fast' = 'reasoning'): string {
   if (provider === 'groq') {
     return tier === 'fast'
-      ? (process.env.GROQ_FAST_MODEL || 'openai/gpt-oss-20b')
-      : (process.env.GROQ_REASONING_MODEL || GROQ_DEFAULT_MODEL);
+      ? (config?.GROQ_FAST_MODEL || process.env.GROQ_FAST_MODEL || 'openai/gpt-oss-20b')
+      : (config?.GROQ_REASONING_MODEL || process.env.GROQ_REASONING_MODEL || GROQ_DEFAULT_MODEL);
   }
   if (provider === 'gemini') {
     return tier === 'fast'
-      ? (process.env.GEMINI_FAST_MODEL || 'gemini-2.5-flash-lite')
-      : (process.env.GEMINI_REASONING_MODEL || GEMINI_DEFAULT_MODEL);
+      ? (config?.GEMINI_FAST_MODEL || process.env.GEMINI_FAST_MODEL || 'gemini-2.5-flash-lite')
+      : (config?.GEMINI_REASONING_MODEL || process.env.GEMINI_REASONING_MODEL || GEMINI_DEFAULT_MODEL);
   }
   if (provider === 'nvidia') {
-    return process.env.NVIDIA_MODEL || NVIDIA_DEFAULT_MODEL;
+    return config?.NVIDIA_MODEL || process.env.NVIDIA_MODEL || NVIDIA_DEFAULT_MODEL;
   }
   return '';
 }

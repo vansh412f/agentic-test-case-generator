@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import { observeLlmCall } from './telemetry.ts';
 import path from 'node:path';
-import { config, activeProviders } from '../config.ts';
+import { config, getActiveProviders } from '../config.ts';
 import { LlmError } from './types.ts';
 import type { LlmRequest, LlmResponse, LlmMessage, LlmErrorCode, LlmProvider } from './types.ts';
 import { LLM_MAX_RETRIES_PER_PROVIDER, LLM_REQUEST_TIMEOUT_MS, LLM_PROVIDER_ORDER } from './providers.config.ts';
@@ -141,7 +141,7 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
 
   const byok = hasAnyRequestKey();
   const effectiveProviders = LLM_PROVIDER_ORDER.filter((name) =>
-    byok ? llmKeyOverride(name) !== undefined : activeProviders.includes(name),
+    byok ? llmKeyOverride(name) !== undefined : getActiveProviders().includes(name),
   );
 
   if (effectiveProviders.length === 0) {

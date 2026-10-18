@@ -65,9 +65,9 @@ export function RunGroupList({ jobIds, submittedUrls, summaries }: RunGroupListP
         {jobIds.map((jobId, index) => {
           const summary = summaries.find((s) => s.id === jobId);
           return (
-            <div className="page-row" key={jobId}>
-              <span className="page-name">
-                <strong>{summary?.targetUrl ?? submittedUrls[index] ?? jobId}</strong>
+            <div className="group-row" key={jobId}>
+              <span className="page-name min-w-0">
+                <strong className="truncate block">{summary?.targetUrl ?? submittedUrls[index] ?? jobId}</strong>
                 <code>
                   {summary && summary.testCount > 0
                     ? `${summary.testCount} tests · ${summary.passedCount} passed · ${summary.failedCount} findings · ${summary.gaveUpCount} gave up`
@@ -76,11 +76,13 @@ export function RunGroupList({ jobIds, submittedUrls, summaries }: RunGroupListP
                     : `#${jobId.slice(0, 6)}`}
                 </code>
               </span>
-              <StatusBadge status={summary?.status ?? 'pending'} />
-              <Link className="primary-button text-xs py-2 px-3" href={`/jobs/${jobId}`}>
-                Open job
-                <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-              </Link>
+              <div className="group-row-actions flex items-center gap-2 sm:contents">
+                <StatusBadge status={summary?.status ?? 'pending'} />
+                <Link className="primary-button text-xs py-2 px-3 shrink-0" href={`/jobs/${jobId}`}>
+                  Open job
+                  <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
+                </Link>
+              </div>
             </div>
           );
         })}

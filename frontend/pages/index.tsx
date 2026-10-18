@@ -589,6 +589,7 @@ export default function HomePage() {
 
       {state.appMap && state.phase !== 'submitting' && !groupRunning ? (
         <CrawlPreview
+          key={`${state.appMap.url}|${state.appMap.crawledAt ?? state.appMap.elements.length}`}
           appMap={state.appMap}
           budget={budget}
           deepCrawl={state.deepCrawl}

@@ -184,7 +184,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
   const buttonsDisabled = submitting || (!hasCustomKeys && !altchaPayload);
 
   return (
-    <section className="detail-section continue-testing" style={{ marginTop: '30px' }}>
+    <section className="detail-section continue-testing continue-testing-root">
       <div className="detail-heading">
         <div>
           <p className="eyebrow">CONTINUE TESTING</p>
@@ -216,7 +216,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
       )}
 
       {createdJobIds && createdJobIds.length > 0 ? (
-        <div style={{ marginTop: '20px' }}>
+        <div className="continue-testing-group-wrapper">
           <RunGroupList
             jobIds={createdJobIds}
             submittedUrls={submittedUrls}
@@ -224,40 +224,21 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
           />
         </div>
       ) : (
-        <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div className="continue-testing-body">
           {/* Pages picker */}
           {eligiblePages.length > 0 && (
             <div>
-              <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#374151', marginBottom: '8px' }}>
+              <h3 className="continue-testing-heading">
                 Discovered Pages (Select up to {maxAllowedUrls})
               </h3>
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '6px',
-                  maxHeight: '220px',
-                  overflowY: 'auto',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
-                  padding: '10px',
-                  background: '#f9fafb',
-                }}
-              >
+              <div className="continue-testing-list">
                 {eligiblePages.map((pageUrl) => {
                   const isSelected = selectedPages.includes(pageUrl);
                   const isMax = selectedPages.length >= maxAllowedUrls;
                   return (
                     <label
                       key={pageUrl}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        fontSize: '12px',
-                        cursor: isSelected || !isMax ? 'pointer' : 'not-allowed',
-                        opacity: !isSelected && isMax ? 0.6 : 1,
-                      }}
+                      className={`continue-testing-item ${!isSelected && isMax ? 'is-disabled' : ''}`}
                     >
                       <input
                         type="checkbox"
@@ -265,8 +246,8 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
                         disabled={submitting || (!isSelected && isMax)}
                         onChange={() => togglePage(pageUrl)}
                       />
-                      <Globe aria-hidden="true" className="h-4 w-4" style={{ color: '#6b7280' }} />
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <Globe aria-hidden="true" className="h-4 w-4 continue-testing-icon" />
+                      <span className="continue-testing-url-span">
                         {pageUrl}
                       </span>
                     </label>
@@ -279,22 +260,10 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
           {/* Tabs picker */}
           {eligibleTabs.length > 0 && (
             <div>
-              <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#374151', marginBottom: '8px' }}>
+              <h3 className="continue-testing-heading">
                 Tabs & Views (Select up to 5)
               </h3>
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '6px',
-                  maxHeight: '220px',
-                  overflowY: 'auto',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
-                  padding: '10px',
-                  background: '#f9fafb',
-                }}
-              >
+              <div className="continue-testing-list">
                 {eligibleTabs.map((tab) => {
                   const isSelected = selectedTabs.includes(tab.id);
                   const isMax = selectedTabs.length >= 5;
@@ -302,14 +271,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
                   return (
                     <label
                       key={tab.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        fontSize: '12px',
-                        cursor: isSelected || !isMax ? 'pointer' : 'not-allowed',
-                        opacity: !isSelected && isMax ? 0.6 : 1,
-                      }}
+                      className={`continue-testing-item ${!isSelected && isMax ? 'is-disabled' : ''}`}
                     >
                       <input
                         type="checkbox"
@@ -317,7 +279,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
                         disabled={submitting || (!isSelected && isMax)}
                         onChange={() => toggleTab(tab.id)}
                       />
-                      <Tabs aria-hidden="true" className="h-4 w-4" style={{ color: '#6b7280' }} />
+                      <Tabs aria-hidden="true" className="h-4 w-4 continue-testing-icon" />
                       <span>{label}</span>
                     </label>
                   );
@@ -328,20 +290,19 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
 
           {/* PoW Challenge if needed */}
           {!hasCustomKeys && (
-            <div style={{ marginTop: '4px' }}>
+            <div className="continue-testing-pow">
               <PowWidget key={powEpoch} onPayload={setAltchaPayload} />
             </div>
           )}
 
           {/* Action Buttons */}
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '8px' }}>
+          <div className="continue-testing-actions">
             {eligiblePages.length > 0 && (
               <button
                 type="button"
-                className="primary-button"
+                className="primary-button continue-testing-btn"
                 disabled={buttonsDisabled || selectedPages.length === 0}
                 onClick={() => void handleGeneratePages()}
-                style={{ padding: '8px 16px', fontSize: '13px' }}
               >
                 {submitting
                   ? 'Submitting…'
@@ -353,10 +314,9 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
             {eligibleTabs.length > 0 && (
               <button
                 type="button"
-                className="secondary-button"
+                className="secondary-button continue-testing-btn"
                 disabled={buttonsDisabled || selectedTabs.length === 0}
                 onClick={() => void handleGenerateTabs()}
-                style={{ padding: '8px 16px', fontSize: '13px' }}
               >
                 {submitting
                   ? 'Submitting…'

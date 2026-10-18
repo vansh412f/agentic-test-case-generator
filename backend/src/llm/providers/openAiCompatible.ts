@@ -78,10 +78,13 @@ export async function openAiCompatibleChat(options: {
     throw new LlmError('PROVIDER_UNAVAILABLE', `Failed to reach ${providerName} API.`, err);
   }
 
-  // If the provider returns 400 whose body mentions reasoning_effort: remember that provider+model doesn't support it and retry ONCE without it
-  if (response.status === 400 && bodyPayload.reasoning_effort !== undefined) {
+  // If the provider returns 400: check for invalid API key first, then retry if body mentions reasoning_effort
+  if (response.status === 400) {
     const errorText = await response.text().catch(() => 'No response body');
-    if (errorText.includes('reasoning_effort')) {
+    if (errorText.includes('API key not valid')) {
+      throw new LlmError('AUTH_FAILED', `${providerName} auth failed (400): ${errorText}`);
+    }
+    if (bodyPayload.reasoning_effort !== undefined && errorText.includes('reasoning_effort')) {
       unsupportedReasoningEffort.add(unsupportedKey);
       bodyPayload = buildBodyPayload(false);
       try {
@@ -109,7 +112,11 @@ export async function openAiCompatibleChat(options: {
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'No response body');
 
-    if (response.status === 401 || response.status === 403) {
+    if (
+      response.status === 401 ||
+      response.status === 403 ||
+      (response.status === 400 && errorText.includes('API key not valid'))
+    ) {
       throw new LlmError('AUTH_FAILED', `${providerName} auth failed (${response.status}): ${errorText}`);
     }
     if (response.status === 429) {

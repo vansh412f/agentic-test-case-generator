@@ -120,4 +120,16 @@ if (missingProviders.length > 0) {
   }
 }
 
+export function getActiveProviders(): LlmProviderName[] {
+  const active: LlmProviderName[] = [];
+  for (const provider of LLM_PROVIDER_ORDER) {
+    const key = PROVIDER_ENV_KEYS[provider];
+    const value = config[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      active.push(provider);
+    }
+  }
+  return active;
+}
+
 export { activeProviders, missingProviders };
