@@ -13,14 +13,18 @@ interface RunGroupListProps {
 // one visitor-scoped list poll (not N EventSources: HTTP/1.1 caps a browser
 // at 6 connections per origin, which N streams would exhaust in local dev).
 export function RunGroupList({ jobIds, submittedUrls, summaries }: RunGroupListProps) {
+  const completed = summaries.filter((s) => s.status === 'completed').length;
+  const cancelled = summaries.filter((s) => s.status === 'cancelled').length;
+  const headingText = cancelled > 0
+    ? `${completed} of ${jobIds.length} jobs completed (${cancelled} cancelled)`
+    : `${completed} of ${jobIds.length} jobs completed`;
+
   return (
     <section aria-labelledby="run-group-title" className="app-map mb-12">
       <div className="section-heading">
         <div>
           <p className="eyebrow">Run group</p>
-          <h2 id="run-group-title">
-            {summaries.filter((s) => s.status === 'completed').length} of {jobIds.length} jobs completed
-          </h2>
+          <h2 id="run-group-title">{headingText}</h2>
         </div>
       </div>
       <div className="page-list">
@@ -33,6 +37,8 @@ export function RunGroupList({ jobIds, submittedUrls, summaries }: RunGroupListP
                 <code>
                   {summary && summary.testCount > 0
                     ? `${summary.testCount} tests · ${summary.passedCount} passed · ${summary.failedCount} findings · ${summary.gaveUpCount} gave up`
+                    : summary?.status === 'cancelled'
+                    ? 'Cancelled'
                     : `#${jobId.slice(0, 6)}`}
                 </code>
               </span>

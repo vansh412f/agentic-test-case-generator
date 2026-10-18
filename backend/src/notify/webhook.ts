@@ -12,6 +12,7 @@ export type JobWebhookPayload = {
 } & (
   | { status: 'completed'; tests: { total: number; passed: number; failed: number; gaveUp: number } }
   | { status: 'failed'; errorCode: string }
+  | { status: 'cancelled'; errorCode: null }
 );
 
 const NON_PUBLIC = new BlockList();

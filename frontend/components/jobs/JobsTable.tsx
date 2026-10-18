@@ -49,10 +49,19 @@ export function JobsTable({ jobs }: JobsTableProps) {
             </span>
 
             <span>
-              <b className="pass">{job.passedCount} passed</b>
-              <small>
-                {job.failedCount} {job.failedCount === 1 ? 'finding' : 'findings'} · {job.testCount} cases
-              </small>
+              {job.status === 'cancelled' && job.testCount === 0 ? (
+                <>
+                  <b>Cancelled</b>
+                  <small>no tests run</small>
+                </>
+              ) : (
+                <>
+                  <b className="pass">{job.passedCount} passed</b>
+                  <small>
+                    {job.failedCount} {job.failedCount === 1 ? 'finding' : 'findings'} · {job.testCount} cases
+                  </small>
+                </>
+              )}
             </span>
 
             <span>

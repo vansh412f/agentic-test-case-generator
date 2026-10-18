@@ -5,7 +5,7 @@ export const config = { runtime: 'edge' };
 
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://localhost:4000';
 const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const TERMINAL = new Set(['completed', 'failed']);
+const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
 interface OgJob {
   targetUrl: string;
@@ -46,7 +46,7 @@ export default async function handler(req: NextRequest) {
   const findings = tests.filter((t) => t.finalStatus === 'failed').length;
   const corrected = tests.filter((t) => t.executionResults.some((r) => r.corrected)).length;
   const terminal = TERMINAL.has(job.status);
-  const headline = job.status === 'failed' ? 'Run failed' : terminal ? `${passed}/${tests.length} tests passing` : 'Generating tests…';
+  const headline = job.status === 'failed' ? 'Run failed' : job.status === 'cancelled' ? 'Run cancelled' : terminal ? `${passed}/${tests.length} tests passing` : 'Generating tests…';
 
   const stat = (value: number, label: string) => (
     <div style={{ display: 'flex', flexDirection: 'column', marginRight: 64 }}>

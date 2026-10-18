@@ -16,6 +16,7 @@ enum JobStatus {
   executing
   completed
   failed
+  cancelled
 }
 
 enum StepType {
@@ -58,11 +59,16 @@ model Job {
   completedAt    DateTime?
   visitorId      String?
   usedOwnKeys    Boolean         @default(false)
+  runGroupId     String?         @db.Uuid
+  ipHash         String?
+  cancelledAt    DateTime?
   agentSteps     AgentStep[]
   generatedTests GeneratedTest[]
 
   @@index([createdAt, id])
   @@index([visitorId, createdAt])
+  @@index([ipHash, createdAt])
+  @@index([runGroupId])
 }
 
 model AgentStep {

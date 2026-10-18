@@ -8,7 +8,7 @@ export type JobEventPayload =
       data: { stepType: StepType; status: StepStatus; testCaseId: string | null; attemptNumber: number | null };
     }
   | { type: 'test_completed'; data: { testCaseId: string; status: TestStatus; totalAttempts: number } }
-  | { type: 'job_finished'; data: { status: 'completed' | 'failed'; errorCode: string | null } };
+  | { type: 'job_finished'; data: { status: 'completed' | 'failed' | 'cancelled'; errorCode: string | null } };
 
 export type JobEvent = JobEventPayload & { id: string; seq: number };
 

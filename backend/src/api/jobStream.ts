@@ -16,7 +16,7 @@ export function closeAllJobStreams(): void {
 }
 
 function isTerminal(status: JobStatus): boolean {
-  return status === 'completed' || status === 'failed';
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 function writeEvent(res: Response, event: string, data: unknown, id?: string): void {

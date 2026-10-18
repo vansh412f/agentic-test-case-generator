@@ -7,7 +7,7 @@ export function cn(...inputs: ClassValue[]): string {
 }
 
 export function isTerminalJobStatus(status: JobStatus): boolean {
-  return status === 'completed' || status === 'failed';
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 export function formatDateTime(value: string | null): string {

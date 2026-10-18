@@ -14,7 +14,7 @@ function confidenceBadge(score: number, band: string): string {
 
 function badge(status: string): string {
   const color = status === 'passed' || status === 'success' || status === 'completed'
-    ? '#65dc99' : status === 'failed' || status === 'failure' ? '#ff8e98' : '#f4cd78';
+    ? '#65dc99' : status === 'failed' || status === 'failure' ? '#ff8e98' : status === 'cancelled' ? '#94a3b8' : '#f4cd78';
   return `<strong style="color:${color}">${h(status)}</strong>`;
 }
 

@@ -1055,6 +1055,8 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
 .badge-blue .badge-dot { background: #4e9bb4; animation: blink 1s infinite; }
 .badge-red { color: #9b403b; background: #fbe8e6; }
 .badge-red .badge-dot { background: #d95a53; }
+.badge-grey { color: #64748b; background: #f1f5f9; }
+.badge-grey .badge-dot { background: #94a3b8; }
 
 .history-skeleton {
   border: 1px solid #e0e4de;

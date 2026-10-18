@@ -74,7 +74,7 @@ router.get('/:id/report.html', async (req, res) => {
   try {
     const job = await getJobById(parsed.data.id);
     if (!job) throw new JobError('JOB_NOT_FOUND', 'Job not found.');
-    if (job.status !== 'completed' && job.status !== 'failed') {
+    if (job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {
       throw new JobError('REPORT_NOT_READY', 'The job has not finished.');
     }
     res.setHeader('Cache-Control', 'no-store');

@@ -18,7 +18,8 @@ export type JobStatus =
   | 'generating'
   | 'executing'
   | 'completed'
-  | 'failed';
+  | 'failed'
+  | 'cancelled';
 
 export type StepType =
   | 'crawl'
@@ -219,6 +220,8 @@ export interface JobDetail {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  cancelledAt?: string | null;
+  runGroupId?: string | null;
   agentSteps: AgentStep[];
   generatedTests: PersistedGeneratedTest[];
   tokenUsage: TokenUsage;
@@ -229,6 +232,7 @@ export interface JobSummary {
   id: string;
   targetUrl: string;
   status: JobStatus;
+  runGroupId?: string | null;
   createdAt: string;
   completedAt: string | null;
   testCount: number;

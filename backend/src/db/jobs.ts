@@ -11,7 +11,7 @@ const NON_TERMINAL_STATUSES: JobStatus[] = ['pending', 'crawling', 'planning', '
 // does not exist. Only this admission write throws; pipeline writes stay best-effort.
 export async function createPendingJobs(
   jobs: ReadonlyArray<{ id: string; targetUrl: string }>,
-  owner: { visitorId: string | null; usedOwnKeys: boolean },
+  owner: { visitorId: string | null; usedOwnKeys: boolean; ipHash?: string | null; runGroupId?: string | null },
 ): Promise<void> {
   try {
     await prisma.job.createMany({
@@ -20,6 +20,8 @@ export async function createPendingJobs(
         targetUrl: job.targetUrl,
         visitorId: owner.visitorId,
         usedOwnKeys: owner.usedOwnKeys,
+        ipHash: owner.ipHash ?? null,
+        runGroupId: owner.runGroupId ?? null,
         status: 'pending' as const,
       })),
     });
