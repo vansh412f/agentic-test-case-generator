@@ -216,6 +216,11 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             <div className="job-title-line">
               <StatusBadge status={job.status} />
               <span>#{job.id.slice(0, 8)}</span>
+              {job.usedOwnKeys && (
+                <span className="byok-pill" style={{ color: '#4d6919', background: '#edf8db', borderRadius: '20px', padding: '3px 8px', fontSize: '10px', fontWeight: 600 }}>
+                  Ran on your API keys
+                </span>
+              )}
               {!terminal && transport !== 'idle' && (
                 <span className={`live-pill ${transport === 'sse' ? 'is-live' : ''}`}>
                   <i aria-hidden="true" />

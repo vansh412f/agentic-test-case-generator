@@ -7,7 +7,7 @@ import type { LlmRequest, LlmResponse, LlmMessage, LlmErrorCode, LlmProvider } f
 import { LLM_MAX_RETRIES_PER_PROVIDER, LLM_REQUEST_TIMEOUT_MS, LLM_PROVIDER_ORDER } from './providers.config.ts';
 import type { LlmProviderName } from './providers.config.ts';
 import { PROVIDER_REGISTRY } from './providers/index.ts';
-import { llmKeyOverride } from './requestKeys.ts';
+import { hasAnyRequestKey, llmKeyOverride } from './requestKeys.ts';
 
 interface LlmCallLog {
   timestamp: string;
@@ -117,12 +117,16 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
   const collectedFailures: CollectedFailure[] = [];
   const requestPreview = buildRequestPreview(request.messages);
 
-  const effectiveProviders = LLM_PROVIDER_ORDER.filter(
-    (name) => llmKeyOverride(name) !== undefined || activeProviders.includes(name),
+  const byok = hasAnyRequestKey();
+  const effectiveProviders = LLM_PROVIDER_ORDER.filter((name) =>
+    byok ? llmKeyOverride(name) !== undefined : activeProviders.includes(name),
   );
 
   if (effectiveProviders.length === 0) {
-    throw new LlmError('AUTH_FAILED', 'No LLM provider keys are configured (server or request).');
+    throw new LlmError(
+      'AUTH_FAILED',
+      byok ? 'No usable key in request.' : 'No LLM provider keys are configured (server or request).',
+    );
   }
 
   for (const providerName of effectiveProviders) {

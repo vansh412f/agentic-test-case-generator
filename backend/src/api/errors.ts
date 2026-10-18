@@ -11,6 +11,17 @@ import type { LlmErrorCode } from '../llm/types.ts';
 import { RunnerError } from '../runner/errors.ts';
 import type { RunnerErrorCode } from '../runner/errors.ts';
 
+export type CommonApiErrorCode =
+  | 'INVALID_API_KEY'
+  | 'RATE_LIMITED'
+  | 'DAILY_QUOTA_EXHAUSTED'
+  | 'QUEUE_FULL'
+  | 'POW_FAILED'
+  | 'UPSTREAM_UNAVAILABLE'
+  | 'BROWSER_LAUNCH_FAILED'
+  | 'INVALID_REQUEST'
+  | 'INVALID_WEBHOOK_URL';
+
 const CRAWL_ERROR_STATUS: Record<CrawlErrorCode, number> = {
   INVALID_URL: 400,
   NAVIGATION_TIMEOUT: 504,

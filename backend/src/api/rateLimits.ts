@@ -36,6 +36,16 @@ export const generateIpLimiter = rateLimit({
   skip: (req) => hasOwnKeys(req),
 });
 
+export const generateByokIpLimiter = rateLimit({
+  windowMs: ONE_HOUR_MS,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip ?? ''),
+  handler: createRateLimitHandler(ONE_HOUR_MS),
+  skip: (req) => !hasOwnKeys(req),
+});
+
 export const crawlIpLimiter = rateLimit({
   windowMs: ONE_HOUR_MS,
   limit: 10,

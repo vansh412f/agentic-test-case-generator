@@ -1,3 +1,16 @@
+export type ApiErrorCode =
+  | 'RATE_LIMITED'
+  | 'DAILY_QUOTA_EXHAUSTED'
+  | 'QUEUE_FULL'
+  | 'POW_FAILED'
+  | 'INVALID_API_KEY'
+  | 'UPSTREAM_UNAVAILABLE'
+  | 'BROWSER_LAUNCH_FAILED'
+  | 'INVALID_REQUEST'
+  | 'INVALID_URL'
+  | 'NETWORK_ERROR'
+  | string;
+
 export type JobStatus =
   | 'pending'
   | 'crawling'
@@ -208,6 +221,7 @@ export interface JobDetail {
   agentSteps: AgentStep[];
   generatedTests: PersistedGeneratedTest[];
   costEstimate: CostEstimate;
+  usedOwnKeys: boolean;
 }
 
 export interface JobSummary {

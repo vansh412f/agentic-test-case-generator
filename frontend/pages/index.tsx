@@ -19,6 +19,7 @@ import { useJobStream } from '@/hooks/useJobStream';
 import { isTerminalJobStatus } from '@/lib/utils';
 import { classifyTarget, isTunnelUrl, getDeploymentMode } from '@/lib/targetUrl';
 import { SITE_URL } from '@/lib/site';
+import { handleGenerationError } from '@/lib/generationErrors';
 
 import {
   apiBase,
@@ -293,43 +294,10 @@ export default function HomePage() {
         toast.success(`${jobIds.length} jobs queued. They run one after another.`);
       }
     } catch (error) {
-      if (error instanceof ApiError) {
-        if (error.status === 429 || error.code === 'RATE_LIMITED') {
-          const retryAfter = errorDetail(error, 'retryAfterSeconds');
-          const wait =
-            retryAfter !== undefined
-              ? ` Please retry in ${retryAfter}s.`
-              : ' Please slow down.';
-          toast.error(`Rate limit reached.${wait}`);
-          dispatch({ type: 'FAILED', message: errorMessage(error) });
-          return;
-        }
-
-        if (error.code === 'DAILY_QUOTA_EXHAUSTED') {
-          const limit = errorDetail(error, 'limit');
-          const resetsAt = errorDetail(error, 'resetsAt');
-          setQuotaDetails({
-            limit: typeof limit === 'number' ? limit : 20,
-            resetsAt: typeof resetsAt === 'string' ? resetsAt : undefined,
-          });
-          toast.error('The free daily demo quota is exhausted. Add your own API key to continue.');
-        } else if (error.code === 'QUEUE_FULL') {
-          toast.error('The demo server is currently running at maximum capacity. Please retry shortly.');
-        } else if (error.code === 'POW_FAILED') {
-          toast.error('Bot verification failed. Please try again.');
-        } else if (
-          error.code === 'UPSTREAM_UNAVAILABLE' ||
-          error.code === 'BROWSER_LAUNCH_FAILED' ||
-          error.code === 'CRAWL_FAILED'
-        ) {
-          toast.error(error.message);
-        } else {
-          toast.error(error.message || 'Generation failed.');
-        }
-      } else {
-        toast.error(error instanceof Error ? error.message : 'Generation failed.');
-      }
-      dispatch({ type: 'FAILED', message: errorMessage(error) });
+      const msg = handleGenerationError(error, {
+        onQuota: (details) => setQuotaDetails(details),
+      });
+      dispatch({ type: 'FAILED', message: msg });
     }
   }
 

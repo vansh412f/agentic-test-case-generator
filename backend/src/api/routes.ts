@@ -9,11 +9,13 @@ import { visitorMiddleware } from './visitorMiddleware.ts';
 import { webhookUrlProblem, createWebhookTarget } from '../notify/webhook.ts';
 import {
   generateIpLimiter,
+  generateByokIpLimiter,
   crawlIpLimiter,
   powChallengeLimiter,
   visitorDailyLimiter,
   byokValidateLimiter,
 } from './rateLimits.ts';
+import { checkProviderKey } from '../llm/keyCheck.ts';
 import { powService } from '../security/pow.ts';
 import {
   jobsCreatedToday,
@@ -139,35 +141,11 @@ router.post('/byok/validate', byokValidateLimiter, async (req, res) => {
     return;
   }
 
-  const endpoint = provider === 'groq'
-    ? 'https://api.groq.com/openai/v1/models'
-    : 'https://generativelanguage.googleapis.com/v1beta/openai/models';
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${key}`,
-      },
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    if (response.status === 200) {
-      res.status(200).json({ valid: true });
-    } else {
-      res.status(200).json({ valid: false });
-    }
-  } catch (_error) {
-    clearTimeout(timeoutId);
-    res.status(200).json({ valid: false, reason: 'unreachable' });
-  }
+  const status = await checkProviderKey(provider, key);
+  res.status(200).json({ valid: status === 'valid' });
 });
 
-router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res) => {
+router.post('/generate', generateIpLimiter, generateByokIpLimiter, visitorDailyLimiter, async (req, res) => {
   // 1. Parse body
   const parsed = GenerateRequestSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -198,7 +176,26 @@ router.post('/generate', generateIpLimiter, visitorDailyLimiter, async (req, res
   };
   const usesOwnKeys = hasOwnKeys(req);
 
-  // 4. Daily quota check & reservation BEFORE consuming ALTCHA (skipped for BYOK)
+  // 4. Key pre-flight check before quota/PoW/gate
+  if (usesOwnKeys) {
+    for (const provider of ['groq', 'gemini'] as const) {
+      const key = requestKeys[provider];
+      if (key) {
+        const check = await checkProviderKey(provider, key);
+        if (check === 'invalid') {
+          const providerDisplayName = provider === 'groq' ? 'Groq' : 'Gemini';
+          res.status(400).json({
+            error: 'INVALID_API_KEY',
+            message: `Your ${providerDisplayName} API key was rejected by the provider.`,
+            details: { provider },
+          });
+          return;
+        }
+      }
+    }
+  }
+
+  // 5. Daily quota check & reservation BEFORE consuming ALTCHA (skipped for BYOK)
   if (!usesOwnKeys) {
     const admitted = await tryReserve(requested);
     if (!admitted) {
