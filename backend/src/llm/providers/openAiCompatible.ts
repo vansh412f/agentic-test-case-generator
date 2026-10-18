@@ -15,29 +15,49 @@ interface OpenAiResponseEnvelope {
   };
 }
 
+export const unsupportedReasoningEffort = new Set<string>();
+
 export async function openAiCompatibleChat(options: {
   providerName: LlmProviderName;
   endpointUrl: string;
   apiKey: string;
   defaultModel: string;
+  model?: string;
+  reasoningEffort?: string;
   request: LlmRequest;
   signal: AbortSignal;
 }): Promise<LlmResponse> {
-  const { providerName, endpointUrl, apiKey, defaultModel, request, signal } = options;
+  const { providerName, endpointUrl, apiKey, request, signal } = options;
+  const effectiveModel = options.model || options.defaultModel;
+  const unsupportedKey = `${providerName}:${effectiveModel}`;
 
-  const bodyPayload: Record<string, unknown> = {
-    model: defaultModel,
-    messages: request.messages,
-    max_tokens: request.maxTokens ?? 4096,
+  const buildBodyPayload = (includeReasoning: boolean): Record<string, unknown> => {
+    const payload: Record<string, unknown> = {
+      model: effectiveModel,
+      messages: request.messages,
+      max_tokens: request.maxTokens ?? 4096,
+    };
+
+    if (request.temperature !== undefined) {
+      payload.temperature = request.temperature;
+    }
+
+    if (request.jsonMode) {
+      payload.response_format = { type: 'json_object' };
+    }
+
+    if (
+      includeReasoning &&
+      options.reasoningEffort !== undefined &&
+      !unsupportedReasoningEffort.has(unsupportedKey)
+    ) {
+      payload.reasoning_effort = options.reasoningEffort;
+    }
+
+    return payload;
   };
 
-  if (request.temperature !== undefined) {
-    bodyPayload.temperature = request.temperature;
-  }
-
-  if (request.jsonMode) {
-    bodyPayload.response_format = { type: 'json_object' };
-  }
+  let bodyPayload = buildBodyPayload(true);
 
   let response: Response;
   try {
@@ -56,6 +76,34 @@ export async function openAiCompatibleChat(options: {
     }
     if (err instanceof LlmError) throw err;
     throw new LlmError('PROVIDER_UNAVAILABLE', `Failed to reach ${providerName} API.`, err);
+  }
+
+  // If the provider returns 400 whose body mentions reasoning_effort: remember that provider+model doesn't support it and retry ONCE without it
+  if (response.status === 400 && bodyPayload.reasoning_effort !== undefined) {
+    const errorText = await response.text().catch(() => 'No response body');
+    if (errorText.includes('reasoning_effort')) {
+      unsupportedReasoningEffort.add(unsupportedKey);
+      bodyPayload = buildBodyPayload(false);
+      try {
+        response = await fetch(endpointUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(bodyPayload),
+          signal,
+        });
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          throw new LlmError('TIMEOUT', `Provider ${providerName} request timed out on retry.`, err);
+        }
+        if (err instanceof LlmError) throw err;
+        throw new LlmError('PROVIDER_UNAVAILABLE', `Failed to reach ${providerName} API on retry.`, err);
+      }
+    } else {
+      throw new LlmError('BAD_RESPONSE', `${providerName} returned 400: ${errorText}`);
+    }
   }
 
   if (!response.ok) {
@@ -93,7 +141,7 @@ export async function openAiCompatibleChat(options: {
 
   return {
     content: data.choices[0].message.content,
-    model: data.model || defaultModel,
+    model: data.model || effectiveModel,
     provider: providerName,
     usage: {
       promptTokens: data.usage?.prompt_tokens ?? 0,

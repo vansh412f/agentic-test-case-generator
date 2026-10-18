@@ -25,7 +25,8 @@ export async function generateTest(
 
   const response = await callLlm({
     messages,
-    maxTokens: 4000,
+    maxTokens: 2000,
+    tier: 'fast',
   });
 
   const match = FENCE_REGEX.exec(response.content);

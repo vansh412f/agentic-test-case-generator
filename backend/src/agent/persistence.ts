@@ -9,6 +9,7 @@ import { publishJobEvent } from './jobEvents.ts';
 const PROVIDER_MODELS: Record<LlmProviderName, string> = {
   groq: GROQ_DEFAULT_MODEL,
   gemini: GEMINI_DEFAULT_MODEL,
+  nvidia: 'openai/gpt-oss-20b',
 };
 
 interface StepContext {
@@ -57,7 +58,7 @@ export function withLlmStep<T>(
 
 export async function withMeasuredStep<T>(
   context: StepContext,
-  stepType: 'crawl' | 'validate' | 'execute',
+  stepType: 'crawl' | 'validate' | 'execute' | 'generate',
   operation: () => Promise<T>,
   outcome: (result: T) => { success: boolean; error?: string },
 ): Promise<T> {

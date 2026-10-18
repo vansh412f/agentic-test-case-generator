@@ -13,4 +13,8 @@ export interface ModelPricing {
 export const MODEL_PRICING_USD_PER_MILLION: Readonly<Record<string, ModelPricing>> = {
   [GROQ_DEFAULT_MODEL]: { promptUsdPerMillion: 0.15, completionUsdPerMillion: 0.6 },
   [GEMINI_DEFAULT_MODEL]: { promptUsdPerMillion: 0, completionUsdPerMillion: 0 },
+  'openai/gpt-oss-20b': { promptUsdPerMillion: 0.075, completionUsdPerMillion: 0.3 },
+  'gpt-oss-20b': { promptUsdPerMillion: 0.075, completionUsdPerMillion: 0.3 },
+  'gemini-2.5-flash-lite': { promptUsdPerMillion: 0, completionUsdPerMillion: 0 },
+  'flash-lite': { promptUsdPerMillion: 0, completionUsdPerMillion: 0 },
 };

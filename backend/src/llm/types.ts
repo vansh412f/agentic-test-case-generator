@@ -43,6 +43,8 @@ export interface LlmRequest {
    * to the provider API. The caller's prompt must explicitly mention JSON.
    */
   jsonMode?: boolean;
+  /** Latency/reasoning tier. Default is 'reasoning'. */
+  tier?: 'reasoning' | 'fast';
 }
 
 /** Normalised response returned to the caller regardless of provider. */

@@ -25,6 +25,13 @@ const configSchema = z.object({
   DIRECT_URL: z.string().trim().min(1),
   GROQ_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
+  GROQ_REASONING_MODEL: z.string().default('openai/gpt-oss-120b'),
+  GROQ_FAST_MODEL: z.string().default('openai/gpt-oss-20b'),
+  GEMINI_REASONING_MODEL: z.string().default('gemini-2.5-flash'),
+  GEMINI_FAST_MODEL: z.string().default('gemini-2.5-flash-lite'),
+  NVIDIA_API_KEY: z.string().optional(),
+  NVIDIA_MODEL: z.string().default('openai/gpt-oss-20b'),
+  LLM_PROVIDER_ORDER: z.string().default('groq,gemini,nvidia'),
   POW_SECRET: z.string().min(16).optional(),
   VISITOR_SIGNING_SECRET: z.string().min(16).optional(),
   GENERATE_DAILY_LIMIT: z.coerce.number().int().positive().default(20),
@@ -70,6 +77,7 @@ export const VIEWPORT = { width: 1280, height: 720 } as const;
 export const PROVIDER_ENV_KEYS: Record<LlmProviderName, keyof Config> = {
   groq: 'GROQ_API_KEY',
   gemini: 'GEMINI_API_KEY',
+  nvidia: 'NVIDIA_API_KEY',
 };
 
 const activeProviders: LlmProviderName[] = [];

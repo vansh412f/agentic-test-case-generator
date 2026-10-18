@@ -10,6 +10,7 @@ import {
 import { planTests } from './steps/planner.ts';
 import { generateTest } from './steps/generator.ts';
 import type { GeneratedTest } from './steps/generator.ts';
+import { compileTest, CompileError } from './steps/compiler.ts';
 import { correctTest, correctionPreservesAssertions } from './steps/corrector.ts';
 import { validateTestCode } from '../runner/validator.ts';
 import { executeTests, type FailureClass } from '../runner/executor.ts';
@@ -131,10 +132,26 @@ async function runPersistedPipeline(jobId: string, url: string, deepCrawl: boole
       // Initial generation
       await safeWrite('updateJobStatus:generating', () => updateJobStatus(jobId, 'generating'));
       announcePhase(jobId, 'generating');
-      const initialGen = await withLlmStep(
-        { jobId, testCaseId: testCase.id }, 'generate',
-        () => generateTest(testCase, elementsInScope, appMap.url),
-      );
+      let initialGen: GeneratedTest;
+      try {
+        initialGen = await withMeasuredStep(
+          { jobId, testCaseId: testCase.id },
+          'generate',
+          async () => compileTest(testCase, elementsInScope, appMap.url),
+          () => ({ success: true }),
+        );
+      } catch (err) {
+        if (err instanceof CompileError) {
+          console.warn(`[Runner] ${testCase.id} | compileTest fallback to LLM: ${err.message}`);
+          initialGen = await withLlmStep(
+            { jobId, testCaseId: testCase.id },
+            'generate',
+            () => generateTest(testCase, elementsInScope, appMap.url),
+          );
+        } else {
+          throw err;
+        }
+      }
       const filename = initialGen.filename;
       let currentCode = initialGen.code;
       const attempts: TestAttempt[] = [];

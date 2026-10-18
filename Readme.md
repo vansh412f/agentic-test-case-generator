@@ -492,8 +492,15 @@ pnpm dev
 | `NAVIGATION_TIMEOUT_MS` | No | `30000` | Playwright page load timeout (ms) |
 | `DATABASE_URL` | **Yes** | — | Supavisor pooled PostgreSQL connection string |
 | `DIRECT_URL` | **Yes** | — | Direct PostgreSQL connection string for Prisma migrations |
-| `GROQ_API_KEY` | Optional* | — | Server-level Groq API key (primary provider) |
-| `GEMINI_API_KEY` | Optional* | — | Server-level Google Gemini API key (fallback provider) |
+| `GROQ_API_KEY` | Optional* | — | Server-level Groq API key (primary provider; free tier: ~7,500 TPM) |
+| `GEMINI_API_KEY` | Optional* | — | Server-level Google Gemini API key (fallback provider; free tier: 15 RPM, 1M TPM) |
+| `NVIDIA_API_KEY` | No | — | Optional server key for NVIDIA API (free credits at build.nvidia.com) |
+| `GROQ_REASONING_MODEL` | No | `openai/gpt-oss-120b` | Groq reasoning model for planning |
+| `GROQ_FAST_MODEL` | No | `openai/gpt-oss-20b` | Groq fast model for correction and generator fallback |
+| `GEMINI_REASONING_MODEL` | No | `gemini-2.5-flash` | Gemini reasoning model for planning |
+| `GEMINI_FAST_MODEL` | No | `gemini-2.5-flash-lite` | Gemini fast model for correction and fallback |
+| `NVIDIA_MODEL` | No | `openai/gpt-oss-20b` | Model used for NVIDIA API requests |
+| `LLM_PROVIDER_ORDER` | No | `groq,gemini,nvidia` | Comma-separated provider fallback sequence |
 | `POW_SECRET` | No | — | Secret key for ALTCHA challenge signing (min 16 chars) |
 | `VISITOR_SIGNING_SECRET`| No | — | Secret key for visitor token HMAC signing (min 16 chars) |
 | `GENERATE_DAILY_LIMIT` | No | `20` | Daily global quota limit for unauthenticated runs |

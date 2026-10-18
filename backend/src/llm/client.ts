@@ -129,7 +129,20 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
     );
   }
 
-  for (const providerName of effectiveProviders) {
+  const totalMessageChars = request.messages.reduce((sum, m) => sum + m.content.length, 0);
+  const est = Math.ceil(totalMessageChars / 3.5) + (request.maxTokens ?? 4096);
+  const PROVIDER_TPM_BUDGET: Partial<Record<LlmProviderName, number>> = { groq: 7500 };
+
+  for (let i = 0; i < effectiveProviders.length; i++) {
+    const providerName = effectiveProviders[i];
+    const remainingProviders = effectiveProviders.slice(i + 1);
+    const budget = PROVIDER_TPM_BUDGET[providerName];
+
+    if (budget !== undefined && est > budget && remainingProviders.length > 0) {
+      console.log(`[LLM] skip ${providerName}: est ${est} tok > TPM budget`);
+      continue;
+    }
+
     const provider = PROVIDER_REGISTRY[providerName];
 
     for (let attempt = 0; attempt <= LLM_MAX_RETRIES_PER_PROVIDER; attempt++) {

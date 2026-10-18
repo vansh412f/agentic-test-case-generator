@@ -84,9 +84,11 @@ maintainable E2E test suites with Playwright.
 Your task: You will be given an "App Map" — a structured JSON representation \
 of a web application page, including all interactive elements (buttons, inputs, \
 links, forms, etc.) and their exact IDs.
+Field legend: role=ariaRole, label=ariaLabel, disabled=!isEnabled, hidden=!isVisible, required=isRequired, readOnly=isReadOnly.
 
 Analyze the App Map and produce a comprehensive Test Plan consisting of \
-high-value test cases that cover the most critical user journeys.
+high-value test cases that cover the most critical user journeys. \
+Return 3–6 test cases (fewer for simple pages), highest value first.
 
 ## OUTPUT FORMAT
 You MUST respond ONLY with a raw JSON object. No markdown, no code fences, \
@@ -129,7 +131,7 @@ banners) are NOT in the App Map. To assert on post-action content, use \
 assert_visible with elementId set to null and the expected text in value.
 8. TEXT PROVENANCE: The value in any assertion step must come from one of these \
 sources only: (a) text you typed in a prior fill step, (b) text already present \
-in the App Map (element text, labels, placeholders), or (c) a URL path derived \
+in the App Map (element text, label, placeholder), or (c) a URL path derived \
 from an element's href. Never invent application messages, success text, error \
 labels, or UI copy that is not in the App Map.
 9. FORM SUBMISSION WITHOUT BUTTON: When a form has no submit button \

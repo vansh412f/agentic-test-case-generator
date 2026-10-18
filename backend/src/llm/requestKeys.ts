@@ -4,6 +4,7 @@ import type { LlmProviderName } from './providers.config.ts';
 export interface RequestLlmKeys {
   groq?: string;
   gemini?: string;
+  nvidia?: never;
 }
 
 const storage = new AsyncLocalStorage<RequestLlmKeys>();
@@ -13,6 +14,7 @@ export function withRequestLlmKeys<T>(keys: RequestLlmKeys, fn: () => Promise<T>
 }
 
 export function llmKeyOverride(provider: LlmProviderName): string | undefined {
+  if (provider === 'nvidia') return undefined;
   const value = storage.getStore()?.[provider];
   return value && value.trim().length > 0 ? value.trim() : undefined;
 }

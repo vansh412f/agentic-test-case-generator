@@ -38,8 +38,9 @@ export async function correctTest(
   const response = await callLlm({
     messages,
     jsonMode: false,
-    maxTokens: 4000,
+    maxTokens: 2000,
     temperature: 0.1,
+    tier: 'fast',
   });
 
   const match = FENCE_REGEX.exec(response.content);

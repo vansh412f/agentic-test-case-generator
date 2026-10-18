@@ -6,6 +6,9 @@ import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt, TestPlanSchema } from '.
 import type { TestPlan } from '../prompts/plannerPrompt.ts';
 import type { AppMap } from '../../crawler/types.ts';
 import { canonicalPageUrl } from '../../crawler/mergeAppMaps.ts';
+import { toPlannerView } from '../plannerView.ts';
+import { buildPlanCacheKey, getCachedPlan, setCachedPlan } from '../planCache.ts';
+import { MAX_TEST_CASES } from '../run.config.ts';
 
 function formatZodErrors(error: z.ZodError): string {
   return error.issues
@@ -158,36 +161,72 @@ export function validateAndNormalizePlan(
     return { ok: false, kind: 'references', detail, plan: result.data, badCaseIndexes };
   }
 
+  capAndRenumberTestPlan(result.data);
   return { ok: true, plan: result.data };
 }
 
-export async function planTests(appMap: AppMap): Promise<TestPlan> {
-  const appMapJson = JSON.stringify(appMap);
+export function capAndRenumberTestPlan(plan: TestPlan): TestPlan {
+  plan.testCases = plan.testCases.slice(0, MAX_TEST_CASES);
+  plan.testCases.forEach((tc, idx) => {
+    tc.id = `tc-${idx + 1}`;
+  });
+  return plan;
+}
+
+export interface PlanTestsOptions {
+  testData?: unknown;
+  focus?: unknown;
+  keepHiddenIds?: Set<string>;
+  extraPromptBlock?: string;
+}
+
+export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Promise<TestPlan> {
+  const plannerView = toPlannerView(appMap, { keepHiddenIds: options?.keepHiddenIds });
+  const cacheKey = buildPlanCacheKey({
+    view: plannerView,
+    data: options?.testData,
+    focus: options?.focus,
+  });
+
+  const cached = getCachedPlan(cacheKey);
+  if (cached) {
+    console.log('[Planner] cache hit');
+    return cached;
+  }
+
+  const appMapJson = JSON.stringify(plannerView);
   const knownIds = new Set(appMap.elements.map((e) => e.id));
   const pageScope = buildPageScope(appMap);
+  let userPrompt = buildPlannerUserPrompt(appMapJson, { multiPage: pageScope !== null });
+  if (options?.extraPromptBlock) {
+    userPrompt += `\n\n${options.extraPromptBlock}`;
+  }
+
   const messages: LlmMessage[] = [
     { role: 'system', content: PLANNER_SYSTEM_PROMPT },
-    { role: 'user', content: buildPlannerUserPrompt(appMapJson, { multiPage: pageScope !== null }) },
+    { role: 'user', content: userPrompt },
   ];
 
   const salvagePlan = (res: Extract<ValidationResult, { kind: 'references' }>): TestPlan | null => {
     const validCases = res.plan.testCases.filter((_, idx) => !res.badCaseIndexes.has(idx));
     if (validCases.length > 0) {
-      validCases.forEach((tc, idx) => {
-        tc.id = `tc-${idx + 1}`;
-      });
       console.warn(
         `[Planner] Dropped ${res.badCaseIndexes.size} test case(s) with hallucinated element IDs: ${res.detail}`,
       );
-      return { testCases: validCases };
+      const salvaged: TestPlan = { testCases: validCases };
+      capAndRenumberTestPlan(salvaged);
+      return salvaged;
     }
     return null;
   };
 
   // First attempt
-  const response = await callLlm({ messages, jsonMode: true, maxTokens: 4000 });
+  const response = await callLlm({ messages, jsonMode: true, maxTokens: 3000, tier: 'reasoning' });
   const firstResult = validateAndNormalizePlan(response.content, knownIds, appMap.url, pageScope);
-  if (firstResult.ok) return firstResult.plan;
+  if (firstResult.ok) {
+    setCachedPlan(cacheKey, firstResult.plan);
+    return firstResult.plan;
+  }
 
   // Self-repair (one attempt)
   console.warn(`[Planner] Attempt 1 failed (${firstResult.kind}):`, JSON.stringify(firstResult, null, 2));
@@ -201,20 +240,29 @@ export async function planTests(appMap: AppMap): Promise<TestPlan> {
     },
   ];
 
-  const repairResponse = await callLlm({ messages: repairMessages, jsonMode: true, maxTokens: 4000 });
+  const repairResponse = await callLlm({ messages: repairMessages, jsonMode: true, maxTokens: 3000, tier: 'reasoning' });
   const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, pageScope);
-  if (repairResult.ok) return repairResult.plan;
+  if (repairResult.ok) {
+    setCachedPlan(cacheKey, repairResult.plan);
+    return repairResult.plan;
+  }
 
   // Graceful degradation for reference-only errors after repair
   if (repairResult.kind === 'references') {
     const salvaged = salvagePlan(repairResult);
-    if (salvaged) return salvaged;
+    if (salvaged) {
+      setCachedPlan(cacheKey, salvaged);
+      return salvaged;
+    }
   }
 
   // Fallback: If repair failed structurally but firstResult was only references, salvage from firstResult
   if (firstResult.kind === 'references') {
     const salvaged = salvagePlan(firstResult);
-    if (salvaged) return salvaged;
+    if (salvaged) {
+      setCachedPlan(cacheKey, salvaged);
+      return salvaged;
+    }
   }
 
   throw new LlmError('BAD_RESPONSE', 'Planner failed after self-repair attempt', {
