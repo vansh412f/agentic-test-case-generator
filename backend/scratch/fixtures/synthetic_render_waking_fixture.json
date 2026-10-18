@@ -1,4 +1,5 @@
 {
+  "_comment": "SYNTHETIC FIXTURE: Simulated Render spinning-up 503 response",
   "host": "test-app.onrender.com",
   "status": 503,
   "statusText": "Service Unavailable",
