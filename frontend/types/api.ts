@@ -225,6 +225,7 @@ export interface JobDetail {
   cancelledAt?: string | null;
   runGroupId?: string | null;
   queuePosition?: number | null;
+  groupRemainingJobs?: number;
   canCancel?: boolean;
   agentSteps: AgentStep[];
   generatedTests: PersistedGeneratedTest[];

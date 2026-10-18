@@ -2,6 +2,8 @@ import { runPipeline, toJobErrorCode, type PipelineResult } from './pipeline.ts'
 import { openJobChannel } from './jobEvents.ts';
 import { withRequestLlmKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
 import { deliverJobWebhook, type WebhookTarget, type JobWebhookPayload } from '../notify/webhook.ts';
+import { JobCancelledError, registerJob, release } from './cancellation.ts';
+import { prisma } from '../db/client.ts';
 
 import type { ElementRef, TestDataEntry } from '../api/schemas.ts';
 
@@ -13,7 +15,7 @@ export interface QueuedJob {
   focus?: ElementRef[];
 }
 
-export type RunOne = (job: QueuedJob) => Promise<Pick<PipelineResult, 'generatedTests'> | void>;
+export type RunOne = (job: QueuedJob, signal?: AbortSignal) => Promise<Pick<PipelineResult, 'generatedTests'> | void>;
 
 export interface RunGroupOptions {
   webhook?: WebhookTarget;
@@ -96,12 +98,39 @@ export function startDetachedRun(
   const run = withRequestLlmKeys(keys, async () => {
     for (const job of jobs) {
       try {
-        const result = await runOne(job);
-        notify(webhookPayload(job, { result }));
-      } catch (error) {
-        // runPipeline already persisted failJob + published job_finished.
-        console.warn(`[JobRunner] ${job.id} failed: ${error instanceof Error ? error.message : String(error)}`);
-        notify(webhookPayload(job, { error }));
+        const dbJob = await prisma.job.findUnique({
+          where: { id: job.id },
+          select: { status: true },
+        });
+        if (dbJob?.status === 'cancelled') {
+          continue;
+        }
+
+        const signal = registerJob(job.id);
+        if (signal.aborted) {
+          continue;
+        }
+
+        try {
+          const result = await runOne(job, signal);
+          notify(webhookPayload(job, { result }));
+        } catch (error) {
+          if (error instanceof JobCancelledError || signal.aborted) {
+            notify({
+              event: 'job.finished',
+              jobId: job.id,
+              targetUrl: job.url,
+              finishedAt: new Date().toISOString(),
+              status: 'cancelled',
+              errorCode: null,
+            });
+          } else {
+            console.warn(`[JobRunner] ${job.id} failed: ${error instanceof Error ? error.message : String(error)}`);
+            notify(webhookPayload(job, { error }));
+          }
+        } finally {
+          release(job.id);
+        }
       } finally {
         inFlightJobIds.delete(job.id);
       }

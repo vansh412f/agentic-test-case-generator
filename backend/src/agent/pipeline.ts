@@ -32,6 +32,8 @@ import { withLlmStep, withMeasuredStep, recordStep } from './persistence.ts';
 import { CrawlError } from '../crawler/crawlErrors.ts';
 import { LlmError } from '../llm/types.ts';
 import { RunnerError } from '../runner/errors.ts';
+import { JobCancelledError } from './cancellation.ts';
+import { prisma } from '../db/client.ts';
 
 export type { GeneratedTest };
 
@@ -83,12 +85,13 @@ export function toJobErrorCode(error: unknown): string {
   return 'INTERNAL_ERROR';
 }
 
-async function crawlForJob(url: string, deepCrawl: boolean): Promise<AppMap> {
+async function crawlForJob(url: string, deepCrawl: boolean, signal?: AbortSignal): Promise<AppMap> {
   if (deepCrawl) {
     return crawlSite(url, {
       maxPages: DEEP_CRAWL_MAX_PAGES,
       startPageElementCap: DEEP_CRAWL_START_PAGE_ELEMENT_CAP,
       extraPageElementCap: DEEP_CRAWL_EXTRA_PAGE_ELEMENT_CAP,
+      signal,
     });
   }
   const cached = takeFreshCrawl(url);
@@ -96,19 +99,22 @@ async function crawlForJob(url: string, deepCrawl: boolean): Promise<AppMap> {
     console.log(`[Pipeline] Crawl cache hit for ${url}`);
     return Promise.resolve(cached);
   }
-  return crawlPage(url);
+  return crawlPage(url, { signal });
 }
 
 // The job row must already exist (createPendingJobs at admission).
-export function runPipeline(job: {
-  id: string;
-  url: string;
-  deepCrawl?: boolean;
-  testData?: TestDataEntry[];
-  focus?: ElementRef[];
-}): Promise<PipelineResult> {
+export function runPipeline(
+  job: {
+    id: string;
+    url: string;
+    deepCrawl?: boolean;
+    testData?: TestDataEntry[];
+    focus?: ElementRef[];
+  },
+  signal?: AbortSignal,
+): Promise<PipelineResult> {
   return withPersistence(() =>
-    runPersistedPipeline(job.id, job.url, job.deepCrawl ?? false, job.testData, job.focus),
+    runPersistedPipeline(job.id, job.url, job.deepCrawl ?? false, job.testData, job.focus, signal),
   );
 }
 
@@ -118,21 +124,24 @@ async function runPersistedPipeline(
   deepCrawl: boolean,
   testData?: TestDataEntry[],
   focus?: ElementRef[],
+  signal?: AbortSignal,
 ): Promise<PipelineResult> {
   const runId = `run-${jobId}`;
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
 
   try {
+    signal?.throwIfAborted();
     await safeWrite('markJobStarted', () => markJobStarted(jobId));
     announcePhase(jobId, 'crawling');
-    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(url, deepCrawl), () => ({ success: true }));
+    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(url, deepCrawl, signal), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
 
+    signal?.throwIfAborted();
     const resolvedData = testData && testData.length > 0 ? resolveTestData(appMap, testData) : undefined;
 
     announcePhase(jobId, 'planning');
     const testPlan = await withLlmStep({ jobId }, 'plan', () =>
-      planTests(appMap, { testData, focus }),
+      planTests(appMap, { testData, focus, signal }),
     );
     await safeWrite('setTestPlan', () => setTestPlan(jobId, testPlan));
     announcePhase(jobId, 'generating');
@@ -156,6 +165,7 @@ async function runPersistedPipeline(
     // Round 0: compileTest for every LLM case (CompileError → generateTest LLM fallback, origin 'llm');
     // add baseline tests from WP7 if present (origin 'baseline').
     for (const testCase of testPlan.testCases) {
+      signal?.throwIfAborted();
       const referencedIds = new Set(
         testCase.steps
           .map((step) => step.elementId)
@@ -201,7 +211,7 @@ async function runPersistedPipeline(
           initialGen = await withLlmStep(
             { jobId, testCaseId: testCase.id },
             'generate',
-            () => generateTest(testCase, elementsInScope, appMap.url),
+            () => generateTest(testCase, elementsInScope, appMap.url, { signal }),
           );
           origin = 'llm';
         } else {
@@ -223,11 +233,13 @@ async function runPersistedPipeline(
     }
 
     for (let round = 1; round <= 3; round++) {
+      signal?.throwIfAborted();
       const open = tests.filter((t) => t.status === 'open');
       if (open.length === 0) break;
 
       // a) findUnsafeConstructs on all open tests (cheap AST check)
       for (const test of open) {
+        signal?.throwIfAborted();
         const unsafe = findUnsafeConstructs(test.code, test.filename);
         if (unsafe.length > 0) {
           test.attempts.push({
@@ -241,7 +253,7 @@ async function runPersistedPipeline(
             const context = { jobId, testCaseId: test.testCase.id, attemptNumber: round };
             const errorText = unsafe.join('\n');
             const correction = await withLlmStep(context, 'correct', () =>
-              correctTest(test.code, errorText, test.elementsInScope, test.priorErrors),
+              correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, { signal }),
             );
             test.priorErrors.push(errorText);
             if (test.priorErrors.length > 2) test.priorErrors.splice(0, test.priorErrors.length - 2);
@@ -267,13 +279,15 @@ async function runPersistedPipeline(
         (t) => t.status === 'open' && (t.origin === 'llm' || t.origin === 'corrected'),
       );
       if (needsTsc.length > 0) {
+        signal?.throwIfAborted();
         const startTsc = Date.now();
         const filesToValidate = needsTsc.map((t) => ({ filename: t.filename, code: t.code }));
-        const validationResult = await validateTestCode(runId, filesToValidate);
+        const validationResult = await validateTestCode(runId, filesToValidate, { signal });
         const batchLatency = Date.now() - startTsc;
         const perTestLatency = Math.round(batchLatency / needsTsc.length);
 
         for (const test of needsTsc) {
+          signal?.throwIfAborted();
           const fileErrors = validationResult.perFile.get(test.filename) ?? [];
           const isValid = fileErrors.length === 0;
 
@@ -301,7 +315,7 @@ async function runPersistedPipeline(
               const context = { jobId, testCaseId: test.testCase.id, attemptNumber: round };
               const errorText = fileErrors.join('\n');
               const correction = await withLlmStep(context, 'correct', () =>
-                correctTest(test.code, errorText, test.elementsInScope, test.priorErrors),
+                correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, { signal }),
               );
               test.priorErrors.push(errorText);
               if (test.priorErrors.length > 2) test.priorErrors.splice(0, test.priorErrors.length - 2);
@@ -332,19 +346,25 @@ async function runPersistedPipeline(
         const timeoutMs = Math.min(30_000 + validTests.length * 25_000, 300_000);
         const validFiles = validTests.map((t) => ({ filename: t.filename, code: t.code }));
 
+        signal?.throwIfAborted();
         let executionResult: { success: boolean; results: TestCaseResult[] };
         try {
           executionResult = await executeTests(runId, validFiles, {
             secrets: resolvedData?.secrets,
             timeoutMs,
+            signal,
           });
         } catch (err) {
+          if (err instanceof JobCancelledError || (err instanceof Error && err.name === 'AbortError') || signal?.aborted) {
+            throw new JobCancelledError();
+          }
           if (err instanceof RunnerError) {
             console.warn(
               `[Runner] Batch execution failed with ${err.code}: ${err.message}. Re-running round ${round} per test.`,
             );
             const fallbackResults: TestCaseResult[] = [];
             for (const test of validTests) {
+              signal?.throwIfAborted();
               try {
                 const singleRes = await executeTests(
                   runId,
@@ -352,10 +372,14 @@ async function runPersistedPipeline(
                   {
                     secrets: resolvedData?.secrets,
                     timeoutMs: Math.min(30_000 + 25_000, 300_000),
+                    signal,
                   },
                 );
                 fallbackResults.push(...singleRes.results);
               } catch (singleErr) {
+                if (singleErr instanceof JobCancelledError || (singleErr instanceof Error && singleErr.name === 'AbortError') || signal?.aborted) {
+                  throw new JobCancelledError();
+                }
                 fallbackResults.push({
                   testCaseId: test.testCase.id,
                   passed: false,
@@ -378,6 +402,7 @@ async function runPersistedPipeline(
         //    baseline → (finding ? failed : gave_up), never corrected;
         //    else if round < 3 → correct (sequential) → open; else gave_up
         for (const test of validTests) {
+          signal?.throwIfAborted();
           const testCaseIdFromFilename = test.filename.replace(/\.spec\.ts$/, '');
           const result =
             executionResult.results.find(
@@ -426,7 +451,7 @@ async function runPersistedPipeline(
             const context = { jobId, testCaseId: test.testCase.id, attemptNumber: round };
             const errorText = execError || 'Test execution failed';
             const correction = await withLlmStep(context, 'correct', () =>
-              correctTest(test.code, errorText, test.elementsInScope, test.priorErrors),
+              correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, { signal }),
             );
             test.priorErrors.push(errorText);
             if (test.priorErrors.length > 2) test.priorErrors.splice(0, test.priorErrors.length - 2);
@@ -516,6 +541,19 @@ async function runPersistedPipeline(
     publishJobEvent(jobId, { type: 'job_finished', data: { status: 'completed', errorCode: null } });
     return { jobId, appMap, testPlan, generatedTests };
   } catch (error) {
+    if (
+      error instanceof JobCancelledError ||
+      (error instanceof Error && (error.name === 'AbortError' || error.message.includes('Job was cancelled'))) ||
+      signal?.aborted
+    ) {
+      const now = new Date();
+      await safeWrite('cancelJob', () =>
+        prisma.job.update({ where: { id: jobId }, data: { status: 'cancelled', cancelledAt: now } }),
+      );
+      announcePhase(jobId, 'cancelled');
+      publishJobEvent(jobId, { type: 'job_finished', data: { status: 'cancelled', errorCode: null } });
+      throw new JobCancelledError();
+    }
     const code = toJobErrorCode(error);
     await safeWrite('failJob', () => failJob(jobId, code, error instanceof Error ? error.message : String(error)));
     publishJobEvent(jobId, { type: 'job_finished', data: { status: 'failed', errorCode: code } });

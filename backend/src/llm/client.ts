@@ -8,6 +8,7 @@ import { LLM_MAX_RETRIES_PER_PROVIDER, LLM_REQUEST_TIMEOUT_MS, LLM_PROVIDER_ORDE
 import type { LlmProviderName } from './providers.config.ts';
 import { PROVIDER_REGISTRY } from './providers/index.ts';
 import { hasAnyRequestKey, llmKeyOverride } from './requestKeys.ts';
+import { JobCancelledError } from '../agent/cancellation.ts';
 
 interface LlmCallLog {
   timestamp: string;
@@ -31,15 +32,25 @@ interface CollectedFailure {
 }
 
 async function attemptProviderCall(provider: LlmProvider, request: LlmRequest): Promise<LlmResponse> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), LLM_REQUEST_TIMEOUT_MS);
+  if (request.signal?.aborted) {
+    throw new JobCancelledError();
+  }
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), LLM_REQUEST_TIMEOUT_MS);
   const startedAt = Date.now();
 
+  const signals: AbortSignal[] = [timeoutController.signal];
+  if (request.signal) signals.push(request.signal);
+  const combinedSignal = AbortSignal.any(signals);
+
   try {
-    const response = await provider.chat(request, controller.signal);
+    const response = await provider.chat(request, combinedSignal);
     response.latencyMs = Date.now() - startedAt;
     return response;
   } catch (err) {
+    if (request.signal?.aborted) {
+      throw new JobCancelledError();
+    }
     if (err instanceof LlmError) {
       throw err;
     }
@@ -73,8 +84,19 @@ function calculateBackoff(attempt: number, retryAfterMs?: number): number {
   return Math.min(1000 * Math.pow(2, attempt), 30_000);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new JobCancelledError());
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new JobCancelledError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function buildRequestPreview(messages: LlmMessage[]): string {
@@ -146,6 +168,9 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
     const provider = PROVIDER_REGISTRY[providerName];
 
     for (let attempt = 0; attempt <= LLM_MAX_RETRIES_PER_PROVIDER; attempt++) {
+      if (request.signal?.aborted) {
+        throw new JobCancelledError();
+      }
       const timestamp = new Date().toISOString();
       try {
         const response = await attemptProviderCall(provider, request);
@@ -164,6 +189,10 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
 
         return response;
       } catch (err) {
+        if (request.signal?.aborted || err instanceof JobCancelledError) {
+          throw new JobCancelledError();
+        }
+
         const llmErr = err instanceof LlmError
           ? err
           : new LlmError('PROVIDER_UNAVAILABLE', 'Unexpected provider error', err);
@@ -204,7 +233,7 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
         }
 
         const backoffMs = calculateBackoff(attempt, llmErr.retryAfterMs);
-        await sleep(backoffMs);
+        await sleep(backoffMs, request.signal);
       }
     }
   }

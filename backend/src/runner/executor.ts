@@ -10,6 +10,7 @@ import {
 } from './config.ts';
 import { RunnerError } from './errors.ts';
 import { playwrightRunnerEnv } from './childEnv.ts';
+import { JobCancelledError } from '../agent/cancellation.ts';
 
 export type FailureClass = 'finding' | 'locator' | 'timeout' | 'other';
 
@@ -127,6 +128,7 @@ export function redactSecrets(text: string, secrets?: Map<string, string>): stri
 export interface ExecuteTestsOptions {
   secrets?: Map<string, string>;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export async function executeTests(
@@ -165,19 +167,45 @@ export async function executeTests(
       // Ignore
     }
 
+    if (options?.signal?.aborted) {
+      throw new JobCancelledError();
+    }
+
     // 2. Invoke Playwright CLI (use forward slashes for filter regex compatibility)
     const testArg = path.posix.join('tests', runId.replace(/\\/g, '/'));
 
     await new Promise<void>((resolve, reject) => {
-      execFile(
+      let childProcess: ReturnType<typeof execFile> | undefined;
+
+      const onAbort = () => {
+        if (childProcess && !childProcess.killed) {
+          if (process.platform === 'win32' && childProcess.pid) {
+            try {
+              execFile('taskkill', ['/pid', String(childProcess.pid), '/T', '/F'], () => {});
+            } catch {}
+          }
+          try {
+            childProcess.kill();
+          } catch {}
+        }
+      };
+      options?.signal?.addEventListener('abort', onAbort, { once: true });
+
+      childProcess = execFile(
         process.execPath,
         [PLAYWRIGHT_CLI, 'test', testArg, '--output', outputDir],
         {
           cwd: RUNNER_DIR,
           timeout: executionTimeout,
           env: playwrightRunnerEnv(resultsPath),
+          signal: options?.signal,
         },
         (err) => {
+          options?.signal?.removeEventListener('abort', onAbort);
+          if (options?.signal?.aborted) {
+            reject(new JobCancelledError());
+            return;
+          }
           if (err) {
             const errnoErr = err as NodeJS.ErrnoException;
             if (err.killed || err.signal === 'SIGTERM') {

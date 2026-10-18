@@ -63,34 +63,58 @@ async function crawlInBrowser(browser: Browser, url: string, maxElements: number
   }
 }
 
-export async function crawlPage(url: string): Promise<AppMap> {
+export async function crawlPage(
+  url: string,
+  options?: { signal?: AbortSignal },
+): Promise<AppMap> {
   assertCrawlableUrl(url);
+  options?.signal?.throwIfAborted();
   const browser = await launchBrowser();
+  const onAbort = () => {
+    void browser.close().catch(() => undefined);
+  };
+  options?.signal?.addEventListener('abort', onAbort, { once: true });
   try {
+    options?.signal?.throwIfAborted();
     return await crawlInBrowser(browser, url, config.MAX_ELEMENTS_PER_PAGE);
   } finally {
+    options?.signal?.removeEventListener('abort', onAbort);
     await browser.close().catch(() => undefined);
   }
 }
 
-export interface DeepCrawlOptions { maxPages: number; startPageElementCap: number; extraPageElementCap: number; }
+export interface DeepCrawlOptions {
+  maxPages: number;
+  startPageElementCap: number;
+  extraPageElementCap: number;
+  signal?: AbortSignal;
+}
 
 // Start page is mandatory; extra pages that fail are skipped. One browser, sequential contexts.
 export async function crawlSite(url: string, options: DeepCrawlOptions): Promise<AppMap> {
   assertCrawlableUrl(url);
+  options?.signal?.throwIfAborted();
   const browser = await launchBrowser();
+  const onAbort = () => {
+    void browser.close().catch(() => undefined);
+  };
+  options?.signal?.addEventListener('abort', onAbort, { once: true });
   try {
+    options?.signal?.throwIfAborted();
     const start = await crawlInBrowser(browser, url, options.startPageElementCap);
     const extras: CrawledPage[] = [];
     for (const link of pickDeepCrawlLinks(start, options.maxPages - 1)) {
+      options?.signal?.throwIfAborted();
       try {
         extras.push({ requestedUrl: link, map: await crawlInBrowser(browser, link, options.extraPageElementCap) });
       } catch (err) {
+        if (options?.signal?.aborted) throw err;
         console.warn(`[Crawler] Deep crawl skipped ${link}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     return mergeAppMaps(start, extras);
   } finally {
+    options?.signal?.removeEventListener('abort', onAbort);
     await browser.close().catch(() => undefined);
   }
 }

@@ -1,7 +1,7 @@
 import type { GetServerSideProps } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowCounterClockwise,
   ArrowSquareOut,
@@ -94,6 +94,27 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     mutate,
     transport,
   } = useJobStream(jobId, initialJob ?? undefined);
+
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const handleCancel = async (scope: 'job' | 'group') => {
+    if (!job) return;
+    setIsCancelling(true);
+    try {
+      await fetch(`${base}/api/jobs/${job.id}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope }),
+      });
+      setShowCancelDialog(false);
+      void mutate();
+    } catch (err) {
+      console.error('Cancel failed', err);
+    } finally {
+      setIsCancelling(false);
+    }
+  };
 
   const timelineRef = useRef<HTMLDivElement>(null);
   const userScrolledAwayRef = useRef(false);
@@ -292,8 +313,104 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
                 <DownloadSimple aria-hidden="true" className="h-4 w-4" /> Export Playwright Project (.zip)
               </a>
             ) : null}
+
+            {job.canCancel && (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  if (job.groupRemainingJobs && job.groupRemainingJobs > 0) {
+                    setShowCancelDialog(true);
+                  } else {
+                    void handleCancel('job');
+                  }
+                }}
+                disabled={isCancelling}
+              >
+                {isCancelling ? 'Cancelling…' : 'Cancel'}
+              </button>
+            )}
           </div>
         </section>
+
+        {job.status === 'cancelled' && (
+          <div
+            className="error-banner mb-6"
+            style={{ background: '#f3f4f6', borderColor: '#d1d5db', color: '#374151', margin: '16px 0' }}
+            role="status"
+          >
+            <div>
+              <strong>Run cancelled</strong>
+              <p style={{ color: '#4b5563' }}>This job was cancelled. Showing partial results.</p>
+            </div>
+          </div>
+        )}
+
+        {showCancelDialog && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 50,
+              padding: '16px',
+            }}
+          >
+            <div
+              style={{
+                background: '#fff',
+                borderRadius: '8px',
+                padding: '24px',
+                maxWidth: '420px',
+                width: '100%',
+                boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+              }}
+            >
+              <h3 style={{ fontSize: '16px', fontWeight: 600, margin: '0 0 8px' }}>Cancel run</h3>
+              <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 20px' }}>
+                This job is part of a run group with {job.groupRemainingJobs} remaining{' '}
+                {job.groupRemainingJobs === 1 ? 'job' : 'jobs'}. What would you like to cancel?
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => void handleCancel('job')}
+                  disabled={isCancelling}
+                >
+                  Cancel this job
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => void handleCancel('group')}
+                  disabled={isCancelling}
+                  style={{ borderColor: '#ef4444', color: '#b91c1c' }}
+                >
+                  Cancel this and the {job.groupRemainingJobs} remaining
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCancelDialog(false)}
+                  disabled={isCancelling}
+                  style={{
+                    marginTop: '8px',
+                    background: 'none',
+                    border: 'none',
+                    fontSize: '13px',
+                    color: '#6b7280',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Never mind, keep running
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="summary-grid">
           <div>

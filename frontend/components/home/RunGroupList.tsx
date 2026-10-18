@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { ArrowRight } from '@phosphor-icons/react';
 import Link from 'next/link';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import type { JobSummary } from '@/types/api';
+import { isTerminalJobStatus } from '@/lib/utils';
+import { useApiBase } from '@/hooks/useApiBase';
 
 interface RunGroupListProps {
   jobIds: string[];
@@ -13,19 +16,50 @@ interface RunGroupListProps {
 // one visitor-scoped list poll (not N EventSources: HTTP/1.1 caps a browser
 // at 6 connections per origin, which N streams would exhaust in local dev).
 export function RunGroupList({ jobIds, submittedUrls, summaries }: RunGroupListProps) {
+  const [cancelling, setCancelling] = useState(false);
+  const base = useApiBase();
   const completed = summaries.filter((s) => s.status === 'completed').length;
   const cancelled = summaries.filter((s) => s.status === 'cancelled').length;
   const headingText = cancelled > 0
     ? `${completed} of ${jobIds.length} jobs completed (${cancelled} cancelled)`
     : `${completed} of ${jobIds.length} jobs completed`;
 
+  const nonTerminal = summaries.find((s) => !isTerminalJobStatus(s.status));
+
+  const handleCancelRemaining = async () => {
+    if (!nonTerminal) return;
+    setCancelling(true);
+    try {
+      await fetch(`${base}/api/jobs/${nonTerminal.id}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: 'group' }),
+      });
+    } catch (err) {
+      console.error('Cancel failed', err);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   return (
     <section aria-labelledby="run-group-title" className="app-map mb-12">
-      <div className="section-heading">
+      <div className="section-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <p className="eyebrow">Run group</p>
           <h2 id="run-group-title">{headingText}</h2>
         </div>
+        {nonTerminal && (
+          <button
+            type="button"
+            className="secondary-button"
+            style={{ fontSize: '12px', padding: '6px 12px' }}
+            onClick={() => void handleCancelRemaining()}
+            disabled={cancelling}
+          >
+            {cancelling ? 'Cancelling…' : 'Cancel remaining'}
+          </button>
+        )}
       </div>
       <div className="page-list">
         {jobIds.map((jobId, index) => {

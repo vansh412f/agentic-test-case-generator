@@ -17,6 +17,7 @@ export async function generateTest(
   testCase: TestCase,
   elementsInScope: ScopedElement[],
   targetUrl: string,
+  options?: { signal?: AbortSignal },
 ): Promise<GeneratedTest> {
   const messages: LlmMessage[] = [
     { role: 'system', content: GENERATOR_SYSTEM_PROMPT },
@@ -27,6 +28,7 @@ export async function generateTest(
     messages,
     maxTokens: 2000,
     tier: 'fast',
+    signal: options?.signal,
   });
 
   const match = FENCE_REGEX.exec(response.content);

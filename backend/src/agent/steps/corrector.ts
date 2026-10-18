@@ -21,6 +21,7 @@ export async function correctTest(
   error: string,
   elementsInScope: ScopedElement[],
   previousErrors: string[] = [],
+  options?: { signal?: AbortSignal },
 ): Promise<CorrectionResult> {
   const messages: LlmMessage[] = [
     { role: 'system', content: CORRECTOR_SYSTEM_PROMPT },
@@ -41,6 +42,7 @@ export async function correctTest(
     maxTokens: 2000,
     temperature: 0.1,
     tier: 'fast',
+    signal: options?.signal,
   });
 
   const match = FENCE_REGEX.exec(response.content);

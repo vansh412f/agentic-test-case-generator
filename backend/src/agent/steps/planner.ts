@@ -202,6 +202,7 @@ export interface PlanTestsOptions {
   focus?: ElementRef[];
   keepHiddenIds?: Set<string>;
   extraPromptBlock?: string;
+  signal?: AbortSignal;
 }
 
 export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Promise<TestPlan> {
@@ -279,7 +280,13 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   };
 
   // First attempt
-  const response = await callLlm({ messages, jsonMode: true, maxTokens: 3000, tier: 'reasoning' });
+  const response = await callLlm({
+    messages,
+    jsonMode: true,
+    maxTokens: 3000,
+    tier: 'reasoning',
+    signal: options?.signal,
+  });
   const firstResult = validateAndNormalizePlan(response.content, knownIds, appMap.url, pageScope);
   if (firstResult.ok) {
     return applyFillsAndCache(firstResult.plan);
@@ -297,7 +304,13 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     },
   ];
 
-  const repairResponse = await callLlm({ messages: repairMessages, jsonMode: true, maxTokens: 3000, tier: 'reasoning' });
+  const repairResponse = await callLlm({
+    messages: repairMessages,
+    jsonMode: true,
+    maxTokens: 3000,
+    tier: 'reasoning',
+    signal: options?.signal,
+  });
   const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, pageScope);
   if (repairResult.ok) {
     return applyFillsAndCache(repairResult.plan);

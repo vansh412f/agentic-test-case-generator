@@ -82,9 +82,16 @@ export class RunQueue {
       g.jobs.some((j) => j.id === jobId),
     );
     if (idx === -1) return undefined;
-    const [removed] = this.waitingGroups.splice(idx, 1);
+    const group = this.waitingGroups[idx];
+    const jobIdx = group.jobs.findIndex((j) => j.id === jobId);
+    if (jobIdx !== -1) {
+      group.jobs.splice(jobIdx, 1);
+    }
+    if (group.jobs.length === 0) {
+      this.waitingGroups.splice(idx, 1);
+    }
     this.publishPositions();
-    return removed;
+    return group;
   }
 
   positionOf(jobId: string): number | null {

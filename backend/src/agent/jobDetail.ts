@@ -18,11 +18,13 @@ export interface JobDetail extends Omit<LoadedJob, 'generatedTests' | 'visitorId
   generatedTests: JobDetailTest[];
   queuePosition: number | null;
   runGroupId: string | null;
+  groupRemainingJobs?: number;
   canCancel: boolean;
 }
 
 export interface BuildJobDetailOptions {
   viewerVisitorId?: string | null;
+  groupRemainingJobs?: number;
 }
 
 // Presentation enrichment for GET /api/jobs/:id. The repository stays pure
@@ -46,6 +48,7 @@ export function buildJobDetail(
     runGroupId: job.runGroupId ?? null,
     queuePosition: runQueue.positionOf(job.id),
     canCancel,
+    groupRemainingJobs: options?.groupRemainingJobs,
     usedOwnKeys: Boolean(job.usedOwnKeys),
     tokenUsage: summarizeTokenUsage(job.agentSteps),
     generatedTests: job.generatedTests.map((test: PersistedTest) => ({

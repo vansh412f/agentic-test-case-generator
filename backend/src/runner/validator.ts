@@ -6,6 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import { RUNNER_DIR, RUNNER_TESTS_DIR, STATIC_VALIDATION_TIMEOUT_MS } from './config.ts';
 import { childProcessEnv } from './childEnv.ts';
 import { findUnsafeConstructs } from './codeSafety.ts';
+import { JobCancelledError } from '../agent/cancellation.ts';
 
 export interface ValidationResult {
   valid: boolean;
@@ -30,7 +31,11 @@ function parseFilenameFromDiagnostic(
 export async function validateTestCode(
   runId: string,
   files: Array<{ filename: string; code: string }>,
+  options?: { signal?: AbortSignal },
 ): Promise<ValidationResult> {
+  if (options?.signal?.aborted) {
+    throw new JobCancelledError();
+  }
   const perFile = new Map<string, string[]>();
   for (const file of files) {
     perFile.set(file.filename, []);
@@ -78,12 +83,31 @@ export async function validateTestCode(
 
     let childProcess: ChildProcess | undefined;
 
+    const onAbort = () => {
+      if (childProcess && !childProcess.killed) {
+        if (process.platform === 'win32' && childProcess.pid) {
+          try {
+            execFile('taskkill', ['/pid', String(childProcess.pid), '/T', '/F'], () => {});
+          } catch {}
+        }
+        try {
+          childProcess.kill();
+        } catch {}
+      }
+    };
+    options?.signal?.addEventListener('abort', onAbort, { once: true });
+
     const tscExecution = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
       childProcess = execFile(
         process.execPath,
         [tscJs, '--noEmit', '--project', tsconfigRunPath],
-        { cwd: RUNNER_DIR, env: childProcessEnv() },
+        { cwd: RUNNER_DIR, env: childProcessEnv(), signal: options?.signal },
         (error, stdout, stderr) => {
+          options?.signal?.removeEventListener('abort', onAbort);
+          if (options?.signal?.aborted) {
+            reject(new JobCancelledError());
+            return;
+          }
           if (error && typeof (error as NodeJS.ErrnoException).code === 'string') {
             reject(error);
           } else {
@@ -93,7 +117,12 @@ export async function validateTestCode(
       );
 
       childProcess.on('error', (err) => {
-        reject(err);
+        options?.signal?.removeEventListener('abort', onAbort);
+        if (options?.signal?.aborted) {
+          reject(new JobCancelledError());
+        } else {
+          reject(err);
+        }
       });
     });
 
