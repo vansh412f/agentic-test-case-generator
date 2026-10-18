@@ -38,6 +38,11 @@ function respondWithError(res: Response, error: unknown): void {
   if (!mapped) throw error;
   res.removeHeader('Content-Disposition');
   res.removeHeader('Content-Type');
+  if (mapped.headers) {
+    for (const [key, value] of Object.entries(mapped.headers)) {
+      res.setHeader(key, value);
+    }
+  }
   res.status(mapped.status).json(mapped.body);
 }
 

@@ -25,19 +25,38 @@ async function launchBrowser(): Promise<Browser> {
   }
 }
 
+import { classifyLanding } from './wakeDetect.ts';
+
 async function crawlInBrowser(browser: Browser, url: string, maxElements: number): Promise<AppMap> {
   const context = await browser.newContext({ viewport: VIEWPORT });
   try {
     const page = await context.newPage();
     await page.addInitScript('window.__name = window.__name || ((target) => target);');
+    const host = new URL(url).hostname;
+    let resp: import('playwright').Response | null = null;
     try {
-      await page.goto(url, { waitUntil: 'load', timeout: config.NAVIGATION_TIMEOUT_MS });
+      resp = await page.goto(url, { waitUntil: 'load', timeout: config.NAVIGATION_TIMEOUT_MS });
     } catch (err) {
       if (err instanceof errors.TimeoutError) {
+        const landing = classifyLanding({ host, timedOut: true });
+        if (landing === 'waking') {
+          throw new CrawlError('TARGET_WAKING', `${host} is waking up from sleep.`, err, { host, retryAfterSeconds: 30 });
+        }
         throw new CrawlError('NAVIGATION_TIMEOUT', `Page did not load within ${config.NAVIGATION_TIMEOUT_MS}ms: ${url}`, err);
       }
       throw new CrawlError('NAVIGATION_FAILED', `Failed to navigate to ${url}: ${(err as Error).message}`, err);
     }
+
+    const status = resp?.status();
+    const bodyText = await page.evaluate(() => document.body ? document.body.innerText.slice(0, 2048) : '').catch(() => '');
+    const initialLanding = classifyLanding({ host, status, bodyText, elementCount: 0 });
+    if (initialLanding === 'tunnel_host_blocked') {
+      throw new CrawlError('TUNNEL_HOST_BLOCKED', `Tunnel host blocked by dev server.`, undefined, { host });
+    }
+    if (initialLanding === 'waking') {
+      throw new CrawlError('TARGET_WAKING', `${host} is waking up from sleep.`, undefined, { host, retryAfterSeconds: 30 });
+    }
+
     if (config.NETWORK_IDLE_WAIT_MS > 0) {
       try {
         await page.waitForLoadState('networkidle', { timeout: config.NETWORK_IDLE_WAIT_MS });
@@ -52,6 +71,19 @@ async function crawlInBrowser(browser: Browser, url: string, maxElements: number
         page.evaluate(extractElements, { maxElements }),
         page.evaluate(extractForms),
       ]);
+      const finalLanding = classifyLanding({
+        host,
+        status,
+        bodyText,
+        elementCount: elementsResult.elements.length,
+      });
+      if (finalLanding === 'tunnel_host_blocked') {
+        throw new CrawlError('TUNNEL_HOST_BLOCKED', `Tunnel host blocked by dev server.`, undefined, { host });
+      }
+      if (finalLanding === 'waking') {
+        throw new CrawlError('TARGET_WAKING', `${host} is waking up from sleep.`, undefined, { host, retryAfterSeconds: 30 });
+      }
+
       const title = await page.title();
       return buildAppMap({ url: page.url(), viewport: VIEWPORT, extraction: { title, ...elementsResult, forms } });
     } catch (err) {

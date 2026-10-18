@@ -46,6 +46,9 @@ const configSchema = z.object({
   QUEUE_MAX_WAITING_GROUPS: z.coerce.number().int().min(1).default(5),
   BASELINE_TESTS: z.string().default('true').transform((v) => v.toLowerCase() === 'true'),
   A11Y_SMOKE: z.string().default('true').transform((v) => v.toLowerCase() === 'true'),
+  WAKING_HOST_SUFFIXES: z
+    .string()
+    .default('onrender.com,koyeb.app,up.railway.app,fly.dev,hf.space,glitch.me,replit.app'),
   LOCAL_AGENT_MODE: z.string().default('false').transform((v) => v.toLowerCase() === 'true'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
   FRONTEND_ORIGIN: z.string().optional(),

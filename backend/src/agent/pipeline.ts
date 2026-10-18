@@ -86,21 +86,49 @@ export function toJobErrorCode(error: unknown): string {
   return 'INTERNAL_ERROR';
 }
 
-async function crawlForJob(url: string, deepCrawl: boolean, signal?: AbortSignal): Promise<AppMap> {
-  if (deepCrawl) {
-    return crawlSite(url, {
-      maxPages: DEEP_CRAWL_MAX_PAGES,
-      startPageElementCap: DEEP_CRAWL_START_PAGE_ELEMENT_CAP,
-      extraPageElementCap: DEEP_CRAWL_EXTRA_PAGE_ELEMENT_CAP,
-      signal,
-    });
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw signal.reason;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function crawlForJob(jobId: string, url: string, deepCrawl: boolean, signal?: AbortSignal): Promise<AppMap> {
+  let attempt = 0;
+  while (true) {
+    try {
+      if (deepCrawl) {
+        return await crawlSite(url, {
+          maxPages: DEEP_CRAWL_MAX_PAGES,
+          startPageElementCap: DEEP_CRAWL_START_PAGE_ELEMENT_CAP,
+          extraPageElementCap: DEEP_CRAWL_EXTRA_PAGE_ELEMENT_CAP,
+          signal,
+        });
+      }
+      const cached = takeFreshCrawl(url);
+      if (cached) {
+        console.log(`[Pipeline] Crawl cache hit for ${url}`);
+        return cached;
+      }
+      return await crawlPage(url, { signal });
+    } catch (err) {
+      if (err instanceof CrawlError && err.code === 'TARGET_WAKING' && attempt < 3) {
+        attempt++;
+        publishJobEvent(jobId, {
+          type: 'target_waking',
+          data: { attempt, nextRetryInSec: 30 },
+        });
+        await sleep(30_000, signal);
+        continue;
+      }
+      throw err;
+    }
   }
-  const cached = takeFreshCrawl(url);
-  if (cached) {
-    console.log(`[Pipeline] Crawl cache hit for ${url}`);
-    return Promise.resolve(cached);
-  }
-  return crawlPage(url, { signal });
 }
 
 // The job row must already exist (createPendingJobs at admission).
@@ -136,7 +164,7 @@ async function runPersistedPipeline(
     signal?.throwIfAborted();
     await safeWrite('markJobStarted', () => markJobStarted(jobId));
     announcePhase(jobId, 'crawling');
-    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(url, deepCrawl, signal), () => ({ success: true }));
+    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, deepCrawl, signal), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
 
     signal?.throwIfAborted();

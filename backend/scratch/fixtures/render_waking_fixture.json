@@ -1,0 +1,10 @@
+{
+  "host": "test-app.onrender.com",
+  "status": 503,
+  "statusText": "Service Unavailable",
+  "headers": {
+    "content-type": "text/html; charset=utf-8",
+    "retry-after": "30"
+  },
+  "body": "<!DOCTYPE html><html><head><title>Service Unavailable</title></head><body><h1>Service Unavailable</h1><p>Your free instance is spinning up. Free instances spin down after inactivity and may take a moment to start.</p></body></html>"
+}

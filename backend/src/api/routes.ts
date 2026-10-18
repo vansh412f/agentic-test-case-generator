@@ -27,10 +27,41 @@ import { hasOwnKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
 import { z } from 'zod';
 import { config } from '../config.ts';
 import { createPendingJobs, getLifetimeStats } from '../db/jobs.ts';
+import { prisma } from '../db/client.ts';
 
 const router = Router();
 router.use(visitorMiddleware);
 router.use('/jobs', jobsRouter);
+
+router.get('/health', (_req, res) => {
+  res.json({ ok: true, uptimeSec: Math.floor(process.uptime()) });
+});
+
+interface DbHealthCache {
+  result: { ok: boolean; db: 'ok' | 'error'; checkedAt: string };
+  cachedAt: number;
+}
+let dbHealthCache: DbHealthCache | null = null;
+const DB_HEALTH_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// UptimeRobot monitor #2 keeps Supabase active
+router.get('/health/db', async (_req, res) => {
+  const now = Date.now();
+  if (dbHealthCache && now - dbHealthCache.cachedAt < DB_HEALTH_CACHE_TTL_MS) {
+    res.json(dbHealthCache.result);
+    return;
+  }
+  try {
+    await prisma.job.findFirst({ select: { id: true } });
+    const result = { ok: true, db: 'ok' as const, checkedAt: new Date().toISOString() };
+    dbHealthCache = { result, cachedAt: now };
+    res.json(result);
+  } catch (err) {
+    const result = { ok: false, db: 'error' as const, checkedAt: new Date().toISOString() };
+    dbHealthCache = { result, cachedAt: now };
+    res.status(503).json(result);
+  }
+});
 
 interface CachedStats {
   data: {
@@ -63,6 +94,11 @@ router.get('/stats', async (_req, res) => {
   } catch (err) {
     const httpErr = toHttpError(err);
     if (httpErr) {
+      if (httpErr.headers) {
+        for (const [key, value] of Object.entries(httpErr.headers)) {
+          res.setHeader(key, value);
+        }
+      }
       res.status(httpErr.status).json(httpErr.body);
       return;
     }
@@ -111,6 +147,11 @@ router.post('/crawl', crawlIpLimiter, async (req, res) => {
   } catch (err) {
     const httpErr = toHttpError(err);
     if (httpErr) {
+      if (httpErr.headers) {
+        for (const [key, value] of Object.entries(httpErr.headers)) {
+          res.setHeader(key, value);
+        }
+      }
       res.status(httpErr.status).json(httpErr.body);
       return;
     }
@@ -312,6 +353,11 @@ router.post('/generate', async (req, res) => {
   } catch (err) {
     const httpErr = toHttpError(err);
     if (httpErr) {
+      if (httpErr.headers) {
+        for (const [key, value] of Object.entries(httpErr.headers)) {
+          res.setHeader(key, value);
+        }
+      }
       res.status(httpErr.status).json(httpErr.body);
       return;
     }

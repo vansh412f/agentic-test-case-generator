@@ -28,6 +28,8 @@ const CRAWL_ERROR_STATUS: Record<CrawlErrorCode, number> = {
   NAVIGATION_FAILED: 502,
   EXTRACTION_FAILED: 500,
   BROWSER_LAUNCH_FAILED: 503,
+  TARGET_WAKING: 503,
+  TUNNEL_HOST_BLOCKED: 422,
 };
 
 const LLM_ERROR_STATUS: Record<LlmErrorCode, number> = {
@@ -61,13 +63,19 @@ export interface HttpErrorResponse {
     message: string;
     details?: unknown;
   };
+  headers?: Record<string, string>;
 }
 
 export function toHttpError(err: unknown): HttpErrorResponse | null {
   if (err instanceof CrawlError) {
+    const headers: Record<string, string> = {};
+    if (err.code === 'TARGET_WAKING') {
+      headers['Retry-After'] = '30';
+    }
     return {
       status: CRAWL_ERROR_STATUS[err.code],
-      body: { error: err.code, message: err.message },
+      body: { error: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) },
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
     };
   }
   if (err instanceof LlmError) {

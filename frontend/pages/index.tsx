@@ -208,6 +208,61 @@ export default function HomePage() {
   const [localTargetUrl, setLocalTargetUrl] = useState<string | null>(null);
   const [quotaDetails, setQuotaDetails] = useState<{ limit?: number; resetsAt?: string; scope?: string } | null>(null);
 
+  interface WakingCrawlState {
+    url: string;
+    host: string;
+    attempt: number;
+    secondsLeft: number;
+    stillAsleep: boolean;
+  }
+
+  const [wakingCrawl, setWakingCrawl] = useState<WakingCrawlState | null>(null);
+
+  const retryCrawl = async (url: string, attempt: number) => {
+    setWakingCrawl((prev) => (prev ? { ...prev, attempt, secondsLeft: 30 } : null));
+    try {
+      const appMap = await crawlPage(url);
+      setWakingCrawl(null);
+      toast.success(`App map discovered: ${appMap.elements.length} interactive elements.`);
+      dispatch({ type: 'CRAWL_SUCCEEDED', appMap });
+    } catch (err) {
+      if (err instanceof ApiError && (err.code === 'TARGET_WAKING' || err.status === 503)) {
+        if (attempt >= 4) {
+          setWakingCrawl((prev) => (prev ? { ...prev, stillAsleep: true } : null));
+        }
+      } else {
+        setWakingCrawl(null);
+        let msg = errorMessage(err);
+        toast.error(msg);
+        dispatch({ type: 'FAILED', message: msg });
+      }
+    }
+  };
+
+  const retryCrawlRef = useRef(retryCrawl);
+  retryCrawlRef.current = retryCrawl;
+
+  const wakingActive = wakingCrawl !== null && !wakingCrawl.stillAsleep;
+  const wakingAttempt = wakingCrawl?.attempt;
+
+  useEffect(() => {
+    if (!wakingActive) return;
+    const timer = setInterval(() => {
+      setWakingCrawl((prev) => {
+        if (!prev || prev.stillAsleep) return prev;
+        if (prev.secondsLeft > 1) {
+          return { ...prev, secondsLeft: prev.secondsLeft - 1 };
+        }
+        if (prev.attempt >= 4) {
+          return { ...prev, stillAsleep: true };
+        }
+        void retryCrawlRef.current(prev.url, prev.attempt + 1);
+        return { ...prev, attempt: prev.attempt + 1, secondsLeft: 30 };
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [wakingActive, wakingAttempt]);
+
   const { data: budget, mutate: mutateBudget } = useSWR<BudgetResponse, Error>(
     '/api/budget',
     fetcher,
@@ -265,6 +320,7 @@ export default function HomePage() {
     }
 
     setLocalTargetUrl(null);
+    setWakingCrawl(null);
     dispatch({ type: 'CRAWL_STARTED' });
 
     try {
@@ -273,6 +329,27 @@ export default function HomePage() {
       dispatch({ type: 'CRAWL_SUCCEEDED', appMap });
     } catch (error) {
       if (error instanceof ApiError) {
+        if (error.code === 'TUNNEL_HOST_BLOCKED') {
+          setLocalTargetUrl(url);
+          dispatch({ type: 'FAILED', message: 'Tunnel host header rejected by dev server.' });
+          return;
+        }
+        if (error.code === 'TARGET_WAKING' || error.status === 503) {
+          let host = url;
+          try {
+            host = new URL(url).host;
+          } catch {
+            host = url.replace(/^https?:\/\//, '').split('/')[0];
+          }
+          setWakingCrawl({
+            url,
+            host,
+            attempt: 1,
+            secondsLeft: 30,
+            stillAsleep: false,
+          });
+          return;
+        }
         if (
           error.code === 'UPSTREAM_UNAVAILABLE' ||
           error.code === 'BROWSER_LAUNCH_FAILED'
@@ -411,6 +488,58 @@ export default function HomePage() {
         />
       ) : null}
 
+      {wakingCrawl ? (
+        <div
+          className="error-banner mb-12"
+          style={{ background: '#fffbeb', borderColor: '#fef3c7', color: '#92400e' }}
+          role="status"
+          aria-live="polite"
+        >
+          <span>
+            <Warning aria-hidden="true" className="h-5 w-5" />
+          </span>
+          <div className="flex-1">
+            <strong>Target waking up</strong>
+            <p style={{ color: '#b45309' }}>
+              {wakingCrawl.stillAsleep ? (
+                <>
+                  Still asleep. Open{' '}
+                  <a
+                    href={wakingCrawl.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ textDecoration: 'underline', fontWeight: 600 }}
+                  >
+                    {wakingCrawl.url}
+                  </a>{' '}
+                  in a new tab to wake it, then retry.
+                </>
+              ) : (
+                `${wakingCrawl.host} is waking up from sleep (free hosting takes ~30–60 s). Retrying automatically in ${wakingCrawl.secondsLeft}s`
+              )}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="primary-button"
+              style={{ padding: '6px 12px', fontSize: '11px' }}
+              onClick={() => void retryCrawl(wakingCrawl.url, wakingCrawl.stillAsleep ? 1 : wakingCrawl.attempt)}
+            >
+              Retry now
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              style={{ padding: '6px 12px', fontSize: '11px' }}
+              onClick={() => setWakingCrawl(null)}
+            >
+              {wakingCrawl.stillAsleep ? 'Dismiss' : 'Stop'}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {quotaDetails ? (
         <QuotaExhaustedPanel
           limit={quotaDetails.limit}
@@ -420,7 +549,7 @@ export default function HomePage() {
         />
       ) : null}
 
-      {state.error && !quotaDetails ? (
+      {state.error && !quotaDetails && !wakingCrawl ? (
         <div className="error-banner mb-12" role="alert">
           <span>
             <Warning aria-hidden="true" className="h-5 w-5" />

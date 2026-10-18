@@ -1,6 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import compression from 'compression';
-import { config, activeProviders } from './config.ts';
+import { config } from './config.ts';
 import apiRouter from './api/routes.ts';
 import { prisma } from './db/client.ts';
 import { failNonTerminalJobs } from './db/jobs.ts';
@@ -58,16 +58,6 @@ if (config.LOCAL_AGENT_MODE) {
   });
 }
 
-// Health Check Endpoint
-app.get('/api/health', (_req: Request, res: Response) => {
-  res.status(200).json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: config.NODE_ENV,
-    llmConfigured: activeProviders.length > 0,
-  });
-});
 
 // API Routes
 app.use('/api', apiRouter);

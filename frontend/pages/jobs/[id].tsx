@@ -93,7 +93,22 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     isLoading,
     mutate,
     transport,
+    wakingInfo,
   } = useJobStream(jobId, initialJob ?? undefined);
+
+  const [wakingCountdown, setWakingCountdown] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!wakingInfo) {
+      setWakingCountdown(null);
+      return;
+    }
+    setWakingCountdown(wakingInfo.nextRetryInSec);
+    const interval = setInterval(() => {
+      setWakingCountdown((prev) => (prev && prev > 1 ? prev - 1 : 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [wakingInfo]);
 
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -332,6 +347,25 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             )}
           </div>
         </section>
+
+        {wakingInfo && !terminal && (
+          <div
+            className="error-banner mb-6"
+            style={{ background: '#fffbeb', borderColor: '#fef3c7', color: '#92400e', margin: '16px 0' }}
+            role="status"
+            aria-live="polite"
+          >
+            <span>
+              <Globe aria-hidden="true" className="h-5 w-5" />
+            </span>
+            <div>
+              <strong>Target server is waking up</strong>
+              <p style={{ color: '#b45309' }}>
+                {cleanDomain(job.targetUrl)} is waking up from sleep (attempt {wakingInfo.attempt}/3). Retrying automatically in {wakingCountdown ?? wakingInfo.nextRetryInSec}s…
+              </p>
+            </div>
+          </div>
+        )}
 
         {job.status === 'cancelled' && (
           <div

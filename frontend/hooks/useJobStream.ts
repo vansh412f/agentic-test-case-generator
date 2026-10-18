@@ -7,6 +7,11 @@ import type { JobDetail, JobStatus } from '@/types/api';
 
 export type JobTransport = 'idle' | 'sse' | 'polling';
 
+export interface WakingInfo {
+  attempt: number;
+  nextRetryInSec: number;
+}
+
 export interface JobStreamResult {
   data: JobDetail | undefined;
   error: Error | undefined;
@@ -14,6 +19,7 @@ export interface JobStreamResult {
   mutate: KeyedMutator<JobDetail>;
   transport: JobTransport;
   liveStatus: JobStatus | null;
+  wakingInfo: WakingInfo | null;
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -51,6 +57,7 @@ function parseJobStatus(event: Event): JobStatus | null {
 export function useJobStream(jobId: string | null, fallbackData?: JobDetail): JobStreamResult {
   const [transport, setTransport] = useState<JobTransport>('idle');
   const [liveStatus, setLiveStatus] = useState<JobStatus | null>(null);
+  const [wakingInfo, setWakingInfo] = useState<WakingInfo | null>(null);
   const key = jobId === null ? null : `${apiBase()}/api/jobs/${jobId}`;
 
   const swr = useSWR<JobDetail, Error>(key, fetcher, {
@@ -71,6 +78,7 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
 
   useEffect(() => {
     setLiveStatus(null);
+    setWakingInfo(null);
 
     if (jobId === null || startTerminal || typeof window === 'undefined' || !('EventSource' in window)) {
       setTransport(jobId === null ? 'idle' : 'polling');
@@ -93,7 +101,12 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     const handleStatusEvent = (e: Event): void => {
       if (closed) return;
       const status = parseJobStatus(e);
-      if (status) setLiveStatus(status);
+      if (status) {
+        setLiveStatus(status);
+        if (status !== 'crawling' && status !== 'pending') {
+          setWakingInfo(null);
+        }
+      }
       scheduleRefetch();
     };
 
@@ -114,6 +127,21 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     source.addEventListener('phase_change', handleStatusEvent);
     source.addEventListener('step_recorded', scheduleRefetch);
     source.addEventListener('test_completed', scheduleRefetch);
+    source.addEventListener('target_waking', (e: Event) => {
+      if (closed) return;
+      if (e instanceof MessageEvent && typeof e.data === 'string') {
+        try {
+          const parsed = JSON.parse(e.data);
+          if (typeof parsed?.attempt === 'number') {
+            setWakingInfo({
+              attempt: parsed.attempt,
+              nextRetryInSec: typeof parsed.nextRetryInSec === 'number' ? parsed.nextRetryInSec : 30,
+            });
+          }
+        } catch {}
+      }
+      scheduleRefetch();
+    });
     source.addEventListener('queue_position', (e: Event) => {
       if (closed) return;
       if (e instanceof MessageEvent && typeof e.data === 'string') {
@@ -163,5 +191,6 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     mutate: swr.mutate,
     transport,
     liveStatus,
+    wakingInfo,
   };
 }
