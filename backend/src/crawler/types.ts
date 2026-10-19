@@ -86,3 +86,4 @@ export const AppMapSchema = z.object({
   isTruncated: z.boolean().describe('True when the cap dropped some elements from this map'),
 });
 export type AppMap = z.infer<typeof AppMapSchema>;
+// Module component implementation.
