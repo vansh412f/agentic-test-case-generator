@@ -56,10 +56,15 @@ export async function countJobsForBudget(
   const baseWhere = {
     createdAt: { gte: startOfUtcDay(now) },
     usedOwnKeys: false,
-    NOT: {
-      status: 'cancelled' as const,
-      startedAt: null,
-    },
+    NOT: [
+      {
+        status: 'cancelled' as const,
+        startedAt: null,
+      },
+      {
+        errorCode: { not: null, in: ['SERVER_RESTART', 'SERVER_SHUTDOWN'] },
+      },
+    ],
   };
 
   const [globalCount, visitorCount, ipCount] = await Promise.all([
