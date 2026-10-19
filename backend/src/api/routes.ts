@@ -24,7 +24,7 @@ import {
   nextUtcMidnight,
 } from '../security/dailyBudget.ts';
 import { crawlSemaphore, QueueFullError } from '../security/concurrencyGate.ts';
-import { runQueue } from '../agent/runQueue.ts';
+import { runQueue, type ClaimToken } from '../agent/runQueue.ts';
 import { rememberCrawl } from '../crawler/crawlCache.ts';
 import { hasOwnKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
 import { z } from 'zod';
@@ -38,7 +38,7 @@ router.use('/jobs', jobsRouter);
 router.use('/admin', adminRouter);
 
 router.get('/health', (_req, res) => {
-  res.json({ ok: true, uptimeSec: Math.floor(process.uptime()) });
+  res.json({ ok: true, uptimeSec: Math.floor(process.uptime()), mode: config.LOCAL_AGENT_MODE ? 'local' : 'hosted' });
 });
 
 interface DbHealthCache {
@@ -205,6 +205,15 @@ router.post('/byok/validate', byokValidateLimiter, async (req, res) => {
 });
 
 router.get('/budget', async (req, res) => {
+  if (config.LOCAL_AGENT_MODE) {
+    res.json({
+      mode: 'local',
+      unlimited: true,
+      maxUrlsPerRun: config.BYOK_MAX_URLS_PER_RUN,
+    });
+    return;
+  }
+
   const byok = hasOwnKeys(req);
   if (byok) {
     res.json({
@@ -271,7 +280,7 @@ router.post('/generate', async (req, res) => {
   };
   const usesOwnKeys = hasOwnKeys(req);
 
-  const maxUrls = usesOwnKeys ? config.BYOK_MAX_URLS_PER_RUN : config.FREE_MAX_URLS_PER_RUN;
+  const maxUrls = (usesOwnKeys || config.LOCAL_AGENT_MODE) ? config.BYOK_MAX_URLS_PER_RUN : config.FREE_MAX_URLS_PER_RUN;
   if (requested > maxUrls) {
     res.status(400).json({
       error: 'TOO_MANY_URLS',
@@ -303,120 +312,142 @@ router.post('/generate', async (req, res) => {
   const ipHash = ipHashFor(clientIp(req));
   const client = { visitorId: req.visitorId, ipHash };
 
-  // 5. Active or queued check: one active or queued run group at a time per visitor and per IP
-  const existingGroup = runQueue.activeOrQueuedFor(client);
-  if (existingGroup) {
-    res.status(409).json({
-      error: 'ALREADY_RUNNING',
-      message: 'You already have a run in progress.',
-      details: { jobIds: existingGroup.jobs.map((j) => j.id) },
-    });
-    return;
+  let claimToken: ClaimToken | null = null;
+  if (!config.LOCAL_AGENT_MODE) {
+    claimToken = runQueue.claim(client);
+    if (!claimToken) {
+      const existingGroup = runQueue.activeOrQueuedFor(client);
+      res.status(409).json({
+        error: 'ALREADY_RUNNING',
+        message: 'You already have a run in progress.',
+        details: { jobIds: existingGroup ? existingGroup.jobs.map((j) => j.id) : [] },
+      });
+      return;
+    }
   }
 
-  // 6. Queue capacity check
-  if (runQueue.isFull()) {
-    res.status(429).json({
-      error: 'QUEUE_FULL',
-      message: 'The execution queue is currently full. Please retry shortly.',
-    });
-    return;
-  }
+  try {
+    // 6. Queue capacity check
+    if (runQueue.isFull()) {
+      res.status(429).json({
+        error: 'QUEUE_FULL',
+        message: 'The execution queue is currently full. Please retry shortly.',
+      });
+      return;
+    }
 
-  // 7. Daily budget check & reservation BEFORE consuming ALTCHA (skipped for BYOK)
-  let reservation: Awaited<ReturnType<typeof tryReserveRun>> | undefined;
-  if (!usesOwnKeys) {
-    reservation = await tryReserveRun({
-      visitorId: req.visitorId,
-      ipHash,
-      n: requested,
-    });
-    if (!reservation.ok) {
-      if (reservation.reason === 'unavailable') {
-        res.setHeader('Retry-After', '30');
-        res.status(503).json({
-          error: 'SERVICE_UNAVAILABLE',
-          message: 'Usage tracking is temporarily unavailable.',
+    // 7. Daily budget check & reservation BEFORE consuming ALTCHA (skipped for BYOK and LOCAL_AGENT_MODE)
+    let reservation: Awaited<ReturnType<typeof tryReserveRun>> | undefined;
+    if (!usesOwnKeys && !config.LOCAL_AGENT_MODE) {
+      reservation = await tryReserveRun({
+        visitorId: req.visitorId,
+        ipHash,
+        n: requested,
+      });
+      if (!reservation.ok) {
+        if (reservation.reason === 'unavailable') {
+          res.setHeader('Retry-After', '30');
+          res.status(503).json({
+            error: 'SERVICE_UNAVAILABLE',
+            message: 'Usage tracking is temporarily unavailable.',
+          });
+          return;
+        }
+        res.status(429).json({
+          error: 'DAILY_QUOTA_EXHAUSTED',
+          message: 'Daily quota exhausted.',
+          details: {
+            scope: reservation.scope,
+            limit: reservation.limit,
+            used: reservation.used,
+            resetsAt: reservation.resetsAt,
+          },
         });
         return;
       }
-      res.status(429).json({
-        error: 'DAILY_QUOTA_EXHAUSTED',
-        message: 'Daily quota exhausted.',
-        details: {
-          scope: reservation.scope,
-          limit: reservation.limit,
-          used: reservation.used,
-          resetsAt: reservation.resetsAt,
-        },
-      });
-      return;
-    }
 
-    // 8. Enforce ALTCHA proof-of-work if not using own keys
-    const payload = parsed.data.altcha;
-    if (!payload || !(await powService.verifyAndConsume(payload))) {
-      reservation.release();
-      res.status(400).json({
-        error: 'POW_FAILED',
-        message: 'Bot verification failed. Please retry.',
-      });
-      return;
-    }
-  }
-
-  // 9. Create job rows synchronously (fail-fast) so every returned jobId exists.
-  const runGroupId = randomUUID();
-  const fresh = parsed.data.fresh;
-  const jobs: QueuedJob[] = urls.map((url, idx) => ({
-    id: randomUUID(),
-    url,
-    deepCrawl,
-    fresh,
-    ...(idx === 0
-      ? {
-          testData: parsed.data.testData,
-          focus: parsed.data.focus,
-        }
-      : {}),
-  }));
-  try {
-    await createPendingJobs(
-      jobs.map((job) => ({ id: job.id, targetUrl: job.url })),
-      { visitorId: req.visitorId, usedOwnKeys: usesOwnKeys, ipHash, runGroupId },
-    );
-  } catch (err) {
-    const httpErr = toHttpError(err);
-    if (httpErr) {
-      if (httpErr.headers) {
-        for (const [key, value] of Object.entries(httpErr.headers)) {
-          res.setHeader(key, value);
-        }
+      // 8. Enforce ALTCHA proof-of-work if not using own keys and not in local mode
+      const payload = parsed.data.altcha;
+      if (!payload || !(await powService.verifyAndConsume(payload))) {
+        reservation.release();
+        res.status(400).json({
+          error: 'POW_FAILED',
+          message: 'Bot verification failed. Please retry.',
+        });
+        return;
       }
-      res.status(httpErr.status).json(httpErr.body);
-      return;
     }
-    throw err;
+
+    // 9. Create job rows synchronously (fail-fast) so every returned jobId exists.
+    const runGroupId = randomUUID();
+    const fresh = parsed.data.fresh;
+    const testDataByUrl = 'testDataByUrl' in parsed.data ? parsed.data.testDataByUrl : undefined;
+    const defaultTestData = parsed.data.testData;
+
+    const jobs: QueuedJob[] = urls.map((url, idx) => {
+      const jobTestData = testDataByUrl?.[url] ?? defaultTestData;
+      return {
+        id: randomUUID(),
+        url,
+        deepCrawl,
+        fresh,
+        testData: jobTestData,
+        ...(idx === 0 ? { focus: parsed.data.focus } : {}),
+      };
+    });
+
+    try {
+      await createPendingJobs(
+        jobs.map((job) => ({ id: job.id, targetUrl: job.url })),
+        {
+          visitorId: req.visitorId,
+          usedOwnKeys: usesOwnKeys,
+          ipHash,
+          runGroupId,
+          quotaExempt: config.LOCAL_AGENT_MODE,
+        },
+      );
+    } catch (err) {
+      const httpErr = toHttpError(err);
+      if (httpErr) {
+        if (httpErr.headers) {
+          for (const [key, value] of Object.entries(httpErr.headers)) {
+            res.setHeader(key, value);
+          }
+        }
+        res.status(httpErr.status).json(httpErr.body);
+        return;
+      }
+      throw err;
+    } finally {
+      if (reservation?.ok) reservation.release();
+    }
+
+    // 10. Enqueue run group
+    const queuePosition = runQueue.enqueue(
+      {
+        groupId: runGroupId,
+        jobs,
+        keys: requestKeys,
+        webhook,
+        client,
+        enqueuedAt: Date.now(),
+      },
+      claimToken,
+    );
+    claimToken = null;
+
+    res.status(202).json({
+      jobIds: jobs.map((job) => job.id),
+      runGroupId,
+      queuePosition,
+      ...(webhook ? { webhookSecret: webhook.secret } : {}),
+    });
   } finally {
-    if (reservation?.ok) reservation.release();
+    if (claimToken) {
+      runQueue.releaseClaim(claimToken);
+    }
   }
-
-  // 10. Enqueue run group
-  const queuePosition = runQueue.enqueue({
-    groupId: runGroupId,
-    jobs,
-    keys: requestKeys,
-    webhook,
-    client,
-    enqueuedAt: Date.now(),
-  });
-
-  res.status(202).json({
-    jobIds: jobs.map((job) => job.id),
-    runGroupId,
-    queuePosition,
-    ...(webhook ? { webhookSecret: webhook.secret } : {}),
-  });
 });
 
 export default router;
