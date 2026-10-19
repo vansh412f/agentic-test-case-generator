@@ -1,19 +1,27 @@
-import { Globe, Tabs, Warning, ArrowRight } from '@phosphor-icons/react';
+import { Globe, Tabs, ArrowRight, CircleNotch } from '@phosphor-icons/react';
 import { useMemo, useState, useEffect } from 'react';
 import useSWR from 'swr';
 import { toast } from 'sonner';
 import { PowWidget } from '@/components/home/PowWidget';
 import { QuotaExhaustedPanel } from '@/components/home/QuotaExhaustedPanel';
 import { RunGroupList } from '@/components/home/RunGroupList';
+import { ErrorNotice } from '@/components/common/ErrorNotice';
+import { PageTestData } from '@/components/home/PageTestData';
+import { useBackendMode } from '@/hooks/useBackendMode';
 import {
   apiBase,
+  crawlPage,
   fetcher,
   getBudget,
   hasConfiguredKeys,
   startGeneration,
   type BudgetResponse,
+  type TestDataParam,
+  ApiError,
 } from '@/lib/api';
 import { handleGenerationError } from '@/lib/generationErrors';
+import { presentError } from '@/lib/errorPresentation';
+import { loadRememberedTestData } from '@/lib/rememberedTestData';
 import { isTerminalJobStatus } from '@/lib/utils';
 import type { AppMap, JobDetail, JobsListResponse } from '@/types/api';
 
@@ -31,6 +39,7 @@ function normalizeUrl(u: string): string {
 }
 
 export function ContinueTesting({ job }: ContinueTestingProps) {
+  const { isLocal } = useBackendMode();
   const [isOpen, setIsOpen] = useState(false);
   const [hasCustomKeys, setHasCustomKeys] = useState(false);
   const [altchaPayload, setAltchaPayload] = useState<string | null>(null);
@@ -45,8 +54,15 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
   const [createdJobIds, setCreatedJobIds] = useState<string[] | null>(null);
   const [submittedUrls, setSubmittedUrls] = useState<string[]>([]);
 
+  const [pageAppMaps, setPageAppMaps] = useState<Record<string, AppMap>>({});
+  const [crawlingUrls, setCrawlingUrls] = useState<Record<string, boolean>>({});
+  const [testDataByUrl, setTestDataByUrl] = useState<
+    Record<string, Record<string, { value: string; sensitive: boolean }>>
+  >({});
+
+  const isTerminal = isTerminalJobStatus(job.status);
   const { data: appMapData, isLoading: appMapLoading } = useSWR<{ appMap: AppMap | null }>(
-    isOpen ? `${apiBase()}/api/jobs/${job.id}/appmap` : null,
+    isTerminal ? `${apiBase()}/api/jobs/${job.id}/appmap` : null,
     fetcher,
   );
   const appMap = appMapData?.appMap ?? job.appMap;
@@ -55,7 +71,9 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
     ['/api/budget', hasCustomKeys],
     () => getBudget(),
   );
-  const maxAllowedUrls = budget?.maxUrlsPerRun ?? (hasCustomKeys ? 5 : 3);
+  const maxAllowedUrls = isLocal
+    ? (budget?.maxUrlsPerRun ?? 10)
+    : (budget?.maxUrlsPerRun ?? (hasCustomKeys ? 5 : 3));
 
   useEffect(() => {
     setHasCustomKeys(hasConfiguredKeys());
@@ -102,18 +120,33 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
     return (groupList?.jobs ?? []).filter((j) => createdJobIds?.includes(j.id));
   }, [groupList?.jobs, createdJobIds]);
 
-  if (eligiblePages.length === 0 && eligibleTabs.length === 0) {
+  if (!appMapLoading && eligiblePages.length === 0 && eligibleTabs.length === 0) {
     return null;
   }
 
-  const togglePage = (url: string) => {
+  const togglePage = async (pageUrl: string) => {
+    const willSelect = !selectedPages.includes(pageUrl);
     setSelectedPages((prev) =>
-      prev.includes(url)
-        ? prev.filter((p) => p !== url)
+      prev.includes(pageUrl)
+        ? prev.filter((p) => p !== pageUrl)
         : prev.length < maxAllowedUrls
-          ? [...prev, url]
+          ? [...prev, pageUrl]
           : prev,
     );
+
+    if (willSelect && !pageAppMaps[pageUrl] && !crawlingUrls[pageUrl]) {
+      setCrawlingUrls((prev) => ({ ...prev, [pageUrl]: true }));
+      try {
+        const result = await crawlPage(pageUrl);
+        setPageAppMaps((prev) => ({ ...prev, [pageUrl]: result }));
+        const rem = loadRememberedTestData(pageUrl, result.elements);
+        setTestDataByUrl((prev) => ({ ...prev, [pageUrl]: rem }));
+      } catch {
+        // Keep without appMap if crawl failed
+      } finally {
+        setCrawlingUrls((prev) => ({ ...prev, [pageUrl]: false }));
+      }
+    }
   };
 
   const toggleTab = (id: string) => {
@@ -126,9 +159,36 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
     );
   };
 
+  const buildTestDataByUrlParam = (): Record<string, TestDataParam[]> | undefined => {
+    const result: Record<string, TestDataParam[]> = {};
+    for (const pageUrl of selectedPages) {
+      const pageMap = pageAppMaps[pageUrl];
+      const pageData = testDataByUrl[pageUrl];
+      if (pageMap && pageData) {
+        const entries: TestDataParam[] = [];
+        for (const [elementId, entry] of Object.entries(pageData)) {
+          if (!entry.value.trim()) continue;
+          const el = pageMap.elements.find((e) => e.id === elementId);
+          if (el?.selectors?.css) {
+            entries.push({
+              elementId,
+              css: el.selectors.css,
+              value: entry.value,
+              sensitive: entry.sensitive,
+            });
+          }
+        }
+        if (entries.length > 0) {
+          result[pageUrl] = entries;
+        }
+      }
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  };
+
   async function handleGeneratePages() {
     if (selectedPages.length === 0 || submitting) return;
-    if (!hasCustomKeys && !altchaPayload) {
+    if (!isLocal && !hasCustomKeys && !altchaPayload) {
       toast('Bot check is still running — one moment');
       return;
     }
@@ -139,15 +199,26 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
     setError(null);
     setQuotaDetails(null);
 
+    const tdParam = buildTestDataByUrlParam();
+
     try {
-      const { jobIds } = await startGeneration(selectedPages, payloadToUse);
+      const { jobIds } = await startGeneration(selectedPages, payloadToUse, {
+        testDataByUrl: tdParam,
+      });
       setSubmittedUrls(selectedPages);
       setCreatedJobIds(jobIds);
       toast.success(`${jobIds.length} ${jobIds.length === 1 ? 'job' : 'jobs'} queued.`);
     } catch (err) {
-      const msg = handleGenerationError(err, {
-        onQuota: (details) => setQuotaDetails(details),
+      let msg = handleGenerationError(err, {
+        onQuota: (details) => {
+          if (!isLocal) {
+            setQuotaDetails(details);
+          }
+        },
       });
+      if (err instanceof ApiError) {
+        msg = presentError(err.code, err.details, err.message).body;
+      }
       setError(msg);
       toast.error(msg);
     } finally {
@@ -157,7 +228,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
 
   async function handleGenerateTabs() {
     if (selectedTabs.length === 0 || submitting) return;
-    if (!hasCustomKeys && !altchaPayload) {
+    if (!isLocal && !hasCustomKeys && !altchaPayload) {
       toast('Bot check is still running — one moment');
       return;
     }
@@ -182,9 +253,16 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
       setCreatedJobIds(jobIds);
       toast.success('Focused test generation queued.');
     } catch (err) {
-      const msg = handleGenerationError(err, {
-        onQuota: (details) => setQuotaDetails(details),
+      let msg = handleGenerationError(err, {
+        onQuota: (details) => {
+          if (!isLocal) {
+            setQuotaDetails(details);
+          }
+        },
       });
+      if (err instanceof ApiError) {
+        msg = presentError(err.code, err.details, err.message).body;
+      }
       setError(msg);
       toast.error(msg);
     } finally {
@@ -192,7 +270,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
     }
   }
 
-  const buttonsDisabled = submitting || (!hasCustomKeys && !altchaPayload);
+  const buttonsDisabled = submitting || (!isLocal && !hasCustomKeys && !altchaPayload);
 
   if (!isOpen) {
     return (
@@ -252,7 +330,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
         </div>
       </div>
 
-      {quotaDetails && (
+      {!isLocal && quotaDetails && (
         <QuotaExhaustedPanel
           limit={quotaDetails.limit}
           onDismiss={() => setQuotaDetails(null)}
@@ -261,14 +339,12 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
       )}
 
       {error && !quotaDetails && (
-        <div className="error-banner mb-6" role="alert" style={{ marginTop: '12px' }}>
-          <span>
-            <Warning aria-hidden="true" className="h-5 w-5" />
-          </span>
-          <div>
-            <strong>Request failed</strong>
-            <p>{error}</p>
-          </div>
+        <div className="mb-6" style={{ marginTop: '12px' }}>
+          <ErrorNotice
+            title="Request failed"
+            body={error}
+            raw={error}
+          />
         </div>
       )}
 
@@ -292,6 +368,9 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
                 {eligiblePages.map((pageUrl) => {
                   const isSelected = selectedPages.includes(pageUrl);
                   const isMax = selectedPages.length >= maxAllowedUrls;
+                  const isCrawling = crawlingUrls[pageUrl];
+                  const pageMap = pageAppMaps[pageUrl];
+
                   return (
                     <label
                       key={pageUrl}
@@ -300,17 +379,48 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
                       <input
                         type="checkbox"
                         checked={isSelected}
-                        disabled={submitting || (!isSelected && isMax)}
-                        onChange={() => togglePage(pageUrl)}
+                        disabled={submitting || isCrawling || (!isSelected && isMax)}
+                        onChange={() => void togglePage(pageUrl)}
                       />
                       <Globe aria-hidden="true" className="h-4 w-4 continue-testing-icon" />
                       <span className="continue-testing-url-span">
                         {pageUrl}
                       </span>
+                      {isCrawling ? (
+                        <span style={{ fontSize: '11px', color: '#6b7280', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <CircleNotch aria-hidden="true" className="h-3 w-3 animate-spin" /> Scanning…
+                        </span>
+                      ) : pageMap ? (
+                        <span style={{ fontSize: '11px', color: '#6b7280' }}>
+                          {pageMap.elements.length} elements
+                        </span>
+                      ) : null}
                     </label>
                   );
                 })}
               </div>
+
+              {/* Per-page test data */}
+              {selectedPages.length > 0 && (
+                <PageTestData
+                  pages={selectedPages.map((url) => ({
+                    url,
+                    title: pageAppMaps[url]?.title,
+                    elements: pageAppMaps[url]?.elements ?? [],
+                  }))}
+                  testDataByUrl={testDataByUrl}
+                  onUpdateField={(pageUrl, elementId, value, sensitive) => {
+                    setTestDataByUrl((prev) => ({
+                      ...prev,
+                      [pageUrl]: {
+                        ...(prev[pageUrl] ?? {}),
+                        [elementId]: { value, sensitive },
+                      },
+                    }));
+                  }}
+                  disabled={submitting}
+                />
+              )}
             </div>
           )}
 
@@ -345,8 +455,8 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
             </div>
           )}
 
-          {/* PoW Challenge if needed */}
-          {!hasCustomKeys && (
+          {/* PoW Challenge if needed in hosted mode */}
+          {!isLocal && !hasCustomKeys && (
             <div className="continue-testing-pow">
               <PowWidget key={powEpoch} onPayload={setAltchaPayload} />
             </div>
