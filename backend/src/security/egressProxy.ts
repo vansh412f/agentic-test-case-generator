@@ -235,9 +235,27 @@ async function handleHttpRequest(
   }
 
   const targetIps = orderAddressesIpv4First(addresses);
+  const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
   const chunks: Buffer[] = [];
-  req.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+  let bodySize = 0;
+  let payloadTooLarge = false;
+
+  req.on('data', (chunk) => {
+    if (payloadTooLarge) return;
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bodySize += buf.length;
+    if (bodySize > MAX_BODY_BYTES) {
+      payloadTooLarge = true;
+      req.destroy();
+      res.writeHead(413, { 'Content-Type': 'text/plain' });
+      res.end('Payload Too Large');
+      return;
+    }
+    chunks.push(buf);
+  });
+
   req.on('end', () => {
+    if (payloadTooLarge) return;
     const bodyBuffer = Buffer.concat(chunks);
     let index = 0;
 
@@ -250,6 +268,8 @@ async function handleHttpRequest(
       const targetIp = targetIps[index++];
       let connected = false;
       let responded = false;
+      let socketRef: net.Socket | null = null;
+      let initialBytesWritten = 0;
 
       const forwardReq = http.request(
         {
@@ -277,18 +297,27 @@ async function handleHttpRequest(
       }, 5_000);
 
       forwardReq.on('socket', (socket) => {
-        socket.once('connect', () => {
+        socketRef = socket;
+        initialBytesWritten = socket.bytesWritten;
+        if (socket.connecting === false) {
           connected = true;
           clearTimeout(timer);
           forwardReq.setTimeout(60_000, () => forwardReq.destroy());
-        });
+        } else {
+          socket.once('connect', () => {
+            connected = true;
+            clearTimeout(timer);
+            forwardReq.setTimeout(60_000, () => forwardReq.destroy());
+          });
+        }
       });
 
       forwardReq.on('error', (err: any) => {
         clearTimeout(timer);
         forwardReq.destroy();
         if (!responded) {
-          if (RETRYABLE_CONNECT_ERRORS.has(err?.code) && index < targetIps.length) {
+          const bytesWritten = socketRef ? socketRef.bytesWritten > initialBytesWritten : false;
+          if (RETRYABLE_CONNECT_ERRORS.has(err?.code) && !bytesWritten && index < targetIps.length) {
             tryForward();
             return;
           }
