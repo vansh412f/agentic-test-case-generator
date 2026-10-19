@@ -48,3 +48,4 @@ ${JSON.stringify(params.elementsInScope, null, 2)}
 
 Fix the test code. Output only the corrected code in a ${FENCE}typescript fence.`;
 }
+// Module component implementation.
