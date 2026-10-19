@@ -28,3 +28,4 @@ export function playwrightRunnerEnv(resultsPath: string): NodeJS.ProcessEnv {
     ...(process.env.AGT_EGRESS_PROXY ? { AGT_EGRESS_PROXY: process.env.AGT_EGRESS_PROXY } : {}),
   });
 }
+// Module component implementation.
