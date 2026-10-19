@@ -354,3 +354,4 @@ Remember to output exactly a JSON object conforming to the schema:
 }`;
 }
 
+// Module component implementation.
