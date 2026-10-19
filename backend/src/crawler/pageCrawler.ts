@@ -1,6 +1,7 @@
 import { chromium, errors, type Browser } from 'playwright';
 import { config, VIEWPORT } from '../config.ts';
 import { CrawlError } from './crawlErrors.ts';
+import { mapGotoError } from './gotoErrors.ts';
 import { extractElements } from './browser/extractElements.ts';
 import { extractForms } from './browser/extractForms.ts';
 import { buildAppMap } from './appMapBuilder.ts';
@@ -58,14 +59,7 @@ async function crawlInBrowser(browser: Browser, url: string, maxElements: number
     try {
       resp = await page.goto(url, { waitUntil: 'load', timeout: config.NAVIGATION_TIMEOUT_MS });
     } catch (err) {
-      if (err instanceof errors.TimeoutError) {
-        const landing = classifyLanding({ host, timedOut: true });
-        if (landing === 'waking') {
-          throw new CrawlError('TARGET_WAKING', `${host} is waking up from sleep.`, err, { host, retryAfterSeconds: 30 });
-        }
-        throw new CrawlError('NAVIGATION_TIMEOUT', `Page did not load within ${config.NAVIGATION_TIMEOUT_MS}ms: ${url}`, err);
-      }
-      throw new CrawlError('NAVIGATION_FAILED', `Failed to navigate to ${url}: ${(err as Error).message}`, err);
+      throw mapGotoError(err, url);
     }
 
     const status = resp?.status();
