@@ -3,6 +3,7 @@ import { ArrowRight, CircleNotch, Globe } from '@phosphor-icons/react';
 import { useForm } from 'react-hook-form';
 import { useEffect } from 'react';
 import { targetUrlSchema, type TargetUrlForm } from '@/lib/validation';
+import { classifyTarget } from '@/lib/targetUrl';
 
 interface UrlGenerateFormProps {
   busy: boolean;
@@ -40,7 +41,12 @@ export function UrlGenerateForm({
   return (
     <form
       noValidate
-      onSubmit={handleSubmit(async (values) => onCrawl(values.url))}
+      onSubmit={handleSubmit(async (values) => {
+        const classified = classifyTarget(values.url);
+        const norm = classified.normalized || values.url.trim();
+        setValue('url', norm);
+        return onCrawl(norm);
+      })}
     >
       <div className="url-box">
         <div className="input-wrap">
