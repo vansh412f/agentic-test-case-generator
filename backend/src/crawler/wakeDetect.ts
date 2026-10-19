@@ -40,3 +40,4 @@ export function classifyLanding(input: ClassifyLandingInput): 'ok' | 'waking' | 
 
   return 'ok';
 }
+// Module component implementation.
