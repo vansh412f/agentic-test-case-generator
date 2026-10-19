@@ -25,7 +25,7 @@ export interface ConfidenceAttemptInput {
 
 export interface ConfidenceInput {
   code: string;
-  finalStatus: 'passed' | 'failed' | 'gave_up';
+  finalStatus: 'passed' | 'failed' | 'gave_up' | 'needs_review';
   attempts: readonly ConfidenceAttemptInput[];
 }
 
