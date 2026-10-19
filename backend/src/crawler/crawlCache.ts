@@ -82,3 +82,4 @@ export function takeFreshCrawl(url: string, maxAgeMs = TTL_MS): AppMap | null {
 export function clearCrawlCache(): void {
   entries.clear();
 }
+// Module component implementation.
