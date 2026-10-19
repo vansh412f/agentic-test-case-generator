@@ -12,3 +12,4 @@ export function extractForms(): RawForm[] {
     ariaRole: form.getAttribute('role'),
   }));
 }
+// Module component implementation.
