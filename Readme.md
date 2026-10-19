@@ -1,559 +1,801 @@
-# Agentic Test Case Generator
-
 <div align="center">
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue.svg?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Next.js](https://img.shields.io/badge/Next.js-14.2_(Pages_Router)-black.svg?style=flat-square&logo=next.js)](https://nextjs.org/)
-[![Express](https://img.shields.io/badge/Express-5.0-000000.svg?style=flat-square&logo=express)](https://expressjs.com/)
-[![Playwright](https://img.shields.io/badge/Playwright-1.46+-2EAD33.svg?style=flat-square&logo=playwright)](https://playwright.dev/)
-[![Prisma](https://img.shields.io/badge/Prisma-5.18-2D3748.svg?style=flat-square&logo=prisma)](https://www.prisma.io/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3.4-38B2AC.svg?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
-[![LLM Providers](https://img.shields.io/badge/LLM-Groq_%7C_Gemini-FF6B6B.svg?style=flat-square)](https://groq.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+# Agentic Test Case Generator
 
-**An autonomous AI QA engineering agent that observes live web applications and synthesizes robust, self-healing Playwright TypeScript test suites grounded in real DOM evidence.**
+Generates typed Playwright end-to-end test suites from live web applications using deterministic DOM inspection and bounded correction loops.
 
-[Live Demo](http://localhost:3000) • [Architecture](#system-architecture) • [API Reference](#api-reference) • [Design Lab](#how-it-works-design-exploration-lab) • [Local Setup](#local-development)
+<p>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.9.3-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript 5.9.3" /></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-%3E=22.13.4_(tested_v24.14.1)-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js >=22.13.4" /></a>
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-14.2.5_(Pages_Router)-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js 14.2.5" /></a>
+  <a href="https://expressjs.com/"><img src="https://img.shields.io/badge/Express-5.2.1-000000?style=flat-square&logo=express&logoColor=white" alt="Express 5.2.1" /></a>
+  <a href="https://playwright.dev/"><img src="https://img.shields.io/badge/Playwright-1.63.0-2EAD33?style=flat-square&logo=playwright&logoColor=white" alt="Playwright 1.63.0" /></a>
+  <a href="https://www.prisma.io/"><img src="https://img.shields.io/badge/Prisma-6.19.3-2D3748?style=flat-square&logo=prisma&logoColor=white" alt="Prisma 6.19.3" /></a>
+  <a href="https://supabase.com/"><img src="https://img.shields.io/badge/PostgreSQL-Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=white" alt="Supabase PostgreSQL" /></a>
+  <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind_CSS-3.4.17-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind CSS 3.4.17" /></a>
+  <img src="https://img.shields.io/badge/License-not_yet_specified-lightgrey?style=flat-square" alt="License: not yet specified" />
+</p>
+
+<p>
+  <a href="#how-it-works">How it works</a> &middot;
+  <a href="#test-lifecycle">Test lifecycle</a> &middot;
+  <a href="#architecture-decisions">Architecture decisions</a> &middot;
+  <a href="#security-model">Security</a> &middot;
+  <a href="#limits--modes">Limits &amp; modes</a> &middot;
+  <a href="#measured-results">Measured results</a> &middot;
+  <a href="#run-locally">Run locally</a> &middot;
+  <a href="#api-reference">API</a>
+</p>
 
 </div>
 
 ---
 
-## Table of Contents
-
-- [Overview](#overview)
-- [What It Does](#what-it-does)
-- [System Architecture](#system-architecture)
-- [Repository Structure](#repository-structure)
-- [Core Agent Pipeline](#core-agent-pipeline)
-  - [1. DOM Observation & Crawling](#1-dom-observation--crawling)
-  - [2. Journey Plan Synthesis](#2-journey-plan-synthesis)
-  - [3. Playwright Code Generation](#3-playwright-code-generation)
-  - [4. Static TypeScript Pre-flight Gate](#4-static-typescript-pre-flight-gate)
-  - [5. Isolated Execution & Triage](#5-isolated-execution--triage)
-  - [6. Self-Correction & Assertion Preservation Guard](#6-self-correction--assertion-preservation-guard)
-- [Security & Admission Stack](#security--admission-stack)
-  - [Native Web Crypto Proof-of-Work (ALTCHA)](#native-web-crypto-proof-of-work-altcha)
-  - [Visitor Authentication & Capability UUIDs](#visitor-authentication--capability-uuids)
-  - [Concurrency Semaphores & Atomic Quotas](#concurrency-semaphores--atomic-quotas)
-  - [Zero-SDK BYOK Isolation (AsyncLocalStorage)](#zero-sdk-byok-isolation-asynclocalstorage)
-- [How It Works: Design Exploration Lab (11 Patterns)](#how-it-works-design-exploration-lab)
-- [Localhost & Deployment Modes](#localhost--deployment-modes)
-- [API Reference](#api-reference)
-- [Data Model & Prisma Schema](#data-model--prisma-schema)
-- [Local Development Setup](#local-development)
-  - [Prerequisites](#prerequisites)
-  - [Backend Setup](#backend-setup)
-  - [Frontend Setup](#frontend-setup)
-  - [Environment Variables](#environment-variables)
-- [Verification & Quality Gates](#verification--quality-gates)
-- [Measured Token Economics](#measured-token-economics)
-- [License](#license)
-
----
-
-## Overview
-
-Writing and maintaining browser end-to-end tests is historically brittle and time-consuming. Selectors change, asynchronous hydration triggers race conditions, and teams spend hours updating assertions after minor UI refactors.
-
-**Agentic Test Case Generator** replaces manual test authoring with an autonomous QA agent. Given any accessible web application URL, the agent:
-1. Navigates with a headless Chromium browser and catalogs real interactive elements.
-2. Derives realistic user journeys strictly grounded in the discovered DOM.
-3. Synthesizes typed, idiomatic `@playwright/test` specifications without hallucinating CSS or XPath selectors.
-4. Pre-compiles the code with `tsc --noEmit` before executing in an isolated runner sandbox.
-5. Triages browser execution errors into **Real Application Defects** (which are never masked) versus **Mechanical Flakiness** (which the agent heals in a guarded loop).
-
----
-
 ## What It Does
 
-```
- ┌────────────────┐      ┌────────────────┐      ┌────────────────┐      ┌────────────────┐      ┌────────────────┐
- │   1. CRAWL     │ ───► │    2. PLAN     │ ───► │  3. GENERATE   │ ───► │  4. VALIDATE   │ ───► │  5. HEAL/FLAG  │
- │ Live DOM Trees │      │ User Journeys  │      │ Playwright TS  │      │  tsc --noEmit  │      │ Guarded Loop   │
- └────────────────┘      └────────────────┘      └────────────────┘      └────────────────┘      └────────────────┘
-```
-
-- **Zero Selector Guessing**: Locators are resolved strictly against actual DOM accessibility trees (`getByRole`, `getByLabel`, `getByPlaceholder`, `getByTestId`, `getByText`).
-- **Assertion Preservation Guard**: Real defects and failed assertions are preserved as authentic findings. The agent is strictly prevented from rewriting or weakening test assertions to force a "green" pass.
-- **Self-Healing Automation**: Flaky selectors and DOM timing issues are diagnosed using browser stderr and retried with corrected locators (capped at 2 attempts).
-- **Interactive UI Dashboard**: Dark-first Next.js interface with Monaco diff viewers, animated macOS execution terminal, live pipeline progress trackers, and instant export to self-contained HTML reports and `.zip` test repositories.
-- **Free-Tier Resilient**: Zero external paid dependencies. Self-hosted Web Crypto Proof-of-Work, atomic concurrency semaphores, and smart failover between Groq (`Llama 3.3 70B`) and Google Gemini (`Gemini 2.5 Flash`).
+- **Discovers interactive state directly from the DOM:** Navigates the target URL using headless Chromium, cataloging visible buttons, inputs, links, forms, and semantic accessibility roles into a structured AppMap.
+- **Plans targeted test scenarios:** Submits the discovered element tree to an LLM reasoning model to design user journeys across validation, navigation, state changes, and negative edge cases.
+- **Compiles Playwright TypeScript deterministically:** Synthesizes typed test files using strict locator priority rules without model hallucination for locators where semantic roles or test IDs exist.
+- **Enforces a static compilation gate:** Pre-validates every emitted test via an in-process TypeScript compiler (`tsc --noEmit`) before executing any browser code.
+- **Runs tests in isolated Chromium processes:** Executes generated tests in Chromium (Chromium-only execution) inside a sandboxed runner sandbox.
+- **Classifies and isolates failures:** Distinguishes assertion discrepancies from mechanical harness failures (missing locators, network timeouts); mechanical failures undergo bounded correction while assertion failures are preserved.
+- **Exports complete test suites:** Packages validated tests into a runnable Playwright project zip complete with `playwright.config.ts`, `.env.example`, and a GitHub Actions workflow.
 
 ---
 
-## System Architecture
+## How It Works
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor User as Browser UI
+  participant Next as Next.js Proxy (:3000)
+  participant API as Express API (:4000)
+  participant Queue as Run Queue
+  participant Crawler as Page Crawler (Chromium)
+  participant Planner as LLM Planner (120B / Cache)
+  participant Compiler as AST Compiler
+  participant TSC as tsc Pre-flight Gate
+  participant Runner as Test Runner (agtrunner UID 1001)
+  participant DB as Supabase Postgres
+  participant SSE as SSE Stream
+
+  User->>Next: POST /api/generate
+  Next->>API: Forward request with Edge Secret
+  API->>DB: Create pending Job records
+  API->>Queue: Enqueue Run Group
+  API-->>User: 202 Accepted (jobIds, runGroupId)
+  User->>SSE: GET /api/jobs/:id/stream
+
+  Queue->>Crawler: crawlPage(targetUrl)
+  Crawler-->>Queue: AppMap (elements, forms, links)
+  Queue->>SSE: emit phase_change: planning
+
+  Queue->>Planner: planTests(appMap)
+  Planner-->>Queue: TestPlan (scenarios + steps)
+  Queue->>Compiler: compileTest(testCase, elements)
+  Compiler-->>Queue: Spec file code
+
+  Queue->>TSC: validateTestCode(specFiles)
+  alt Syntax or type error
+    TSC-->>Queue: Diagnostic errors
+    Queue->>Queue: Request corrector (20B fast model)
+  else Types valid
+    TSC-->>Queue: Validation passed
+  end
+
+  Queue->>Runner: executeTests(specFiles) via setpriv
+  Runner-->>Queue: Playwright JSON test report
+  Queue->>DB: Persist execution results & final status
+  Queue->>SSE: emit test_completed & job_finished
+```
+
+### Execution Walkthrough
+
+1. **Submission & Admission (`backend/src/api/routes.ts`):** Client submits target URLs with an ALTCHA proof-of-work payload. The API validates target reachability, enforces daily quotas, assigns a signed visitor cookie, and pushes the run into the in-process queue.
+2. **DOM Observation (`backend/src/crawler/pageCrawler.ts`):** Headless Chromium navigates to the target, collects interactive elements, computes accessible roles and CSS selectors, and serializes the DOM into an AppMap.
+3. **Plan Synthesis (`backend/src/agent/steps/planner.ts`):** The AppMap is checked against the in-memory plan cache. On a cache miss, an LLM reasoning model synthesizes user journeys matching the observed interactive elements.
+4. **Deterministic Compilation (`backend/src/agent/steps/compiler.ts`):** Scenarios are mapped directly into `@playwright/test` TypeScript files by looking up referenced elements from the AppMap.
+5. **Static Type-Check Gate (`backend/src/runner/validator.ts`):** Emitted test code is written to an ephemeral directory with a scoped `tsconfig.json` and compiled with `tsc --noEmit`.
+6. **Sandboxed Execution (`backend/src/runner/executor.ts`):** Playwright runs the test files in headless Chromium. In production Linux containers, execution runs under an unprivileged user (`agtrunner`, UID 1001) with network access restricted to the internal egress proxy.
+7. **Triage & Correction Loop (`backend/src/agent/rounds.ts`):** Results are parsed. Passing tests are marked `passed`. Real assertion discrepancies become `failed`. Mechanical locator and timeout issues trigger correction attempts (up to 3 rounds) using a fast model.
+8. **Persistence & Streaming (`backend/src/agent/jobEvents.ts`):** State transitions and test outcomes are saved in Supabase and pushed in real time to the browser UI over Server-Sent Events.
+
+---
+
+## Test Lifecycle
+
+```mermaid
+stateDiagram-v2
+  [*] --> open: Test emitted from planner or baseline
+
+  open --> passed: Execution passed on attempt 1..3
+  open --> failed: Finding detected (assertion failed after locator resolved)
+  open --> needs_review: Stale expectation (target page redirected or element vanished)
+  open --> gave_up: Unrecoverable or limits exhausted
+
+  open --> open: Mechanical failure (locator / timeout) & rounds < 3 & budget available
+
+  passed --> [*]
+  failed --> [*]
+  needs_review --> [*]
+  gave_up --> [*]
+```
+
+### Transition Rules
+
+- **`open -> passed`:** The Playwright test executed to completion with all assertions satisfied.
+- **`open -> failed`:** Execution failed with a classified `finding` (an assertion expectation failed on an element that resolved in the DOM). The assertion preservation guard prohibits modifying assertions; findings are never auto-corrected.
+- **`open -> needs_review`:** The page redirected to an unexpected URL before the assertion executed, leaving selectors looking for elements from the prior page (`backend/src/agent/staleExpectation.ts`).
+- **`open -> gave_up`:** Reached when any of the following occur:
+  - Mechanical failure persisted across 3 full execution rounds.
+  - Job token budget was exceeded (`JOB_TOKEN_BUDGET`).
+  - AST code safety checks rejected the code and correction could not produce safe code.
+  - Test is a baseline check (built-in broken links or accessibility checks are never altered by the model).
+- **`open -> open`:** A mechanical failure occurred (`locator`, `timeout`, or generic runner error), the current round is less than 3, and tokens remain. Corrected code is generated and submitted to the static type check for the next round.
+
+---
+
+## Architecture Decisions
+
+| Decision | Why | Trade-off Accepted |
+|---|---|---|
+| [Observe-first grounding](#decision-1-observe-first-grounding) | Eliminates hallucinated selectors by cataloging DOM elements before planning. | Cannot test paths guarded behind interactions not discovered during initial crawl. |
+| [Two-tier model separation](#decision-2-two-tier-model-separation) | Uses a high-capacity model for scenario planning and a fast model for repairs. | Requires coordinating two distinct model profiles and fallback pathways. |
+| [Plan caching](#decision-3-plan-caching) | Cuts token consumption by over 50% when re-testing stable URLs. | Cache hits reuse prior test structures until cache expiration or target changes. |
+| [Static type-check gate](#decision-4-static-type-check-gate) | Blocks syntax and type errors from consuming browser execution time. | Adds 1–2 seconds of `tsc` overhead per validation round. |
+| [Guarded round execution](#decision-5-guarded-round-execution) | Prevents the model from weakening assertions to artificially pass broken tests. | Tests that fail valid assertions cannot be auto-repaired and remain marked as failures. |
+| [Built-in baseline checks](#decision-6-built-in-baseline-checks) | Provides immediate smoke coverage for broken links and accessibility without LLM calls. | Baseline assertions are static and cannot auto-correct if the application has minor known flaws. |
+| [Secret token substitution](#decision-7-secret-token-substitution) | Shields passwords and credentials from LLMs, databases, and logs. | Complex multi-stage credentials require manual mapping via the preview interface. |
+| [In-process run queue](#decision-8-in-process-run-queue) | Eliminates Redis operational complexity for single-instance container hosting. | In-flight queue state does not persist across container restarts or horizontal scaling. |
+| [Server-Sent Events](#decision-9-server-sent-events) | Delivers lightweight, unidirectional live job progress over standard HTTP. | Client cannot push data backward over the same stream (uses discrete REST endpoints). |
+| [Postgres connection pooling](#decision-10-postgres-connection-pooling) | Operates reliably within Supabase free-tier connection limits using PgBouncer. | Direct connection required separately for migrations due to lack of advisory locks. |
+| [Daily admission quotas](#decision-11-daily-admission-quotas) | Prevents upstream denial-of-service and API depletion on public deployments. | Legitimate heavy users must bring their own API keys once daily limits are reached. |
+| [Target classification and wake handling](#decision-12-target-classification-and-wake-handling) | Handles sleeping free-tier host cold starts without failing the run immediately. | Initial runs on sleeping targets must wait for external spin-up delays. |
+| [Free-tier deployment profile](#decision-13-free-tier-deployment-profile) | Enables hosting across Render, Vercel, and Supabase free allocations. | Constrained to 512 MB RAM, concurrency of 1, and scaled execution timeouts. |
+| [Multi-channel test export](#decision-14-multi-channel-test-export) | Provides immediately executable Playwright suites runnable in developer CI/CD. | Generated suites require installing Playwright dependencies in the target environment. |
+
+<details>
+<summary><strong>Expand All Architecture Decision Records</strong></summary>
+
+### Decision 1: Observe-First Grounding
+
+- **Context:** LLMs tasked with authoring browser tests from URLs or screenshots routinely hallucinate CSS classes, non-existent button texts, or deprecated IDs.
+- **Decision:** Crawl the real DOM first with headless Chromium before engaging the planner model. Compile locators deterministically using strict preference ordering: `getByTestId` &rarr; `getByRole` &rarr; `getByPlaceholder` &rarr; `getByLabel` &rarr; `getByText` &rarr; CSS selector.
+- **Why:** Deterministic mapping produces Playwright code that adheres to official testing best practices and aligns with actual page elements.
+- **Trade-off Accepted:** Dynamic elements that appear only after complex multi-step user interactions are not visible during the initial crawl unless deep crawl is enabled.
+- **Where in Code:** `backend/src/crawler/pageCrawler.ts`, `backend/src/agent/steps/compiler.ts:12`.
+
+### Decision 2: Two-Tier Model Separation
+
+- **Context:** Running a high-parameter reasoning model for small locator syntax adjustments is inefficient and exhausts request limits.
+- **Decision:** Split LLM responsibilities into two tiers: a high-reasoning model (`openai/gpt-oss-120b`) for scenario planning, and a fast low-latency model (`openai/gpt-oss-20b`) for targeted locator fixes. Route calls through an ordered provider list (`groq,gemini,nvidia`) using standard `fetch` without vendor SDKs.
+- **Why:** Maximizes journey creativity during planning while minimizing latency and token consumption during error recovery.
+- **Trade-off Accepted:** Prompts must be maintained and validated across multiple provider implementations.
+- **Where in Code:** `backend/src/config.ts:28-34`, `backend/src/llm/client.ts`, `backend/src/llm/providers/openAiCompatible.ts`.
+
+### Decision 3: Plan Caching
+
+- **Context:** Re-testing the same application URL during continuous development generates identical crawl structures and prompts.
+- **Decision:** Hash the normalized AppMap structure and start URL. On match, serve the previously synthesized scenario plan from memory while re-executing fresh compilation and browser runs.
+- **Why:** Measured results demonstrated a 57.6% median token reduction on cache hits (1,321 vs 3,113 tokens) while bypassing planner latency entirely.
+- **Trade-off Accepted:** UI changes on the target URL that do not alter the top-level element structure reuse the cached scenario set until cache eviction or force-fresh execution.
+- **Where in Code:** `backend/src/agent/planCache.ts`, `backend/src/agent/pipeline.ts`.
+
+### Decision 4: Static Type-Check Gate
+
+- **Context:** Generated TypeScript code may contain invalid variable references, broken Playwright imports, or bad syntax.
+- **Decision:** Write generated tests to an isolated directory with an extended `tsconfig.json` and invoke `tsc --noEmit` before launching any browser process.
+- **Why:** Failing fast on compiler errors avoids launching Chromium instances for broken code, saving CPU cycles and process overhead.
+- **Trade-off Accepted:** Adds 1–2 seconds of TypeScript compilation time prior to browser launch.
+- **Where in Code:** `backend/src/runner/validator.ts`.
+
+### Decision 5: Guarded Round Execution
+
+- **Context:** LLM correction loops frequently alter or delete failing assertions to force tests to pass, hiding real application bugs.
+- **Decision:** AST checks verify that every assertion in the original code is structurally preserved in the corrected code (`assertionGuard.ts`). Any test where a locator resolved but the assertion failed is classified as a `finding` and immediately locked as `failed`.
+- **Why:** Guarantees that automated correction only fixes mechanical harness issues (such as strict mode selector collisions) and never masks a regression.
+- **Trade-off Accepted:** Tests that fail due to legitimate application defects cannot be automatically repaired to test subsequent steps.
+- **Where in Code:** `backend/src/agent/rounds.ts`, `backend/src/agent/assertionGuard.ts`.
+
+### Decision 6: Built-in Baseline Checks
+
+- **Context:** Web applications share foundational quality requirements (working links, basic accessibility, console hygiene) that do not require generative planning.
+- **Decision:** Inject deterministic baseline tests alongside AI-generated scenarios: a broken-links crawler, console error auditor, and an Axe accessibility audit. Label them distinctly in the UI as **Built-in check** versus **Generated scenario**.
+- **Why:** Guarantees baseline regression coverage on every run even if LLM rate limits or token budgets are reached.
+- **Trade-off Accepted:** Baseline checks are rigid; failures cannot be auto-corrected by the LLM and are marked as gave-up when failing.
+- **Where in Code:** `backend/src/agent/baseline.ts`, `frontend/components/job/TestResultCard.tsx:122,136`.
+
+### Decision 7: Secret Token Substitution
+
+- **Context:** End-to-end tests often require sensitive authentication credentials (passwords, tokens). Sending these to public LLMs or storing them in databases is a security hazard.
+- **Decision:** Replace sensitive inputs with placeholder tokens (`__AGT_SECRET_1__`) in the prompt and database records. Inject real values only into the ephemeral test file on disk immediately before Playwright execution. Store browser credentials strictly in the user's browser `localStorage` (30-day TTL).
+- **Why:** Zero credential exposure across LLM provider logs, server database records, and event streams.
+- **Trade-off Accepted:** The user must enter credentials on the client preview interface prior to test generation.
+- **Where in Code:** `backend/src/agent/testData.ts`, `backend/src/runner/executor.ts:212-217`, `frontend/lib/rememberedTestData.ts`.
+
+### Decision 8: In-Process Run Queue
+
+- **Context:** Distributed queues (e.g. BullMQ with Redis) introduce infrastructure overhead and operational complexity on free-tier hosting.
+- **Decision:** Implement an in-memory run queue with a per-client claim token ensuring at most one active execution per visitor.
+- **Why:** Zero operational dependencies beyond PostgreSQL; fits cleanly within free container environments.
+- **Trade-off Accepted:** Queue state is in-memory; restarting the backend process drops queued jobs (though running jobs are marked failed on reboot via orphan reconciliation).
+- **Where in Code:** `backend/src/agent/runQueue.ts`, `backend/src/maintenance/reconcileJobs.ts`.
+
+### Decision 9: Server-Sent Events
+
+- **Context:** Browser clients require real-time execution feedback (phase changes, live test completion, logs).
+- **Decision:** Stream execution events over HTTP Server-Sent Events (`/api/jobs/:id/stream`) with a 15-second heartbeat ping and reconnect replay buffer. Proxy requests through Next.js rewrites with `no-transform` cache headers.
+- **Why:** Works over standard HTTP/1.1 and HTTP/2 without WebSocket connection upgrades, corporate firewall blocks, or stateful socket servers.
+- **Trade-off Accepted:** SSE is strictly unidirectional; client cancellations and actions must use standard HTTP POST requests.
+- **Where in Code:** `backend/src/api/jobStream.ts`, `backend/src/agent/jobEvents.ts`, `frontend/next.config.js:8`.
+
+### Decision 10: Postgres Connection Pooling
+
+- **Context:** Free-tier PostgreSQL instances (such as Supabase) enforce strict connection ceilings (typically 15–20 direct connections).
+- **Decision:** Route runtime application queries through Supabase's transaction pooler (PgBouncer on port 6543) with `connection_limit=1`. Restrict direct connections (port 5432) strictly to administrative migration commands (`prisma migrate deploy`).
+- **Why:** Prevents connection starvation during bursts of crawler or runner queries.
+- **Trade-off Accepted:** Advisory locks and prepared statements cannot be used in runtime application queries.
+- **Where in Code:** `backend/prisma/schema.prisma:7-8`, `docs/DEPLOY.md:9-23`.
+
+### Decision 11: Daily Admission Quotas
+
+- **Context:** A public test generation service is vulnerable to automated scraping and denial-of-service that could rapidly exhaust upstream provider quotas.
+- **Decision:** Enforce admission control using ALTCHA proof-of-work challenges, HMAC-signed visitor tokens, and strict daily execution budgets per visitor (8 runs) and per IP (20 runs). Disallow anonymous access once limits are reached unless the user provides their own API key (BYOK).
+- **Why:** Protects hosting infrastructure and API quotas without requiring user registration or credit cards.
+- **Trade-off Accepted:** Legitimate shared-IP users (such as corporate offices) may encounter IP caps sooner.
+- **Where in Code:** `backend/src/security/dailyBudget.ts`, `backend/src/security/pow.ts`, `backend/src/api/visitorMiddleware.ts`.
+
+### Decision 12: Target Classification and Wake Handling
+
+- **Context:** Free cloud hosting providers (Render, Koyeb, Railway, Fly.io) put inactive applications to sleep, causing initial HTTP requests to take 30–60 seconds or return 502/503 status codes.
+- **Decision:** Inspect navigation failures against known waking host suffixes and cold-start page signatures. When detected, classify the failure as `TARGET_WAKING`, emit a warning event, and instruct the client to wait with a 30-second `Retry-After` header.
+- **Why:** Prevents marking sleeping web applications as broken, giving them time to spin up.
+- **Trade-off Accepted:** Crawl requests for cold-started targets experience an intentional delay before testing begins.
+- **Where in Code:** `backend/src/crawler/wakeDetect.ts`, `backend/src/crawler/gotoErrors.ts`, `backend/src/api/errors.ts:76`.
+
+### Decision 13: Free-Tier Deployment Profile
+
+- **Context:** The application is architected to operate indefinitely across free hosting tiers without incurring server infrastructure fees.
+- **Decision:** Deploy backend to Render's free Docker tier (512 MB RAM, 0.1 CPU, `RUNNER_TIMEOUT_SCALE=3`), frontend to Vercel, and database to Supabase. Configure external UptimeRobot monitors to ping `/api/health` every 5 minutes (preventing container sleep) and `/api/health/db` every 12 hours (preventing database pausing).
+- **Why:** Provides continuous availability and full end-to-end functionality without infrastructure spend.
+- **Trade-off Accepted:** Render's free tier provides 750 free hours per month; keeping one service continuously awake consumes 744 hours (leaving 6 hours margin). Concurrency must be pinned to 1.
+- **Where in Code:** `render.yaml`, `backend/Dockerfile`, `docs/DEPLOY.md`, `docs/OPERATIONS.md`.
+
+### Decision 14: Multi-Channel Test Export
+
+- **Context:** Tests generated in a hosted browser tool are only valuable if engineering teams can easily integrate them into their development repositories.
+- **Decision:** Provide an export endpoint that streams a zip archive containing individual `@playwright/test` specs, a `playwright.config.ts`, a `.env.example` mapping parameter secrets, and a ready-to-run GitHub Actions workflow (`.github/workflows/playwright.yml`).
+- **Why:** Enables teams to run the generated test suite locally or inside CI/CD with a single command.
+- **Trade-off Accepted:** The downloaded zip file includes only passed and failed tests; tests marked `needs_review` are segregated into a separate review folder.
+- **Where in Code:** `backend/src/export/projectExporter.ts`, `backend/src/api/jobsRoutes.ts:208`.
+
+</details>
+
+---
+
+## Security Model
 
 ```mermaid
 flowchart TD
-    subgraph Client["Frontend Client (Next.js 14 Pages Router)"]
-        UI["Web Dashboard\n(Manrope / DM Mono / Tailwind)"]
-        Terminal["Animated macOS Terminal\n(Typewriter Code Synthesis)"]
-        SWR["SWR Polling (2s)\nDiscovery Hook"]
-        PoW["Native WebCrypto PoW\n(SHA-256 Solver <50ms)"]
-        BYOK["SessionStorage BYOK\n(Groq / Gemini Keys)"]
-    end
+  subgraph Input ["1. Code Inspection"]
+    A["Raw Generated / Corrected Code"] --> B["AST Safety Validator (codeSafety.ts)<br/>Checks imports, AST nodes, and forbidden APIs"]
+  end
 
-    subgraph Transport["Ingress & Transport"]
-        Proxy["Next.js Rewrite Proxy\n(/api/* -> backend:4000)"]
-        Direct["Direct Local Agent Mode\n(http://localhost:4000)"]
-    end
+  subgraph Compilation ["2. Static Type Checking"]
+    B -->|Pass| C["Isolated TypeScript Compiler<br/>tsc --noEmit with per-run scoped tsconfig"]
+  end
 
-    subgraph Backend["Express 5 API Backend"]
-        Admission["Admission Stack\n(Rate Limits, Concurrency Gate 2, Daily Quota, ALTCHA)"]
-        Router["API Router\n(Visitor Auth HMAC, /crawl, /generate, /jobs)"]
-        ALS["AsyncLocalStorage Context\n(Per-Request BYOK Keys)"]
-    end
+  subgraph Environment ["3. Process Hardening"]
+    C -->|Pass| D["Sanitized Child Environment (childEnv.ts)<br/>DATABASE_URL, secrets, and API keys stripped"]
+    D --> E["Node.js Network Monkeypatch (netGuard.mjs)<br/>Blocks all outbound TCP except egress proxy"]
+  end
 
-    subgraph Pipeline["Agentic Pipeline (Observe -> Plan -> Act -> Reflect)"]
-        Crawler["Crawler Step\n(Playwright Headless Chromium)"]
-        Planner["Planner Step\n(Structured JSON TestPlan)"]
-        Generator["Generator Step\n(Scoped Playwright TypeScript)"]
-        Validator["Validator Gate\n(tsc --noEmit Per-Run)"]
-        Runner["Isolated Runner Process\n(playwright-runner Package)"]
-        Corrector["Corrector Loop (max 2)\n(AST Assertion Preservation Guard)"]
-    end
+  subgraph Execution ["4. Isolated Execution"]
+    E --> F["Chromium Headless Shell<br/>--proxy-server=http://127.0.0.1:proxyPort"]
+    F --> G["Connect-Time Egress Proxy (egressProxy.ts)<br/>Connect-time DNS resolution against NON_PUBLIC"]
+    G --> H["Linux UID Isolation (isolation.ts)<br/>Backend UID 1000 node -> setpriv UID 1001 agtrunner"]
+  end
 
-    subgraph LLM["LLM Provider Registry"]
-        Groq["Groq API\n(Primary: llama-3.3-70b-versatile)"]
-        Gemini["Google Gemini API\n(Fallback: gemini-2.5-flash)"]
-    end
-
-    subgraph Persistence["Storage & Deliverables"]
-        Prisma["Prisma ORM\n(Supavisor Pooled / Direct)"]
-        DB[("PostgreSQL Database\n(Supabase / Local)")]
-        Report["Self-Contained HTML Report\n& Streaming ZIP Archive"]
-    end
-
-    UI --> Proxy
-    UI -. Local Agent Mode .-> Direct
-    Proxy --> Admission
-    Direct --> Admission
-    Admission --> Router
-    Router --> ALS
-    ALS --> Crawler
-    Crawler --> Planner
-    Planner --> Generator
-    Generator --> Validator
-    Validator -- Type Clean --> Runner
-    Validator -- TS Error --> Corrector
-    Runner -- Finding Defect --> Prisma
-    Runner -- Mechanical Failure --> Corrector
-    Corrector -- Preserves Assertions --> Validator
-    Planner -. Native Fetch .-> Groq
-    Generator -. Native Fetch .-> Groq
-    Corrector -. Native Fetch .-> Groq
-    Groq -. Failover on 429/Timeout .-> Gemini
-    Crawler --> Prisma
-    Runner --> Prisma
-    Prisma --> DB
-    Router --> Report
+  B -->|Forbidden AST construct| R1["Reject & Re-queue for Correction"]
+  C -->|Type or Syntax Error| R2["Reject & Re-queue for Correction"]
+  G -->|Private IP / Cloud Metadata| R3["Reject Connection (403 Forbidden)"]
 ```
+
+### Defense-in-Depth Boundary
+
+The AST static analysis check (`codeSafety.ts`) inspects the TypeScript syntax tree to reject known dangerous constructs: dynamic code evaluation (`eval`, `Function`), sensitive process globals (`process`, `globalThis`), network primitives (`fetch`, `WebSocket`), and access to object prototypes (`constructor`, `__proto__`). 
+
+> [!NOTE]
+> Static AST inspection is defense-in-depth, not an impregnable security boundary. Target web pages can attempt prompt-injection attacks to trick LLMs into generating obfuscated payloads. The true operational boundary is enforced at the OS and network level:
+> 1. The test runner executes as a dedicated unprivileged user (`agtrunner`, UID 1001) with zero Linux capabilities and `no_new_privs` enabled. Linux kernel permissions prevent UID 1001 from accessing backend process memory (`/proc/<pid>/mem`) or environment variables (`/proc/<pid>/environ`).
+> 2. All outbound network traffic is forced through an internal egress proxy that re-resolves hostnames at connection time and blocks private subnets, loopback addresses, and cloud instance metadata endpoints (`169.254.169.254`).
 
 ---
 
-## Repository Structure
+## Limits & Modes
 
-```text
-agentic-test-generator/
-├── backend/
-│   ├── prisma/
-│   │   ├── schema.prisma              # Data schema: Job, AgentStep, GeneratedTest, ExecutionResult
-│   │   └── migrations/                # Version-controlled SQL migrations
-│   ├── playwright-runner/             # Decoupled test execution harness (isolated package.json)
-│   ├── scratch/                       # Offline regression & math test suites
-│   │   ├── testPhase6.ts              # Full mock pipeline integration test
-│   │   ├── testPhase7A.ts             # Quota reservation & concurrency test
-│   │   ├── testAssertionGuard.ts      # AST assertion integrity verification
-│   │   └── testRunnerIsolation.ts     # Process sandbox & timeout safety tests
-│   ├── src/
-│   │   ├── agent/                     # Pipeline steps (crawl, plan, codegen, validate, correct)
-│   │   │   ├── confidence.ts          # Compute-on-read confidence scoring
-│   │   │   ├── costEstimate.ts        # Dynamic token pricing calculations
-│   │   │   ├── pipeline.ts            # Master agent orchestrator with safe DB writes
-│   │   │   └── prompts/               # Structured system prompts & schemas
-│   │   ├── api/                       # Express 5 REST routes, rate limits, error hierarchy
-│   │   ├── crawler/                   # Playwright DOM extraction & AppMap synthesis
-│   │   ├── db/                        # Prisma repository layer
-│   │   ├── llm/                       # Native fetch LLM client, ALS context, Groq/Gemini failover
-│   │   ├── report/                    # Self-contained HTML report compiler
-│   │   ├── runner/                    # Static typecheck (tsc) & browser execution sandboxes
-│   │   └── security/                  # PoW challenge signer, HMAC tokens, atomic quotas
-│   └── package.json
-│
-├── frontend/
-│   ├── components/
-│   │   ├── code/                      # Monaco CodeViewer and DiffViewer
-│   │   ├── common/                    # Seo, Nav, Footer, ErrorBoundary
-│   │   ├── home/                      # UrlGenerateForm, CrawlPreview, PipelineProgress, PowWidget
-│   │   │   ├── HeroTerminal.tsx       # Animated macOS code synthesis terminal
-│   │   │   ├── HowItWorks.tsx         # Baseline execution loop & taxonomy
-│   │   │   └── how-it-works-variants/ # 11 distinct creative architectural presentations
-│   │   └── layout/                    # Header, ApiKeyModal, RootLayout
-│   ├── hooks/                         # useJobPolling (SWR), useVisitorToken
-│   ├── lib/                           # api.ts, targetUrl.ts, validation.ts
-│   ├── pages/                         # Next.js Pages Router (/, /jobs, /jobs/[id], /privacy)
-│   ├── styles/                        # globals.css (design tokens, animations, variants)
-│   └── package.json
-│
-└── Readme.md                          # Comprehensive architecture & setup documentation
-```
+### System Limits & Budgets
 
----
-
-## Core Agent Pipeline
-
-### 1. DOM Observation & Crawling
-The crawler navigates to the target URL using headless Chromium, waiting for network idle. It evaluates the live DOM to discover interactive elements (inputs, buttons, dropdowns, links) and builds an `AppMap` with hierarchical Playwright locators ordered by robustness:
-$$\text{getByTestId} \succ \text{getByRole} \succ \text{getByPlaceholder} \succ \text{getByLabel} \succ \text{getByText} \succ \text{css}$$
-
-### 2. Journey Plan Synthesis
-The Planner analyzes the `AppMap` and emits a structured `TestPlan` defining critical end-to-end user journeys. Authoritative `tc-N` identifiers are assigned by the server (never trusting LLM identifiers).
-
-### 3. Playwright Code Generation
-The Generator creates production-grade `@playwright/test` TypeScript specifications. Each test case is provided with a sliced view of only the relevant interactive elements, avoiding prompt context saturation and eliminating selector hallucinations.
-
-### 4. Static TypeScript Pre-flight Gate
-Before launching Chromium, the generated specification is validated with `tsc --noEmit` inside an isolated runner workspace. Syntax errors and type mismatches fail fast without consuming browser runtime.
-
-### 5. Isolated Execution & Triage
-Tests execute inside `backend/playwright-runner/` with strict process isolation and timeout safety. The runner classifies outcomes into a strict 4-part taxonomy:
-
-| Classification | Meaning | Agent Action |
-|---|---|---|
-| **`finding`** | Assertion failure (`expect().toBe()`) or 500 server error | **Never corrected**. Preserved as an authentic application defect with screenshot evidence. |
-| **`locator`** | Selector resolved 0 or >1 elements | Sent to Corrector with browser logs. |
-| **`timeout`** | Navigation or DOM element timeout | Sent to Corrector with timing context. |
-| **`other`** | Runner or browser crash | Marked as gave up. |
-
-### 6. Self-Correction & Assertion Preservation Guard
-Mechanical failures (`locator`, `timeout`) enter a guarded correction loop capped at 2 attempts. The corrected code must pass an AST assertion guard:
-- All original `expect()` assertions must remain intact.
-- Any generated code that deletes, comments out, or weakens an assertion to achieve a pass is strictly rejected.
-
----
-
-## Security & Admission Stack
-
-```
-                          Incoming Request (POST /api/generate)
-                                          │
-                                          ▼
-                         ┌─────────────────────────────────┐
-                         │   IP Rate Limiter (3 req/hr)    │ ─── (Skipped if BYOK)
-                         └─────────────────────────────────┘
-                                          │ PASS
-                                          ▼
-                         ┌─────────────────────────────────┐
-                         │    Visitor Limiter (5 runs/day) │ ─── (Skipped if BYOK)
-                         └─────────────────────────────────┘
-                                          │ PASS
-                                          ▼
-                         ┌─────────────────────────────────┐
-                         │   ALTCHA Proof-of-Work Verifier │ ─── (HMAC SHA-256 + Replay Cache)
-                         └─────────────────────────────────┘
-                                          │ PASS
-                                          ▼
-                         ┌─────────────────────────────────┐
-                         │  Daily Quota Reservation (20)   │ ─── (Atomic tryReserve)
-                         └─────────────────────────────────┘
-                                          │ PASS
-                                          ▼
-                         ┌─────────────────────────────────┐
-                         │  Concurrency Semaphore (Gate 2) │ ─── (Protects 512MB RAM ceiling)
-                         └─────────────────────────────────┘
-                                          │ PASS
-                                          ▼
-                         [ Execute Agent Pipeline ]
-```
-
-### Native Web Crypto Proof-of-Work (ALTCHA)
-- Bypasses corporate tracking, reCAPTCHAs, and paid Turnstile services.
-- Backend issues HMAC-SHA-256 signed numeric challenges.
-- Frontend solves the challenge via a high-speed native Web Crypto API worker in [`PowWidget.tsx`](frontend/components/home/PowWidget.tsx) (solving in <50ms without external library bugs).
-- Verified solutions are cached in an in-memory replay table for 10 minutes.
-
-### Visitor Authentication & Capability UUIDs
-- Frictionless, zero-login sessions using signed HMAC tokens: `<uuid>.<hmac-sha256>` stored in `localStorage`.
-- Tampered or legacy tokens are silently refreshed.
-- Public job sharing and report downloads use unguessable capability UUIDs.
-
-### Concurrency Semaphores & Atomic Quotas
-- `ConcurrencyGate(PIPELINE_CONCURRENCY)` (default 2). One slot per run group; a run group executes its jobs sequentially, so at most N pipelines (one Chromium each) run at once. Pipelines run detached from the request; on shutdown in-flight jobs are marked `SERVER_SHUTDOWN`, and on boot any orphaned non-terminal job is marked `SERVER_RESTART`.
-- Daily quotas (20 runs/day) use atomic reservations (`tryReserve()`) to eliminate Time-of-Check to Time-of-Use (TOCTOU) races.
-
-### Zero-SDK BYOK Isolation (AsyncLocalStorage)
-- Visitors can bring their own Groq or Gemini API keys.
-- Keys are passed via `x-groq-api-key` / `x-gemini-api-key` headers and scoped to the active execution fiber via Node's `AsyncLocalStorage`.
-- Keys bypass server quotas and are **never** logged or persisted to disk or database.
-
----
-
-## How It Works: Design Exploration Lab
-
-To explore diverse visual presentations, 11 distinct, fully styled, responsive design patterns have been built and rendered live on the homepage right below the original section:
-
-```
-  ┌────────────────────────────────────────────────────────────────────────────────────────┐
-  │                           DESIGN EXPLORATION LAB (QUICK-JUMP)                          │
-  │ [All 11] [01 Split] [02 Carousel] [03 Orbit] [04 Bento] [05 Nodes] [06 Deep-Dive] ... │
-  └────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-1. **Variant 01 — Interactive Split Stepper**: Two-column layout with an interactive step timeline on the left and a live, copyable pipeline artifact viewer on the right (DOM JSON, journey markdown, Playwright TypeScript, `tsc` diagnostics).
-2. **Variant 02 — Horizontal Glassmorphic Carousel**: Fluid horizontal slide deck with step counter (`01 / 05`), dynamic fill progress bar, glassmorphism cards, and large tactile navigation buttons.
-3. **Variant 03 — Orbital Agentic Brain Loop**: Glowing central `AGENTIC CORE` with 5 peripheral satellite nodes connected by orbital paths. Clicking any node expands its technical mechanism.
-4. **Variant 04 — Bento Grid Matrix**: Modern Apple/Linear style asymmetric grid with an interactive DOM chip selector, live TypeScript compiler terminal, and Assertion Guard indicators.
-5. **Variant 05 — Node-Based Pipeline Dataflow**: Architecture diagram with glowing node connectors and an interactive I/O Contract inspector showing data transformations.
-6. **Variant 06 — Tabbed Technical Deep-Dive**: Horizontal tab switcher with detailed specification tables (Discovery Depth, Locator Trees, Models) and code snippets.
-7. **Variant 07 — 3D Isometric Layered Stack**: 3D perspective cards with hover elevation transforms, ambient glow shadows, and vertical flow indicators.
-8. **Variant 08 — Terminal-Driven Storyboard CLI**: macOS terminal window with animated typewriter CLI prompts, stage timeline tabs, and execution controls (Play, Pause, Step Forward).
-9. **Variant 09 — "Traditional QA vs Agentic Test" Matrix**: Side-by-side contrast grid detailing the differences in selector stability, authoring speed, maintenance overhead, and bug preservation.
-10. **Variant 10 — Expandable Accordion Drawers**: Sleek, mobile-first vertical accordion list with animated chevron rotations and interactive micro-visualizers.
-11. **Variant 11 — Interactive Execution Simulator Sandbox**: Live browser simulation sandbox. Click **"Run Simulated Suite"** to watch the agent crawl, generate tests, catch a flaky locator, self-correct it, and verify assertions with live progress bars.
-
----
-
-## Localhost & Deployment Modes
-
-| Mode | Target URL | How It Works | Requirements |
+| Parameter | Default Value | Purpose | Source File |
 |---|---|---|---|
-| **Hosted Demo** | Public HTTPS (`https://myapp.com`) | Hosted crawler visits target directly over the public internet. | Target must be publicly accessible. |
-| **Tunnel Mode** | Public Tunnel (`*.trycloudflare.com`, `*.ngrok-free.app`) | User runs `cloudflared tunnel --url http://localhost:<port>`. The hosted crawler connects through Cloudflare's temporary tunnel. | No credentials required. Guided wizard included in the UI. |
-| **Local Agent Mode** | `http://localhost:<port>` | User runs backend locally (`pnpm dev` on port 4000 with `LOCAL_AGENT_MODE=true`). Frontend switches API base directly to localhost. | Private Network Access enabled in browser. |
+| `GENERATE_DAILY_LIMIT` | `40` | Maximum total job generations allowed per day globally | `backend/src/config.ts:39` |
+| `FREE_VISITOR_DAILY_LIMIT` | `8` | Maximum job generations allowed per visitor ID per day | `backend/src/config.ts:40` |
+| `FREE_IP_DAILY_LIMIT` | `20` | Maximum job generations allowed per client IP per day | `backend/src/config.ts:41` |
+| `FREE_MAX_URLS_PER_RUN` | `3` | Maximum URLs in a single run group for free users | `backend/src/config.ts:42` |
+| `BYOK_MAX_URLS_PER_RUN` | `5` | Maximum URLs in a single run group for BYOK or local users | `backend/src/config.ts:43` |
+| `CRAWL_DAILY_LIMIT_PER_IP` | `40` | Maximum crawl previews allowed per IP per day | `backend/src/config.ts:44` |
+| `POW_DAILY_LIMIT_PER_IP` | `200` | Maximum proof-of-work challenges issued per IP per day | `backend/src/config.ts:45` |
+| `BYOK_VALIDATE_DAILY_LIMIT_PER_IP` | `50` | Maximum BYOK key validation requests per IP per day | `backend/src/config.ts:46` |
+| `PIPELINE_CONCURRENCY` | `1` | Simultaneous test generation pipelines executed | `backend/src/config.ts:47` |
+| `QUEUE_MAX_WAITING_GROUPS` | `5` | Maximum queued runs waiting in the in-process queue | `backend/src/config.ts:48` |
+| `JOB_TOKEN_BUDGET` | `40000` | Total token budget ceiling per test generation job | `backend/src/config.ts:57` |
+| `MAX_ELEMENTS_PER_PAGE` | `200` | Maximum interactive DOM elements indexed per page | `backend/src/config.ts:21` |
+| `NAVIGATION_TIMEOUT_MS` | `30000` | Browser navigation timeout during crawler indexing | `backend/src/config.ts:22` |
+| `RUNNER_TIMEOUT_SCALE` | `1` (Render: `3`) | Multiplier for test execution timeouts on constrained CPUs | `backend/src/config.ts:58` |
+
+### Execution Modes
+
+| Mode | Target Reachability | Admission Requirements | Intended Environment |
+|---|---|---|---|
+| **Hosted Mode** | Public internet targets only. Private IPs and localhost blocked by `netPolicy.ts`. | ALTCHA proof-of-work required. Daily IP and visitor limits enforced. | Public production deployments (Vercel + Render). |
+| **Tunnel Mode** | Localhost and private targets exposed via secure tunnel (e.g. `ngrok` or `cloudflared`). | Standard hosted mode rules apply; tunnel hostname treated as public target. | Testing local developer servers from hosted deployment. |
+| **Local Agent Mode** | Direct access to `localhost`, `127.0.0.1`, and private intranet subnets. | All admission limits, quotas, and proof-of-work checks disabled. | Local workstation development (`LOCAL_AGENT_MODE=true`). |
+
+---
+
+## Measured Results
+
+Measurements recorded from a live 12-run verification matrix (`docs/measurements/2026-10-measurement.md`):
+
+- **Commit:** `c89620e`
+- **Date:** October 19, 2026
+- **Configuration:** `LOCAL_AGENT_MODE=false`, `BASELINE_TESTS=true`, `A11Y_SMOKE=true`, `JOB_TOKEN_BUDGET=40000`
+
+| Metric | Measured Value | Notes |
+|---|---|---|
+| Total Runs Executed | 12 | Tested across TodoMVC, the-internet, saucedemo, practicetestautomation |
+| AI Scenarios Planned | 56 | Synthesized by planner reasoning model |
+| Baseline Checks Injected | 28 | Built-in smoke tests (broken links, a11y, console) |
+| Total Tests Evaluated | 84 | Combined test suite execution |
+| Tests Passing | 56 (66.7%) | Tests completing without failure |
+| Reported Findings | 20 (23.8%) | Potential defects flagged to user |
+| Tests Gave Up | 8 (9.5%) | Exhausted attempts or token limits |
+| Repaired by Correction Loop | 1 | Locator strict-mode collision resolved |
+| Median Fresh Run Tokens | 3,113 | Median token count without plan cache |
+| Median Cached Run Tokens | 1,321 | 57.6% reduction in token consumption on cache hit |
+| Median Wall Time | 62.8s | Across crawl, plan, compile, execution, and triage |
+
+> [!WARNING]
+> **Known Pipeline Limitations Identified During Measurement**
+> 1. **High False Finding Rate (100% of reported findings):** In the 12-run measurement, all 20 reported findings were test bugs rather than genuine target application regressions. The primary driver (65% of test bugs) was test data collisions where valid credentials were automatically bound into negative test cases (e.g., verifying empty passwords), causing unexpected successful logins.
+> 2. **Low Correction Success Rate (11.1% attempt success):** The correction loop succeeded in 1 of 9 correction attempts (1 of 6 multi-attempt tests). While the model successfully resolved locator strict-mode ambiguities, it struggled when tests navigated away to authenticated screens, repeatedly waiting for elements from the previous page.
+> 3. Resolving these behaviors through enhanced observe-first state tracking and negative scenario template segregation is the central objective of the subsequent roadmap phase.
+
+---
+
+## Run Locally
+
+### Prerequisites
+
+- **Node.js:** `>=22.13.4` (tested on `v24.14.1`)
+- **Package Manager:** `pnpm` (version 10)
+- **Database:** PostgreSQL database instance (local PostgreSQL or Supabase project)
+- **LLM API Key:** At least one API key from Groq, Google Gemini, or NVIDIA
+
+### Setup Instructions (PowerShell)
+
+```powershell
+# 1. Clone repository and navigate to root
+git clone https://github.com/example/agentic-test-generator.git
+cd agentic-test-generator
+
+# 2. Configure Backend
+cd backend
+Copy-Item .env.example .env
+
+# Edit .env with your credentials:
+# DATABASE_URL, DIRECT_URL, and at least one LLM key (GROQ_API_KEY)
+# For local use without quotas, set LOCAL_AGENT_MODE=true
+
+pnpm install
+pnpm exec prisma migrate deploy
+pnpm exec playwright install chromium
+cd ..
+
+# 3. Configure Frontend
+cd frontend
+Copy-Item .env.example .env.local
+pnpm install
+cd ..
+
+# 4. Start Services in Separate Terminals
+# Terminal 1 (Backend on http://localhost:4000):
+cd backend
+pnpm dev
+
+# Terminal 2 (Frontend on http://localhost:3000):
+cd frontend
+pnpm dev
+```
+
+<details>
+<summary><strong>Bash Setup Instructions (Linux / macOS)</strong></summary>
+
+```bash
+# 1. Clone repository and enter directory
+git clone https://github.com/example/agentic-test-generator.git
+cd agentic-test-generator
+
+# 2. Configure Backend
+cd backend
+cp .env.example .env
+
+# Set DATABASE_URL, DIRECT_URL, GROQ_API_KEY, and LOCAL_AGENT_MODE=true in .env
+pnpm install
+pnpm exec prisma migrate deploy
+pnpm exec playwright install chromium
+cd ..
+
+# 3. Configure Frontend
+cd frontend
+cp .env.example .env.local
+pnpm install
+cd ..
+
+# 4. Start Development Servers
+# Terminal 1:
+cd backend && pnpm dev
+
+# Terminal 2:
+cd frontend && pnpm dev
+```
+
+</details>
+
+---
+
+## Configuration
+
+<details>
+<summary><strong>Backend Environment Variables (backend/src/config.ts)</strong></summary>
+
+| Variable Name | Default Value | Required in Production? | Purpose |
+|---|---|---|---|
+| `PORT` | `4000` | No | Port on which the Express server listens |
+| `NODE_ENV` | `development` | Yes (`production`) | Application environment (`development`, `production`, `test`) |
+| `HEADED_DEBUG` | `false` | No | When true in dev, launches visible browser windows for debugging |
+| `CRAWL_CONCURRENCY` | `1` | No | Concurrent crawler browser contexts (1–4) |
+| `MAX_ELEMENTS_PER_PAGE` | `200` | No | Maximum interactive elements indexed during crawl |
+| `NAVIGATION_TIMEOUT_MS` | `30000` | No | Page navigation timeout in milliseconds |
+| `NETWORK_IDLE_WAIT_MS` | `3000` | No | Network quiescence wait time after page navigation |
+| `DATABASE_URL` | *(none)* | Yes | Pooled PostgreSQL connection string (PgBouncer port 6543) |
+| `DIRECT_URL` | *(none)* | Yes | Direct PostgreSQL connection string for migrations (port 5432) |
+| `GROQ_API_KEY` | *(none)* | Yes (or Gemini/NVIDIA) | Groq API authentication key |
+| `GEMINI_API_KEY` | *(none)* | Optional fallback | Google Gemini API authentication key |
+| `NVIDIA_API_KEY` | *(none)* | Optional fallback | NVIDIA API authentication key |
+| `GROQ_REASONING_MODEL` | `openai/gpt-oss-120b` | No | Model used for scenario planning on Groq |
+| `GROQ_FAST_MODEL` | `openai/gpt-oss-20b` | No | Model used for test correction on Groq |
+| `GEMINI_REASONING_MODEL` | `gemini-2.5-flash` | No | Fallback reasoning model for planning on Gemini |
+| `GEMINI_FAST_MODEL` | `gemini-2.5-flash-lite` | No | Fallback model for correction on Gemini |
+| `NVIDIA_MODEL` | `openai/gpt-oss-20b` | No | Fallback model used on NVIDIA |
+| `LLM_PROVIDER_ORDER` | `groq,gemini,nvidia` | No | Ordered fallback sequence for LLM provider attempts |
+| `POW_SECRET` | *(none)* | Yes (&ge;16 chars) | HMAC signing secret for ALTCHA proof-of-work challenges |
+| `VISITOR_SIGNING_SECRET` | *(none)* | Yes (&ge;16 chars) | HMAC signing secret for anonymous visitor session tokens |
+| `ADMIN_SECRET` | *(none)* | Yes (&ge;24 chars) | Shared secret required in `X-Admin-Secret` header for admin routes |
+| `EDGE_SHARED_SECRET` | *(none)* | Yes (&ge;24 chars) | Shared secret validating incoming Vercel edge rewrite proxy headers |
+| `GENERATE_DAILY_LIMIT` | `40` | No | Global daily ceiling for test generation jobs |
+| `FREE_VISITOR_DAILY_LIMIT` | `8` | No | Daily generation limit per anonymous visitor |
+| `FREE_IP_DAILY_LIMIT` | `20` | No | Daily generation limit per client IP |
+| `FREE_MAX_URLS_PER_RUN` | `3` | No | Maximum URLs per run group for free anonymous users |
+| `BYOK_MAX_URLS_PER_RUN` | `5` | No | Maximum URLs per run group for BYOK or local agent runs |
+| `CRAWL_DAILY_LIMIT_PER_IP` | `40` | No | Daily limit for `/api/crawl` requests per IP |
+| `POW_DAILY_LIMIT_PER_IP` | `200` | No | Daily limit for proof-of-work challenge requests per IP |
+| `BYOK_VALIDATE_DAILY_LIMIT_PER_IP` | `50` | No | Daily limit for API key pre-flight checks per IP |
+| `PIPELINE_CONCURRENCY` | `1` | No | Maximum concurrent test execution pipelines (1–4) |
+| `QUEUE_MAX_WAITING_GROUPS` | `5` | No | Maximum pending run groups allowed in memory queue |
+| `BASELINE_TESTS` | `true` | No | When true, injects broken link and console baseline checks |
+| `A11Y_SMOKE` | `true` | No | When true, injects an Axe accessibility smoke test |
+| `WAKING_HOST_SUFFIXES` | `onrender.com,...` | No | Comma-separated host suffixes subject to cold start detection |
+| `LOCAL_AGENT_MODE` | `false` | Fatal if true in prod | Disables quotas, admission checks, and private IP blocks |
+| `TRUST_PROXY_HOPS` | `1` | No | Number of upstream reverse proxy hops to trust for IP extraction |
+| `FRONTEND_ORIGIN` | *(none)* | Yes | Allowed frontend origin URLs for CORS (comma-separated) |
+| `JOB_TOKEN_BUDGET` | `40000` | No | Maximum prompt and completion tokens consumed per job |
+| `RUNNER_TIMEOUT_SCALE` | `1` | No (Render: `3`) | Multiplier scaling Playwright timeouts for low-CPU hosts |
+| `RUNNER_ISOLATION` | `none` | Yes (`uid`) | Runner isolation model (`none` for dev, `uid` for prod) |
+| `RUNNER_UID` | `1001` | No | Linux UID assigned to unprivileged runner process |
+| `RUNNER_GID` | `1002` | No | Linux GID assigned to unprivileged runner process |
+| `CORS_PREVIEW_ORIGIN_REGEX` | *(none)* | No | Regular expression pattern for dynamically allowed preview origins |
+
+</details>
+
+<details>
+<summary><strong>Frontend Environment Variables (frontend/.env.example)</strong></summary>
+
+| Variable Name | Default Value | Purpose |
+|---|---|---|
+| `BACKEND_URL` | `http://localhost:4000` | Destination address for Next.js API route rewrites |
+| `EDGE_SHARED_SECRET` | *(none)* | Secret sent in `x-agt-edge-secret` header to backend |
+| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` | Canonical public URL used for metadata and OpenGraph tags |
+| `NEXT_PUBLIC_DEPLOYMENT_MODE` | `local` | Fallback mode indicator (`local` or `hosted`) |
+| `NEXT_PUBLIC_STREAM_ORIGIN` | *(none)* | Optional direct backend URL for SSE streams |
+| `NEXT_PUBLIC_GA_ID` | *(none)* | Optional Google Analytics measurement ID |
+| `NEXT_PUBLIC_GSC_VERIFICATION` | *(none)* | Optional Google Search Console HTML verification string |
+
+</details>
 
 ---
 
 ## API Reference
 
-All endpoints accept and return JSON unless otherwise noted.
+<details>
+<summary><strong>Complete Route Catalog & SSE Event Specification</strong></summary>
 
-| Method | Endpoint | Request Payload / Headers | Description | Rate Limits |
+### Public Application Endpoints
+
+| Method | Route | Description | Key Parameters | Error Codes |
 |---|---|---|---|---|
-| `GET` | `/api/health` | None | Service liveness and LLM configuration status | Unthrottled |
-| `GET` | `/api/stats` | None | Global lifetime metrics (jobs, tests, pass rates) | Cached 60s in-memory |
-| `GET` | `/api/pow/challenge` | None | Mint ALTCHA cryptographic PoW challenge | 30 req/hr per IP |
-| `POST` | `/api/crawl` | `{ url: string }` | Crawl URL and return discovered `AppMap` | 10 req/hr per IP |
-| `POST` | `/api/byok/validate` | `{ provider: 'groq' \| 'gemini' }`<br>`x-groq-api-key` or `x-gemini-api-key` | Validate personal API keys | 10 req/hr per IP |
-| `POST` | `/api/generate` | Single URL: `{ url, deepCrawl?: boolean, webhookUrl?: string, altcha?: string }`<br>Multi URL: `{ urls: string[] (≤5), webhookUrl?: string, altcha?: string }`<br>Optional: BYOK headers | Admit a run group. Returns `202 { jobIds, webhookSecret? }` immediately; jobs run detached and sequentially | 3/hr IP, 5/day visitor, 20/day global (bypassed if BYOK) |
-| `GET` | `/api/jobs` | Query: `?page=1&limit=10`<br>Header: `X-Visitor-Id` | List jobs scoped to active visitor token | Visitor-scoped |
-| `GET` | `/api/jobs/:id` | Param: `id` (UUID) | Retrieve job details, agent steps, and tests | Capability UUID |
-| `GET` | `/api/jobs/:id/stream` | Param: `id` (UUID) | SSE: snapshot → replay (Last-Event-ID) → live phase_change / step_recorded / test_completed / job_finished; 15s heartbeat; unavailable ⇒ poll | Capability UUID |
-| `GET` | `/api/jobs/:id/report.html` | Param: `id` (UUID) | Download self-contained offline HTML report | Capability UUID |
-| `GET` | `/api/jobs/:id/export.zip` | Param: `id` (UUID) | Stream executable Playwright repository ZIP | Capability UUID |
+| `GET` | `/api/health` | Uptime and mode health check | None | None |
+| `GET` | `/api/health/db` | Supabase keep-alive ping (cached 10 min) | None | `503 SERVICE_UNAVAILABLE` |
+| `GET` | `/api/stats` | Aggregated lifetime metrics | None | `INTERNAL_ERROR` |
+| `GET` | `/api/pow/challenge` | Generates ALTCHA proof-of-work challenge | None | `INTERNAL_ERROR` |
+| `POST` | `/api/crawl` | Previews target URL and returns AppMap | `{ url }` | `INVALID_URL`, `TARGET_UNREACHABLE`, `QUEUE_FULL` |
+| `POST` | `/api/byok/validate` | Validates custom Groq or Gemini API keys | `{ provider }` + Key Header | `INVALID_REQUEST` |
+| `GET` | `/api/budget` | Retrieves remaining daily runs for visitor/IP | None | None |
+| `POST` | `/api/generate` | Enqueues scenario planning and test execution | `{ url, urls?, testData?, altcha? }` | `DAILY_QUOTA_EXHAUSTED`, `POW_FAILED`, `QUEUE_FULL`, `TOO_MANY_URLS` |
 
-### Webhooks & Notifications
+### Job Management Endpoints
 
-When `webhookUrl` is provided in `POST /api/generate`, the backend delivers a post-run HTTP notification upon job completion or failure.
+| Method | Route | Description | Key Parameters | Error Codes |
+|---|---|---|---|---|
+| `GET` | `/api/jobs` | Lists historical jobs for current visitor | Query: `page`, `limit` | `INVALID_REQUEST` |
+| `GET` | `/api/jobs/:id` | Returns full status and test detail for a job | Param: `id` (UUID) | `JOB_NOT_FOUND` |
+| `GET` | `/api/jobs/:id/appmap` | Returns crawled AppMap for a job | Param: `id` (UUID) | `JOB_NOT_FOUND` |
+| `POST` | `/api/jobs/:id/cancel` | Cancels an in-flight job or run group | Body: `{ scope: 'job' \| 'group' }` | `NOT_CANCELLABLE`, `JOB_NOT_FOUND` |
+| `GET` | `/api/jobs/:id/stream` | Server-Sent Events live execution stream | Param: `id`, Header: `Last-Event-ID` | `JOB_NOT_FOUND` |
+| `GET` | `/api/jobs/:id/report.html` | Generates standalone HTML run report | Param: `id` (UUID) | `REPORT_NOT_READY`, `JOB_NOT_FOUND` |
+| `GET` | `/api/jobs/:id/export.zip` | Downloads runnable Playwright project zip | Param: `id` (UUID) | `NO_EXPORTABLE_TESTS`, `JOB_NOT_FOUND` |
 
-- **Request**: `POST /api/generate` with `{ url, webhookUrl: "https://your-domain.com/webhook", deepCrawl?: boolean }`
-- **Response**: `202 Accepted` returns `{ jobIds: [...], webhookSecret: string }`. The `webhookSecret` is returned **only once** and is never stored on disk.
-- **SSRF Protection**: Private IPs, localhost, AWS metadata (`169.254.169.254`), and non-HTTPS endpoints (in non-local agent mode) are blocked.
-- **Payload Shape**:
-  ```json
-  {
-    "event": "job.finished",
-    "jobId": "e0b8e8b0-...",
-    "targetUrl": "https://example.com",
-    "finishedAt": "2026-10-17T12:00:00.000Z",
-    "status": "completed",
-    "tests": {
-      "total": 3,
-      "passed": 3,
-      "failed": 0,
-      "gaveUp": 0
-    }
+### Administrative Endpoints (Requires `X-Admin-Secret`)
+
+| Method | Route | Description | Key Parameters | Error Codes |
+|---|---|---|---|---|
+| `GET` | `/api/admin/events` | Inspects recent server events and errors | Query: `level`, `since`, `limit` | `404 NOT_FOUND` (if unauthenticated) |
+| `GET` | `/api/admin/whoami` | Displays resolved IP address and proxy hops | None | `404 NOT_FOUND` (if unauthenticated) |
+
+### Server-Sent Events Specification (`/api/jobs/:id/stream`)
+
+The SSE connection transmits continuous UTF-8 event text with an automatic 15-second heartbeat (`: ping\n\n`) and client reconnection backoff (`retry: 3000\n\n`). Events emitted:
+
+- `snapshot`: Sent on initial connection with current job status and error codes.
+- `phase_change`: Emitted when the pipeline advances (`crawling`, `planning`, `generating`, `executing`, `completed`, `failed`, `cancelled`).
+- `step_recorded`: Emitted when individual pipeline steps finish (e.g. `validate`, `execute`, `crawl`).
+- `test_completed`: Emitted whenever a single test case reaches terminal status (`passed`, `failed`, `gave_up`, `needs_review`).
+- `queue_position`: Emitted when queued waiting for pipeline concurrency slots.
+- `target_waking`: Emitted when a sleeping free host is detected, with `nextRetryInSec`.
+- `budget_note`: Emitted when token budget is reached and correction stops.
+- `job_finished`: Final event closing the SSE stream.
+- `unavailable`: Emitted if the job process channel is no longer active in memory, prompting client fallback to REST polling.
+
+</details>
+
+---
+
+## Data Model
+
+<details>
+<summary><strong>Prisma Entity Relationship Diagram</strong></summary>
+
+```mermaid
+erDiagram
+  Job ||--o{ AgentStep : "records"
+  Job ||--o{ GeneratedTest : "produces"
+  GeneratedTest ||--o{ ExecutionResult : "attempts"
+
+  Job {
+    uuid id PK
+    string targetUrl
+    enum status "pending|crawling|planning|generating|executing|completed|failed|cancelled"
+    string errorCode
+    string errorMessage
+    json appMap
+    json testPlan
+    datetime createdAt
+    datetime startedAt
+    datetime completedAt
+    string visitorId
+    boolean usedOwnKeys
+    boolean quotaExempt
+    uuid runGroupId
+    string ipHash
+    datetime cancelledAt
   }
-  ```
-  *(Or if failed: `{ "status": "failed", "errorCode": "BROWSER_LAUNCH_FAILED" }`)*
-- **Signature Verification**:
-  Every webhook request includes an `X-Agentic-Signature` header computed as HMAC-SHA256 of the raw request body using the `webhookSecret`:
-  ```ts
-  const signature = req.headers['x-agentic-signature']; // "sha256=<hex>"
-  const expected = 'sha256=' + crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
-  const isValid = crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-  ```
-- **Delivery Guarantees**: Requests timeout after 5 seconds with one automatic retry after 2 seconds on 5xx/429 errors. Webhook dispatch is non-blocking and never holds the pipeline concurrency gate.
 
-### Deep Crawl Multi-Page Mode
+  AgentStep {
+    uuid id PK
+    uuid jobId FK
+    enum stepType "crawl|plan|generate|validate|execute|correct"
+    string testCaseId
+    int attemptNumber
+    enum status "success|failure"
+    int latencyMs
+    string llmProvider
+    string llmModel
+    int promptTokens
+    int completionTokens
+    string errorDetail
+    datetime createdAt
+  }
 
-- **Field**: `deepCrawl: true` (only valid for single-URL requests `{ url, deepCrawl: true }`).
-- **Behavior**: The crawler starts at the target URL and discovers same-origin links (up to 3 pages total). Elements from extra pages are tagged with their source page number, enabling multi-page journey planning with explicit navigation steps.
+  GeneratedTest {
+    uuid id PK
+    uuid jobId FK
+    string testCaseId
+    string filename
+    string finalCode
+    enum finalStatus "passed|failed|gave_up|needs_review"
+    int totalAttempts
+    datetime createdAt
+  }
+
+  ExecutionResult {
+    uuid id PK
+    uuid generatedTestId FK
+    int attemptNumber
+    string code
+    boolean validationPassed
+    json validationErrors
+    boolean executionPassed
+    string executionError
+    enum failureClass "finding|locator|timeout|other"
+    json failureContext
+    int durationMs
+    boolean corrected
+    datetime createdAt
+  }
+
+  ServerEvent {
+    uuid id PK
+    datetime createdAt
+    string level "warn|error"
+    string source
+    string message
+    json context
+    uuid jobId
+    string fingerprint
+    int count
+  }
+```
+
+</details>
 
 ---
 
-## Data Model & Prisma Schema
+## Project Structure
 
+<details>
+<summary><strong>Repository Directory Tree</strong></summary>
+
+```text
+.
+├── backend/                        # Express API & test generation engine
+│   ├── Dockerfile                  # Multi-stage production container with UID isolation
+│   ├── docker-entrypoint.sh        # Container entrypoint configuring node capabilities
+│   ├── package.json                # Express 5, Prisma 6, Playwright 1.63 dependencies
+│   ├── playwright-runner/          # Sandboxed runner package executed by Playwright CLI
+│   │   ├── agt-capture.ts          # Playwright test fixture capturing page navigations
+│   │   ├── netGuard.mjs            # In-process monkeypatch restricting child TCP egress
+│   │   └── package.json            # Dedicated runner dependencies (@axe-core/playwright)
+│   ├── prisma/                     # Database schema definition & migration history
+│   │   ├── migrations/             # Timestamped SQL migrations
+│   │   └── schema.prisma           # Prisma schema definition
+│   ├── scratch/                    # Verification test scripts and measurement harnesses
+│   └── src/
+│       ├── agent/                  # Core pipeline coordination and round execution
+│       │   ├── assertionGuard.ts   # AST assertion-preservation validator
+│       │   ├── baseline.ts         # Deterministic broken-link and a11y baseline tests
+│       │   ├── pipeline.ts         # End-to-end job orchestration loop
+│       │   ├── rounds.ts           # Execution round coordinator and failure classifier
+│       │   ├── runQueue.ts         # In-process FIFO queue with concurrency gates
+│       │   └── steps/              # Pipeline steps: compiler, corrector, planner
+│       ├── api/                    # Express routing, input schemas, and SSE handlers
+│       │   ├── jobsRoutes.ts       # Job status, cancellation, reports, and streaming
+│       │   ├── routes.ts           # Generation admission, crawl previews, and budget
+│       │   └── schemas.ts          # Zod request validation schemas
+│       ├── config.ts               # Centralized Zod-validated environment configuration
+│       ├── crawler/                # Playwright DOM scraping and element cataloging
+│       │   ├── gotoErrors.ts       # Navigation error taxonomy mapping
+│       │   ├── pageCrawler.ts      # Headless DOM extraction and semantic role builder
+│       │   └── wakeDetect.ts       # Sleeping target host detection heuristics
+│       ├── db/                     # Prisma database client and query helpers
+│       ├── export/                 # Project zip packing and GitHub Actions generator
+│       ├── llm/                    # Zero-SDK OpenAI-compatible fetch clients and BYOK
+│       ├── observability/          # Deduplicated server event error recording
+│       ├── report/                 # Standalone single-file HTML report generator
+│       ├── runner/                 # Playwright execution, tsc validation, and isolation
+│       │   ├── codeSafety.ts       # AST inspection rejecting forbidden JavaScript APIs
+│       │   ├── executor.ts         # Playwright test process execution harness
+│       │   ├── isolation.ts        # Linux setpriv UID/GID process sandboxing
+│       │   └── validator.ts        # Static TypeScript type-checking gate
+│       └── security/               # Admission control, ALTCHA PoW, and network policy
+│           ├── dailyBudget.ts      # Atomic daily IP and visitor usage tracking
+│           ├── egressProxy.ts      # Connect-time DNS validation HTTP proxy
+│           ├── netPolicy.ts        # IP subnet blocking preventing SSRF attacks
+│           └── pow.ts              # ALTCHA proof-of-work challenge verification
+├── docs/                           # Architecture guides and live measurements
+│   ├── DEPLOY.md                   # Step-by-step production deployment instructions
+│   ├── OPERATIONS.md               # Operations, keep-alive monitoring, and runbook
+│   └── measurements/               # Empirical performance and token reduction audits
+├── frontend/                       # Next.js 14 Pages Router user interface
+│   ├── components/                 # React UI components (Tailwind CSS, Radix UI)
+│   ├── lib/                        # Client-side API fetchers and localStorage helpers
+│   ├── pages/                      # Next.js Pages Router views (/jobs, [id], privacy)
+│   └── styles/                     # Tailwind and global stylesheet configurations
+└── render.yaml                     # Render infrastructure-as-code Blueprint specification
 ```
-  ┌────────────────────────────────────────────────────────┐
-  │                         Job                            │
-  ├────────────────────────────────────────────────────────┤
-  │ id: Uuid (PK)                                          │
-  │ targetUrl: String                                      │
-  │ status: JobStatus (pending..completed/failed)          │
-  │ errorCode / errorMessage: String?                      │
-  │ appMap / testPlan: Json?                               │
-  │ createdAt / startedAt / completedAt: DateTime          │
-  │ visitorId: String? (Indexed)                           │
-  │ usedOwnKeys: Boolean (@default false)                  │
-  └──────────────────────────┬─────────────────────────────┘
-                             │ 1:N (onDelete: Cascade)
-            ┌────────────────┴────────────────┐
-            ▼                                 ▼
-  ┌──────────────────────────┐      ┌──────────────────────────┐
-  │        AgentStep         │      │      GeneratedTest       │
-  ├──────────────────────────┤      ├──────────────────────────┤
-  │ id: Uuid (PK)            │      │ id: Uuid (PK)            │
-  │ jobId: Uuid (FK)         │      │ jobId: Uuid (FK)         │
-  │ stepType: StepType       │      │ testCaseId: String       │
-  │ testCaseId: String?      │      │ filename: String         │
-  │ attemptNumber: Int?      │      │ finalCode: String        │
-  │ status: StepStatus       │      │ finalStatus: TestStatus  │
-  │ latencyMs: Int?          │      │ totalAttempts: Int       │
-  │ llmProvider / llmModel   │      │ createdAt: DateTime      │
-  │ prompt / completionTokens│      └────────────┬─────────────┘
-  │ errorDetail: String?     │                   │ 1:N (onDelete: Cascade)
-  │ createdAt: DateTime      │                   ▼
-  └──────────────────────────┘      ┌──────────────────────────┐
-                                    │     ExecutionResult      │
-                                    ├──────────────────────────┤
-                                    │ id: Uuid (PK)            │
-                                    │ generatedTestId: Uuid FK │
-                                    │ attemptNumber: Int       │
-                                    │ code: String             │
-                                    │ validationPassed: Bool   │
-                                    │ validationErrors: Str[]  │
-                                    │ executionPassed: Bool    │
-                                    │ executionError: String?  │
-                                    │ failureClass: FailClass? │
-                                    │ durationMs: Int?         │
-                                    │ corrected: Boolean       │
-                                    │ createdAt: DateTime      │
-                                    └──────────────────────────┘
-```
+
+</details>
 
 ---
 
-## Local Development
+## Quality Gates
 
-### Prerequisites
-- **Node.js**: v20.x or higher
-- **Package Manager**: `pnpm` (`corepack enable && corepack prepare pnpm@latest --activate`)
-- **Database**: PostgreSQL (local instance or Supabase account)
-
-### Backend Setup
+Verify code health and test coverage using the repository quality gates:
 
 ```powershell
+# 1. Type-check backend TypeScript
 cd backend
-pnpm install
+pnpm typecheck
 
-# Install Playwright browser dependencies
-npx playwright install chromium
+# 2. Build backend distribution bundle
+pnpm build
 
-# Copy and configure environment variables
-Copy-Item .env.example .env
-
-# Generate Prisma client and apply database migrations
-pnpm exec prisma migrate dev
-
-# Run offline verification test suites
-pnpm exec tsx scratch/testPhase6.ts
-pnpm exec tsx scratch/testPhase7A.ts
-pnpm exec tsx scratch/testAssertionGuard.ts
-pnpm exec tsx scratch/testRunnerIsolation.ts
-
-# Start the Express API development server on http://localhost:4000
-pnpm dev
-```
-
-### Frontend Setup
-
-```powershell
-cd frontend
-pnpm install
-
-# Copy and configure frontend environment variables
-Copy-Item .env.example .env.local
-
-# Start Next.js development server on http://localhost:3000
-pnpm dev
-```
-
-### Environment Variables
-
-#### Backend (`backend/.env`)
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `PORT` | No | `4000` | Port for Express API server |
-| `NODE_ENV` | No | `development` | Environment mode (`development`, `production`, `test`) |
-| `HEADED_DEBUG` | No | `false` | Launch visible Chromium browser window during dev/debugging (dev only, ignored in production) |
-| `MAX_ELEMENTS_PER_PAGE` | No | `200` | Max interactive DOM elements extracted per page |
-| `NAVIGATION_TIMEOUT_MS` | No | `30000` | Playwright page load timeout (ms) |
-| `DATABASE_URL` | **Yes** | — | Supavisor pooled PostgreSQL connection string |
-| `DIRECT_URL` | **Yes** | — | Direct PostgreSQL connection string for Prisma migrations |
-| `GROQ_API_KEY` | Optional* | — | Server-level Groq API key (primary provider; free tier: ~7,500 TPM) |
-| `GEMINI_API_KEY` | Optional* | — | Server-level Google Gemini API key (fallback provider; free tier: 15 RPM, 1M TPM) |
-| `NVIDIA_API_KEY` | No | — | Optional server key for NVIDIA API (free credits at build.nvidia.com) |
-| `GROQ_REASONING_MODEL` | No | `openai/gpt-oss-120b` | Groq reasoning model for planning |
-| `GROQ_FAST_MODEL` | No | `openai/gpt-oss-20b` | Groq fast model for correction and generator fallback |
-| `GEMINI_REASONING_MODEL` | No | `gemini-2.5-flash` | Gemini reasoning model for planning |
-| `GEMINI_FAST_MODEL` | No | `gemini-2.5-flash-lite` | Gemini fast model for correction and fallback |
-| `NVIDIA_MODEL` | No | `openai/gpt-oss-20b` | Model used for NVIDIA API requests |
-| `LLM_PROVIDER_ORDER` | No | `groq,gemini,nvidia` | Comma-separated provider fallback sequence |
-| `POW_SECRET` | No | — | Secret key for ALTCHA challenge signing (min 16 chars) |
-| `VISITOR_SIGNING_SECRET`| No | — | Secret key for visitor token HMAC signing (min 16 chars) |
-| `GENERATE_DAILY_LIMIT` | No | `20` | Daily global quota limit for unauthenticated runs |
-| `LOCAL_AGENT_MODE` | No | `false` | Enable permissive CORS/PNA headers for local agent connections |
-| `PIPELINE_CONCURRENCY` | No | `2` | Max simultaneous run groups (1–4). Set 1 on 512MB hosts |
-| `CRAWL_CONCURRENCY` | No | `2` | Max simultaneous crawl previews (1–4) |
-
-#### Frontend (`frontend/.env.local`)
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `BACKEND_URL` | No | `http://localhost:4000` | Target URL for Next.js API rewrite proxy |
-| `NEXT_PUBLIC_SITE_URL`| No | `http://localhost:3000` | Canonical site URL for SEO meta and JSON-LD schema |
-
----
-
-## Verification & Quality Gates
-
-Run quality checks across both packages before committing or deploying:
-
-```powershell
-# 1. Backend typecheck
-cd backend
-pnpm run typecheck
-
-# 2. Frontend typecheck
+# 3. Type-check frontend TypeScript
 cd ../frontend
-pnpm exec tsc --noEmit
+pnpm typecheck
 
-# 3. Frontend lint
-pnpm run lint
+# 4. Run Next.js lint suite
+pnpm lint
 
-# 4. Frontend production build
-pnpm run build
+# 5. Build frontend production bundle
+pnpm build
+cd ..
+
+# 6. Execute live verification scripts (Backend must be configured)
+cd backend
+npx tsx scratch/testPhase9A1.ts        # Validates code safety AST rules and UID runner sandboxing
+npx tsx scratch/testAssertionGuard.ts  # Validates assertion preservation logic
+npx tsx scratch/testQuickFixes.ts       # Validates error mapping and URL transformation safety
 ```
 
 ---
 
-## Measured Token Economics
+## Roadmap
 
-For a representative test suite generation (e.g. TodoMVC):
+- **Scenario Accuracy & Negative Template Separation:** Segregate negative test cases (empty or invalid inputs) from valid credentials in `planCompiler.ts` to eliminate false finding reports caused by test data collisions.
+- **Navigation-Aware Correction Guidance:** Supply post-navigation page URLs and visible interactive element snapshots directly to the correction prompt, preventing locator spin on vanished selectors.
+- **In-Browser Scenario Editing & Re-Execution:** Allow users to adjust generated Playwright code in the Monaco editor and trigger immediate re-execution without incurring an LLM call.
+- **Trace Viewer & Screenshot Artifacts:** Attach Playwright execution traces and screenshot artifacts directly to test result cards for rapid debugging.
+- **Production Infrastructure Rollout:** Execute production deployment to Render and Vercel following the steps outlined in `docs/DEPLOY.md`.
 
-| Stage | Prompt Tokens | Completion Tokens | Total Tokens | Approx Cost (Groq) |
-|---|---|---|---|---|
-| **Journey Planning** | ~1,600 | ~1,100 | ~2,700 | ~$0.0018 |
-| **Playwright CodeGen** | ~1,300 × 3 | ~400 × 3 | ~5,100 | ~$0.0035 |
-| **Self-Correction (if needed)** | ~1,000 × 1 | ~350 × 1 | ~1,350 | ~$0.0009 |
-| **Total Pipeline** | **~10,800** | **~3,700** | **~14,500** | **~$0.004 – $0.009** |
+---
 
-*Estimated with Groq list rates for `llama-3.3-70b-versatile` ($0.59 / 1M prompt, $0.79 / 1M completion). Runs are 100% free when using developer tier allocations.*
+## Deliberately Not Used
+
+| Technology / Pattern | Decision | Project-Specific Rationale |
+|---|---|---|
+| **LangChain / LangGraph / CrewAI** | Avoided | Direct OpenAI-compatible `fetch()` provides transparency, deterministic error mapping, zero vendor lock-in, and avoids heavy runtime dependencies. |
+| **Python** | Avoided | Kept the entire system in TypeScript to share AST parsers, Playwright runner types, and Zod schemas across crawler, runner, and UI. |
+| **Redux / Zustand** | Avoided | Next.js Pages Router with local React state and SWR caching satisfies all state management needs without state store boilerplate. |
+| **GraphQL / tRPC** | Avoided | Standard REST endpoints with Zod request schemas cleanly support Server-Sent Events, streaming zips, and HTML file downloads. |
+| **WebSockets** | Avoided | Live progress is strictly unidirectional (server to browser). Server-Sent Events work seamlessly over standard HTTP proxies without WebSocket upgrade complexity. |
+| **Redis** | Avoided | Single-instance deployment runs on an in-memory queue and SQLite/Postgres. Redis adds unwarranted infrastructure overhead on free-tier deployments. |
+| **Next.js App Router / RSC** | Avoided | Pages Router provides predictable, stable client-side lifecycle management for long-lived Server-Sent Event streams and Monaco editor instances. |
+| **Vector DBs / RAG** | Avoided | The application tests live DOM structures discovered in real time. Historical embeddings are inapplicable for testing fresh DOM layouts. |
+| **Paid Cloud Tiers** | Avoided | Purposefully designed to run continuously on free-tier allocations (Render, Vercel, Supabase, Groq/Gemini free tiers) with zero hosting expenditure. |
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+License: not yet specified.
