@@ -13,6 +13,10 @@ export function withRequestLlmKeys<T>(keys: RequestLlmKeys, fn: () => Promise<T>
   return storage.run(keys, fn);
 }
 
+export function getRequestLlmKeys(): RequestLlmKeys | undefined {
+  return storage.getStore();
+}
+
 export function llmKeyOverride(provider: LlmProviderName): string | undefined {
   if (provider === 'nvidia') return undefined;
   const value = storage.getStore()?.[provider];
