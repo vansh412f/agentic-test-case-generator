@@ -94,3 +94,4 @@ export function scoreTestConfidence(input: ConfidenceInput): ConfidenceScore {
   const score = Math.max(0, Math.min(100, Math.round(raw)));
   return { score, band: score >= 75 ? 'high' : score >= 50 ? 'medium' : 'low', factors };
 }
+// Module component implementation.
