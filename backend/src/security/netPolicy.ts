@@ -66,7 +66,9 @@ export async function assertPublicTarget(
   }
 
   if (url.username || url.password) {
-    throw new CrawlError('TARGET_NOT_ALLOWED', 'Target URL must not contain credentials.');
+    throw new CrawlError('TARGET_NOT_ALLOWED', 'Target URL must not contain credentials.', undefined, {
+      reason: 'credentials',
+    });
   }
 
   const rawHost = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
@@ -76,12 +78,18 @@ export async function assertPublicTarget(
     rawHost.endsWith('.local') ||
     rawHost.endsWith('.internal')
   ) {
-    throw new CrawlError('TARGET_NOT_ALLOWED', `Target host "${rawHost}" is not allowed.`);
+    throw new CrawlError('TARGET_NOT_ALLOWED', `Target host "${rawHost}" is not allowed.`, undefined, {
+      reason: 'blocked_host',
+      host: rawHost,
+    });
   }
 
   if (isIP(rawHost) !== 0) {
     if (!isPublicAddress(rawHost)) {
-      throw new CrawlError('TARGET_NOT_ALLOWED', `Target IP "${rawHost}" is not a public address.`);
+      throw new CrawlError('TARGET_NOT_ALLOWED', `Target IP "${rawHost}" is not a public address.`, undefined, {
+        reason: 'private_address',
+        host: rawHost,
+      });
     }
     return;
   }
@@ -89,17 +97,42 @@ export async function assertPublicTarget(
   let addresses: Array<{ address: string; family: number }>;
   try {
     addresses = await lookupFn(rawHost);
-  } catch (err) {
-    throw new CrawlError('TARGET_NOT_ALLOWED', `Could not resolve hostname "${rawHost}": ${(err as Error).message}`, err);
+  } catch (err: any) {
+    const code = err?.code;
+    if (code === 'ENOTFOUND') {
+      throw new CrawlError('TARGET_UNREACHABLE', `Website not found: could not find ${rawHost}.`, err, {
+        reason: 'dns_not_found',
+        host: rawHost,
+        raw: err?.message,
+      });
+    }
+    if (code === 'EAI_AGAIN' || code === 'ETIMEDOUT') {
+      throw new CrawlError('TARGET_UNREACHABLE', `Could not look up ${rawHost}. The address lookup failed temporarily.`, err, {
+        reason: 'dns_temporary',
+        host: rawHost,
+        raw: err?.message,
+      });
+    }
+    throw new CrawlError('TARGET_UNREACHABLE', `Could not resolve host ${rawHost}.`, err, {
+      reason: 'dns_not_found',
+      host: rawHost,
+      raw: err?.message,
+    });
   }
 
   if (!addresses || addresses.length === 0) {
-    throw new CrawlError('TARGET_NOT_ALLOWED', `Hostname "${rawHost}" resolved to no IP addresses.`);
+    throw new CrawlError('TARGET_UNREACHABLE', `Website not found: ${rawHost} resolved to no addresses.`, undefined, {
+      reason: 'dns_not_found',
+      host: rawHost,
+    });
   }
 
   for (const addr of addresses) {
     if (!isPublicAddress(addr.address)) {
-      throw new CrawlError('TARGET_NOT_ALLOWED', `Target host "${rawHost}" resolved to non-public address "${addr.address}".`);
+      throw new CrawlError('TARGET_NOT_ALLOWED', `This address is on a private network: ${rawHost}.`, undefined, {
+        reason: 'private_address',
+        host: rawHost,
+      });
     }
   }
 }
