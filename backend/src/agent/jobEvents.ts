@@ -96,3 +96,4 @@ export function subscribeJobEvents(
     },
   };
 }
+// Module component implementation.
