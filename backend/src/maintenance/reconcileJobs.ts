@@ -14,3 +14,4 @@ export async function reconcileOrphanedJobs(bootedAt: Date): Promise<void> {
     console.warn('[Reconcile] Skipped:', error instanceof Error ? error.message : String(error));
   }
 }
+// Module component implementation.
