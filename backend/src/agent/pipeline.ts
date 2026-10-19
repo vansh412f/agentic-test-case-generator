@@ -508,3 +508,4 @@ async function runPersistedPipeline(
     }
   }
 }
+// Module component implementation.
