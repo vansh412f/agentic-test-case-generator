@@ -34,6 +34,8 @@ const configSchema = z.object({
   LLM_PROVIDER_ORDER: z.string().default('groq,gemini,nvidia'),
   POW_SECRET: z.string().min(16).optional(),
   VISITOR_SIGNING_SECRET: z.string().min(16).optional(),
+  ADMIN_SECRET: z.string().optional(),
+  EDGE_SHARED_SECRET: z.string().optional(),
   GENERATE_DAILY_LIMIT: z.coerce.number().int().positive().default(40),
   FREE_VISITOR_DAILY_LIMIT: z.coerce.number().int().positive().default(8),
   FREE_IP_DAILY_LIMIT: z.coerce.number().int().positive().default(20),
@@ -53,6 +55,7 @@ const configSchema = z.object({
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
   FRONTEND_ORIGIN: z.string().optional(),
   JOB_TOKEN_BUDGET: z.coerce.number().int().min(0).default(40000),
+  RUNNER_TIMEOUT_SCALE: z.coerce.number().min(1).default(1),
 });
 
 export type Config = z.infer<typeof configSchema> & {
@@ -68,6 +71,44 @@ const parseConfig = (): Config => {
     process.exit(1);
   }
 
+  // Production fail-fast validation when not in LOCAL_AGENT_MODE
+  if (result.data.NODE_ENV === 'production' && !result.data.LOCAL_AGENT_MODE) {
+    const missing: string[] = [];
+
+    if (!result.data.VISITOR_SIGNING_SECRET || result.data.VISITOR_SIGNING_SECRET.trim().length === 0) {
+      missing.push('VISITOR_SIGNING_SECRET');
+    }
+    if (!result.data.POW_SECRET || result.data.POW_SECRET.trim().length === 0) {
+      missing.push('POW_SECRET');
+    }
+    if (!result.data.ADMIN_SECRET || result.data.ADMIN_SECRET.trim().length < 24) {
+      missing.push('ADMIN_SECRET (must be at least 24 characters)');
+    }
+    if (!result.data.EDGE_SHARED_SECRET || result.data.EDGE_SHARED_SECRET.trim().length < 24) {
+      missing.push('EDGE_SHARED_SECRET (must be at least 24 characters)');
+    }
+    if (!result.data.FRONTEND_ORIGIN || result.data.FRONTEND_ORIGIN.trim().length === 0) {
+      missing.push('FRONTEND_ORIGIN');
+    }
+
+    const hasLlmKey = Boolean(
+      (result.data.GROQ_API_KEY && result.data.GROQ_API_KEY.trim().length > 0) ||
+      (result.data.GEMINI_API_KEY && result.data.GEMINI_API_KEY.trim().length > 0) ||
+      (result.data.NVIDIA_API_KEY && result.data.NVIDIA_API_KEY.trim().length > 0),
+    );
+    if (!hasLlmKey) {
+      missing.push('At least one LLM key (GROQ_API_KEY, GEMINI_API_KEY, or NVIDIA_API_KEY)');
+    }
+
+    if (missing.length > 0) {
+      console.error('FATAL: Missing or invalid required production configuration variables:');
+      for (const name of missing) {
+        console.error(`  - ${name}`);
+      }
+      process.exit(1);
+    }
+  }
+
   if (result.data.NODE_ENV === 'production' && result.data.HEADED_DEBUG) {
     console.warn('[Config] HEADED_DEBUG=true is ignored in production; browsers always run headless.');
   }
@@ -78,12 +119,6 @@ const parseConfig = (): Config => {
 };
 
 export const config: Config = parseConfig();
-
-if (!config.VISITOR_SIGNING_SECRET && config.NODE_ENV === 'production') {
-  console.warn(
-    '[Security] VISITOR_SIGNING_SECRET is not set. Falling back to DATABASE_URL hash. Rotating DB credentials will invalidate active visitor sessions.'
-  );
-}
 
 export const VIEWPORT = { width: 1280, height: 720 } as const;
 
@@ -108,8 +143,8 @@ for (const provider of LLM_PROVIDER_ORDER) {
   }
 }
 
-// Allow BYOK-only deployments to boot without environment keys
-if (activeProviders.length === 0) {
+// Allow BYOK-only deployments to boot without environment keys in non-production
+if (activeProviders.length === 0 && config.NODE_ENV !== 'production') {
   console.warn('\n[Warning] No LLM provider API keys configured in environment.');
   console.warn(`LLM_PROVIDER_ORDER contains: ${LLM_PROVIDER_ORDER.join(', ')}`);
   console.warn('Default runs will fail unless users supply request keys (BYOK).\n');
