@@ -1,4 +1,11 @@
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { config } from '../config.ts';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const NET_GUARD_PATH = path.resolve(__dirname, '../../playwright-runner/netGuard.mjs');
+const NET_GUARD_URL = pathToFileURL(NET_GUARD_PATH).href;
 
 // Child processes run LLM-generated code. A target page can prompt-inject that
 // code, so the child must never see DATABASE_URL, provider keys or POW_SECRET.
@@ -22,10 +29,18 @@ export function childProcessEnv(extra: Record<string, string> = {}): NodeJS.Proc
 }
 
 export function playwrightRunnerEnv(resultsPath: string): NodeJS.ProcessEnv {
-  return childProcessEnv({
+  const extra: Record<string, string> = {
     PLAYWRIGHT_JSON_OUTPUT_FILE: resultsPath,
     HEADLESS: config.HEADLESS ? 'true' : 'false', // explicit, from validated config
-    ...(process.env.AGT_EGRESS_PROXY ? { AGT_EGRESS_PROXY: process.env.AGT_EGRESS_PROXY } : {}),
-  });
+  };
+
+  if (!config.LOCAL_AGENT_MODE && process.env.AGT_EGRESS_PROXY) {
+    extra.AGT_EGRESS_PROXY = process.env.AGT_EGRESS_PROXY;
+    const existingNodeOptions = process.env.NODE_OPTIONS?.trim() ?? '';
+    extra.NODE_OPTIONS = existingNodeOptions
+      ? `${existingNodeOptions} --import=${NET_GUARD_URL}`
+      : `--import=${NET_GUARD_URL}`;
+  }
+
+  return childProcessEnv(extra);
 }
-// Module component implementation.
