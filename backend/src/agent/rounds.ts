@@ -27,6 +27,7 @@ export interface RoundTest {
   priorErrors: string[];
   status: 'open' | 'passed' | 'failed' | 'gave_up';
   recorded: boolean;
+  announced?: boolean;
 }
 
 export function pushAttempt(
@@ -99,10 +100,6 @@ export async function runRounds(
         });
 
         const errorText = unsafe.join('\n');
-        test.priorErrors.push(errorText);
-        if (test.priorErrors.length > 2) {
-          test.priorErrors.splice(0, test.priorErrors.length - 2);
-        }
 
         const canProceedWithCorrection =
           round < maxRounds &&
@@ -110,6 +107,10 @@ export async function runRounds(
           (deps.canCorrect ? deps.canCorrect(test) : true);
 
         if (!canProceedWithCorrection) {
+          test.priorErrors.push(errorText);
+          if (test.priorErrors.length > 2) {
+            test.priorErrors.splice(0, test.priorErrors.length - 2);
+          }
           test.status = 'gave_up';
           if (deps.canCorrect && !deps.canCorrect(test)) {
             attempt.gaveUpReason = 'token_budget';
@@ -121,6 +122,10 @@ export async function runRounds(
             errorText,
             attemptNumber: attempt.attemptNumber,
           });
+          test.priorErrors.push(errorText);
+          if (test.priorErrors.length > 2) {
+            test.priorErrors.splice(0, test.priorErrors.length - 2);
+          }
           if (correction?.code) {
             test.code = correction.code;
             test.codeVersion += 1;
@@ -196,10 +201,6 @@ export async function runRounds(
           });
 
           const errorText = fileErrors.join('\n');
-          test.priorErrors.push(errorText);
-          if (test.priorErrors.length > 2) {
-            test.priorErrors.splice(0, test.priorErrors.length - 2);
-          }
 
           const canProceedWithCorrection =
             round < maxRounds &&
@@ -207,6 +208,10 @@ export async function runRounds(
             (deps.canCorrect ? deps.canCorrect(test) : true);
 
           if (!canProceedWithCorrection) {
+            test.priorErrors.push(errorText);
+            if (test.priorErrors.length > 2) {
+              test.priorErrors.splice(0, test.priorErrors.length - 2);
+            }
             test.status = 'gave_up';
             if (deps.canCorrect && !deps.canCorrect(test)) {
               attempt.gaveUpReason = 'token_budget';
@@ -218,6 +223,10 @@ export async function runRounds(
               errorText,
               attemptNumber: attempt.attemptNumber,
             });
+            test.priorErrors.push(errorText);
+            if (test.priorErrors.length > 2) {
+              test.priorErrors.splice(0, test.priorErrors.length - 2);
+            }
             if (correction?.code) {
               test.code = correction.code;
               test.codeVersion += 1;
@@ -305,16 +314,16 @@ export async function runRounds(
             attempt.executionError = (attempt.executionError ? attempt.executionError + ' ' : '') + '[gaveUpReason: token_budget]';
           } else {
             const errorText = execError || 'Test execution failed';
-            test.priorErrors.push(errorText);
-            if (test.priorErrors.length > 2) {
-              test.priorErrors.splice(0, test.priorErrors.length - 2);
-            }
 
             const correction = await deps.correct({
               test,
               errorText,
               attemptNumber: attempt.attemptNumber,
             });
+            test.priorErrors.push(errorText);
+            if (test.priorErrors.length > 2) {
+              test.priorErrors.splice(0, test.priorErrors.length - 2);
+            }
             if (correction?.code) {
               test.code = correction.code;
               test.codeVersion += 1;
