@@ -1,13 +1,10 @@
-import { ArrowRight, Check, Globe, Warning, Lock, LockOpen } from '@phosphor-icons/react';
+import { ArrowRight, Check, Globe, Warning, CircleNotch } from '@phosphor-icons/react';
 import { useMemo, useRef, useState } from 'react';
-import { toast } from 'sonner';
-import type { AppMap, InteractiveElement } from '@/types/api';
-import type { BudgetResponse } from '@/lib/api';
-import {
-  saveRememberedTestData,
-  forgetRememberedTestData,
-  hasRememberedTestData,
-} from '@/lib/rememberedTestData';
+import type { AppMap } from '@/types/api';
+import { crawlPage, ApiError, type BudgetResponse, type TestDataParam } from '@/lib/api';
+import { useBackendMode } from '@/hooks/useBackendMode';
+import { loadRememberedTestData } from '@/lib/rememberedTestData';
+import { PageTestData } from './PageTestData';
 
 interface CrawlPreviewProps {
   appMap: AppMap;
@@ -15,13 +12,13 @@ interface CrawlPreviewProps {
   generating: boolean;
   disabled?: boolean;
   deepCrawl?: boolean;
-  testData: Record<string, { value: string; sensitive: boolean }>;
+  testData?: Record<string, { value: string; sensitive: boolean }>;
   budget?: BudgetResponse | null;
   maxUrlsPerRun?: number;
   onToggleDeepCrawl?: (enabled: boolean) => void;
   onToggleUrl: (url: string) => void;
-  onUpdateTestData: (elementId: string, value: string, sensitive: boolean) => void;
-  onGenerate: () => void;
+  onUpdateTestData?: (elementId: string, value: string, sensitive: boolean) => void;
+  onGenerate: (testDataByUrl?: Record<string, TestDataParam[]>) => void;
   onReset: () => void;
 }
 
@@ -49,37 +46,38 @@ function formatPageTitle(urlStr: string, defaultTitle?: string): string {
   }
 }
 
-const EXCLUDED_INPUT_TYPES = new Set([
-  'hidden',
-  'submit',
-  'button',
-  'checkbox',
-  'radio',
-  'file',
-  'image',
-  'reset',
-  'range',
-  'color',
-]);
-
 export function CrawlPreview({
   appMap,
   selectedUrls,
   generating,
   disabled = false,
   deepCrawl = false,
-  testData,
   budget,
   maxUrlsPerRun,
   onToggleDeepCrawl,
   onToggleUrl,
-  onUpdateTestData,
   onGenerate,
   onReset,
 }: CrawlPreviewProps) {
+  const { isLocal } = useBackendMode();
   const confirmDialogRef = useRef<HTMLDialogElement>(null);
+
+  const [pageAppMaps, setPageAppMaps] = useState<Record<string, AppMap>>(() => ({
+    [appMap.url]: appMap,
+  }));
+  const [crawlingUrls, setCrawlingUrls] = useState<Record<string, boolean>>({});
+  const [crawlErrors, setCrawlErrors] = useState<Record<string, string>>({});
+
+  const [testDataByUrl, setTestDataByUrl] = useState<
+    Record<string, Record<string, { value: string; sensitive: boolean }>>
+  >(() => ({
+    [appMap.url]: loadRememberedTestData(appMap.url, appMap.elements),
+  }));
+
   const totalPagesCount = 1 + appMap.discoveredLinks.length;
-  const maxAllowedUrls = maxUrlsPerRun ?? budget?.maxUrlsPerRun ?? (budget?.byok ? 5 : 3);
+  const maxAllowedUrls = isLocal
+    ? (budget?.maxUrlsPerRun ?? 10)
+    : (maxUrlsPerRun ?? budget?.maxUrlsPerRun ?? (budget?.byok ? 5 : 3));
   const maxReached = selectedUrls.length >= maxAllowedUrls;
   const canDeepCrawl =
     onToggleDeepCrawl !== undefined &&
@@ -89,81 +87,94 @@ export function CrawlPreview({
   const visitorScope = budget?.scopes?.find((s) => s.scope === 'visitor');
   const limit = visitorScope?.limit ?? 8;
   const remaining = budget?.remaining ?? null;
-  const budgetCopy = budget?.byok
+  const budgetCopy = isLocal
+    ? null
+    : budget?.byok
     ? 'Unlimited with your key, one run at a time'
     : remaining !== null
     ? `${remaining} of ${limit} free runs left today`
     : null;
 
-  const [rememberOnBrowser, setRememberOnBrowser] = useState(true);
+  const handleTogglePage = async (link: string) => {
+    const willSelect = !selectedUrls.includes(link);
+    onToggleUrl(link);
+
+    if (willSelect && !pageAppMaps[link] && !crawlingUrls[link]) {
+      setCrawlingUrls((prev) => ({ ...prev, [link]: true }));
+      setCrawlErrors((prev) => {
+        const next = { ...prev };
+        delete next[link];
+        return next;
+      });
+
+      try {
+        const result = await crawlPage(link);
+        setPageAppMaps((prev) => ({ ...prev, [link]: result }));
+        const rem = loadRememberedTestData(link, result.elements);
+        setTestDataByUrl((prev) => ({ ...prev, [link]: rem }));
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'RATE_LIMITED') {
+          setCrawlErrors((prev) => ({ ...prev, [link]: 'Daily limit reached' }));
+        } else if (err instanceof ApiError) {
+          setCrawlErrors((prev) => ({ ...prev, [link]: err.message || 'Crawl failed' }));
+        } else {
+          setCrawlErrors((prev) => ({ ...prev, [link]: 'Could not crawl page' }));
+        }
+      } finally {
+        setCrawlingUrls((prev) => ({ ...prev, [link]: false }));
+      }
+    }
+  };
+
+  const buildTestDataByUrlParam = (): Record<string, TestDataParam[]> | undefined => {
+    const result: Record<string, TestDataParam[]> = {};
+    for (const pageUrl of selectedUrls) {
+      const pageMap = pageAppMaps[pageUrl] ?? (pageUrl === appMap.url ? appMap : undefined);
+      const pageData = testDataByUrl[pageUrl];
+      if (pageMap && pageData) {
+        const entries: TestDataParam[] = [];
+        for (const [elementId, entry] of Object.entries(pageData)) {
+          if (!entry.value.trim()) continue;
+          const el = pageMap.elements.find((e) => e.id === elementId);
+          if (el?.selectors?.css) {
+            entries.push({
+              elementId,
+              css: el.selectors.css,
+              value: entry.value,
+              sensitive: entry.sensitive,
+            });
+          }
+        }
+        if (entries.length > 0) {
+          result[pageUrl] = entries;
+        }
+      }
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  };
 
   const handleGenerateClick = () => {
-    if (rememberOnBrowser) {
-      saveRememberedTestData(appMap.url, testData, appMap.elements);
-    }
-    if (selectedUrls.length > 1) {
+    const tdParam = buildTestDataByUrlParam();
+    if (!isLocal && selectedUrls.length > 1) {
       confirmDialogRef.current?.showModal();
     } else {
-      onGenerate();
+      onGenerate(tdParam);
     }
   };
 
   const handleConfirmRun = () => {
-    if (rememberOnBrowser) {
-      saveRememberedTestData(appMap.url, testData, appMap.elements);
-    }
     confirmDialogRef.current?.close();
-    onGenerate();
+    const tdParam = buildTestDataByUrlParam();
+    onGenerate(tdParam);
   };
 
-  const eligibleFields = useMemo(() => {
-    return appMap.elements
-      .filter((el) => {
-        if (el.page !== undefined && el.page > 1) return false;
-        if (el.isVisible === false) return false;
-        if (el.isReadOnly) return false;
-        if (!['input', 'textarea', 'select'].includes(el.type)) return false;
-        if (el.inputType && EXCLUDED_INPUT_TYPES.has(el.inputType.toLowerCase())) return false;
-        return true;
-      })
-      .slice(0, 30);
-  }, [appMap.elements]);
-
-  const hasLoginOrSignup = useMemo(() => {
-    return (appMap.forms ?? []).some(
-      (f) => f.purpose === 'login' || f.purpose === 'signup',
-    );
-  }, [appMap.forms]);
-
-  const [isTestDataExpanded, setIsTestDataExpanded] = useState<boolean>(() => hasLoginOrSignup);
-
-  const groupedFields = useMemo(() => {
-    const groups: Array<{ id: string; title: string; fields: InteractiveElement[] }> = [];
-    const assigned = new Set<string>();
-
-    for (const form of appMap.forms ?? []) {
-      const fields = eligibleFields.filter((f) => form.fieldIds.includes(f.id));
-      if (fields.length > 0) {
-        fields.forEach((f) => assigned.add(f.id));
-        const title =
-          form.purpose === 'login'
-            ? 'Login form'
-            : form.purpose === 'signup'
-              ? 'Sign-up form'
-              : form.purpose === 'search'
-                ? 'Search'
-                : 'Form';
-        groups.push({ id: form.id, title, fields });
-      }
-    }
-
-    const otherFields = eligibleFields.filter((f) => !assigned.has(f.id));
-    if (otherFields.length > 0) {
-      groups.push({ id: 'other', title: 'Other inputs', fields: otherFields });
-    }
-
-    return groups;
-  }, [appMap.forms, eligibleFields]);
+  const pagesForTestData = useMemo(() => {
+    return selectedUrls.map((url) => ({
+      url,
+      title: pageAppMaps[url]?.title,
+      elements: pageAppMaps[url]?.elements ?? (url === appMap.url ? appMap.elements : []),
+    }));
+  }, [selectedUrls, pageAppMaps, appMap]);
 
   return (
     <section aria-labelledby="app-map-title" className="app-map">
@@ -177,11 +188,31 @@ export function CrawlPreview({
           </p>
         </div>
         {appMap.elements.length === 0 ? (
-          <span className="warning" style={{ margin: 0, padding: '6px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: 700, alignItems: 'center' }}>
+          <span
+            className="warning"
+            style={{
+              margin: 0,
+              padding: '6px 10px',
+              borderRadius: '20px',
+              fontSize: '10px',
+              fontWeight: 700,
+              alignItems: 'center',
+            }}
+          >
             <Warning aria-hidden="true" className="h-3.5 w-3.5" /> No elements found
           </span>
         ) : appMap.isTruncated ? (
-          <span className="warning" style={{ margin: 0, padding: '6px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: 700, alignItems: 'center' }}>
+          <span
+            className="warning"
+            style={{
+              margin: 0,
+              padding: '6px 10px',
+              borderRadius: '20px',
+              fontSize: '10px',
+              fontWeight: 700,
+              alignItems: 'center',
+            }}
+          >
             <Warning aria-hidden="true" className="h-3.5 w-3.5" /> Crawl truncated
           </span>
         ) : (
@@ -216,175 +247,60 @@ export function CrawlPreview({
         {appMap.discoveredLinks.map((link) => {
           const isSelected = selectedUrls.includes(link);
           const isDisabled = generating || (!isSelected && maxReached);
+          const isCrawling = crawlingUrls[link];
+          const errorMsg = crawlErrors[link];
+          const crawledMap = pageAppMaps[link];
 
           return (
             <label className="page-row" key={link}>
               <input
                 checked={isSelected}
-                disabled={isDisabled}
-                onChange={() => onToggleUrl(link)}
+                disabled={isDisabled || isCrawling}
+                onChange={() => void handleTogglePage(link)}
                 type="checkbox"
               />
               <span className="page-icon">
                 <Globe aria-hidden="true" className="h-4 w-4" />
               </span>
               <span className="page-name">
-                <strong>{formatPageTitle(link)}</strong>
+                <strong>{formatPageTitle(link, crawledMap?.title)}</strong>
                 <code>{formatPathname(link)}</code>
               </span>
-              <span className="page-meta">Discovered page</span>
+              <span className="page-meta">
+                {isCrawling ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#6b7280' }}>
+                    <CircleNotch aria-hidden="true" className="h-3 w-3 animate-spin" /> Scanning…
+                  </span>
+                ) : errorMsg ? (
+                  <span style={{ color: '#dc2626', fontWeight: 600 }}>{errorMsg}</span>
+                ) : crawledMap ? (
+                  <span>
+                    {crawledMap.elements.length} elements · {crawledMap.forms.length} forms
+                  </span>
+                ) : (
+                  <span>Discovered page</span>
+                )}
+              </span>
             </label>
           );
         })}
       </div>
 
-      {/* Test Data Section */}
-      {eligibleFields.length > 0 && (
-        <div style={{ marginTop: '20px', border: '1px solid #e0e5de', borderRadius: '10px', background: '#fff', overflow: 'hidden' }}>
-          <button
-            type="button"
-            onClick={() => setIsTestDataExpanded(!isTestDataExpanded)}
-            style={{
-              width: '100%',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '12px 16px',
-              background: '#f8faf7',
-              border: 'none',
-              borderBottom: isTestDataExpanded ? '1px solid #e0e5de' : 'none',
-              cursor: 'pointer',
-              fontSize: '12px',
-              fontWeight: 600,
-              color: '#243027',
-            }}
-          >
-            <span>Test data · {eligibleFields.length} fields · optional</span>
-            <span style={{ fontSize: '11px', color: '#7a857e' }}>{isTestDataExpanded ? '▲ Collapse' : '▼ Expand'}</span>
-          </button>
-
-          {isTestDataExpanded && (
-            <div style={{ padding: '16px' }}>
-              {hasLoginOrSignup && (
-                <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '6px', padding: '10px 12px', fontSize: '12px', color: '#92400e', marginBottom: '16px' }}>
-                  Provide test credentials, or leave blank (login tests will likely fail).
-                </div>
-              )}
-
-              {groupedFields.map((group) => (
-                <div key={group.id} style={{ marginBottom: '16px' }}>
-                  <h4 style={{ fontSize: '11px', fontWeight: 700, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-                    {group.title}
-                  </h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {group.fields.map((field) => {
-                      const label = field.ariaLabel || field.placeholder || field.name || field.text || field.id;
-                      const entry = testData[field.id] ?? {
-                        value: '',
-                        sensitive: field.inputType === 'password',
-                      };
-                      return (
-                        <div key={field.id} style={{ display: 'grid', gridTemplateColumns: '140px 1fr auto', gap: '8px', alignItems: 'center' }}>
-                          <label htmlFor={`td-${field.id}`} style={{ fontSize: '12px', color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={label}>
-                            {label}
-                          </label>
-                          <input
-                            id={`td-${field.id}`}
-                            type={entry.sensitive ? 'password' : 'text'}
-                            value={entry.value}
-                            placeholder={field.placeholder || 'Value...'}
-                            onChange={(e) => onUpdateTestData(field.id, e.target.value, entry.sensitive)}
-                            disabled={generating || disabled}
-                            style={{
-                              padding: '6px 10px',
-                              border: '1px solid #d1d5db',
-                              borderRadius: '6px',
-                              fontSize: '12px',
-                              width: '100%',
-                            }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => onUpdateTestData(field.id, entry.value, !entry.sensitive)}
-                            disabled={generating || disabled}
-                            title={entry.sensitive ? 'Marked as Secret (never sent to AI, never stored)' : 'Plain text'}
-                            style={{
-                              padding: '5px 8px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              borderRadius: '6px',
-                              border: entry.sensitive ? '1px solid #dc2626' : '1px solid #d1d5db',
-                              background: entry.sensitive ? '#fef2f2' : '#f9fafb',
-                              color: entry.sensitive ? '#b91c1c' : '#6b7280',
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                            }}
-                          >
-                            {entry.sensitive ? (
-                              <>
-                                <Lock aria-hidden="true" className="h-3 w-3" /> Secret
-                              </>
-                            ) : (
-                              <>
-                                <LockOpen aria-hidden="true" className="h-3 w-3" /> Plain
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-
-              <p style={{ fontSize: '11px', color: '#6b7280', margin: '8px 0 0 0', lineHeight: 1.4 }}>
-                Use test accounts only. Secret values are used only while tests run — never sent to the AI, never stored, redacted from results. Exported code reads them from env vars.
-              </p>
-
-              <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#4b5563', cursor: 'pointer', userSelect: 'none' }}>
-                  <input
-                    type="checkbox"
-                    checked={rememberOnBrowser}
-                    onChange={(e) => {
-                      setRememberOnBrowser(e.target.checked);
-                      if (!e.target.checked) {
-                        forgetRememberedTestData(appMap.url);
-                      }
-                    }}
-                  />
-                  <span>Remember on this browser (30 days)</span>
-                </label>
-                {hasRememberedTestData(appMap.url) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      forgetRememberedTestData(appMap.url);
-                      for (const field of eligibleFields) {
-                        onUpdateTestData(field.id, '', field.inputType === 'password');
-                      }
-                      toast.success('Forgot remembered test data for this site');
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#dc2626',
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      padding: '2px 6px',
-                    }}
-                  >
-                    Forget saved data
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Per-page test data component */}
+      <PageTestData
+        pages={pagesForTestData}
+        testDataByUrl={testDataByUrl}
+        onUpdateField={(pageUrl, elementId, value, sensitive) => {
+          setTestDataByUrl((prev) => ({
+            ...prev,
+            [pageUrl]: {
+              ...(prev[pageUrl] ?? {}),
+              [elementId]: { value, sensitive },
+            },
+          }));
+        }}
+        disabled={generating || disabled}
+      />
 
       {canDeepCrawl && (
         <label className="deep-crawl-toggle">
