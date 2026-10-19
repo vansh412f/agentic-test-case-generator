@@ -110,3 +110,4 @@ export class WaitableSemaphore {
 export const crawlSemaphore = new WaitableSemaphore(config.CRAWL_CONCURRENCY, 3, 45_000);
 
 
+// Module component implementation.
