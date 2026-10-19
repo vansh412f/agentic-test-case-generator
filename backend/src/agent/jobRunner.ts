@@ -49,9 +49,11 @@ function webhookPayload(
   let passed = 0;
   let failed = 0;
   let gaveUp = 0;
+  let needsReview = 0;
   for (const t of tests) {
     if (t.status === 'passed') passed += 1;
     else if (t.status === 'failed') failed += 1;
+    else if (t.status === 'needs_review') needsReview += 1;
     else gaveUp += 1;
   }
   return {
@@ -65,6 +67,7 @@ function webhookPayload(
       passed,
       failed,
       gaveUp,
+      needsReview,
     },
   };
 }
