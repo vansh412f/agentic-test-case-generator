@@ -1,3 +1,5 @@
+import { sanitizeError } from './sanitizeError.ts';
+import { rewritePlaywrightImport } from './rewriteImport.ts';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -21,6 +23,7 @@ export interface TestCaseResult {
   durationMs: number;
   error?: string; // trimmed to last 30 lines, only present when passed=false
   failureClass?: FailureClass;
+  failureContext?: { finalUrl: string; navigations: string[] };
 }
 
 export interface ExecutionResult {
@@ -37,6 +40,7 @@ interface PlaywrightJsonResult {
     value?: string;
   };
   errors?: Array<{ message?: string }>;
+  attachments?: Array<{ name: string; contentType: string; path?: string; body?: string }>;
 }
 
 interface PlaywrightJsonTest {
@@ -171,6 +175,11 @@ export async function executeTests(
     await fs.mkdir(runDir, { recursive: true });
     for (const file of files) {
       let codeToWrite = file.code;
+      try {
+        codeToWrite = rewritePlaywrightImport(codeToWrite, '../../agt-capture.ts');
+      } catch (err) {
+        console.warn(`[Executor] Failed to rewrite import for ${file.filename}:`, err);
+      }
       if (options?.secrets && options.secrets.size > 0) {
         for (const [token, secretValue] of options.secrets.entries()) {
           const escaped = JSON.stringify(secretValue).slice(1, -1);
@@ -287,12 +296,41 @@ export async function executeTests(
       let passed = true;
       let durationMs = 0;
       let firstErrorMessage: string | undefined;
+      let failureContext: { finalUrl: string; navigations: string[] } | undefined;
 
       for (const spec of specs) {
         for (const test of spec.tests || []) {
           for (const res of test.results || []) {
             if (typeof res.duration === 'number') {
               durationMs += res.duration;
+            }
+            if (res.attachments) {
+              for (const att of res.attachments) {
+                if (att.name === 'agt-failure-context') {
+                  try {
+                    let jsonStr = '';
+                    if (att.body) {
+                      try {
+                        const decoded = Buffer.from(att.body, 'base64').toString('utf-8');
+                        if (decoded.includes('{') && decoded.includes('finalUrl')) {
+                          jsonStr = decoded;
+                        } else {
+                          jsonStr = att.body;
+                        }
+                      } catch {
+                        jsonStr = att.body;
+                      }
+                    } else if (att.path && fsSync.existsSync(att.path)) {
+                      jsonStr = fsSync.readFileSync(att.path, 'utf-8');
+                    }
+                    if (jsonStr) {
+                      failureContext = JSON.parse(jsonStr);
+                    }
+                  } catch {
+                    // Ignore attachment parse failure
+                  }
+                }
+              }
             }
             if (res.status !== 'passed') {
               passed = false;
@@ -307,7 +345,7 @@ export async function executeTests(
                   .join('\n\n') ||
                 res.error?.message ||
                 fallback;
-              const errorText = stripAnsi(rawError);
+              const errorText = sanitizeError(rawError);
 
               if (errorText.includes('browserType.launch')) {
                 const redactedLaunch = trimError(redactSecrets(errorText, options?.secrets));
@@ -338,6 +376,7 @@ export async function executeTests(
           durationMs,
           error: trimmed,
           failureClass: classifyExecutionError(redacted),
+          failureContext,
         });
       }
     }
