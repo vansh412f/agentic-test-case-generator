@@ -16,12 +16,17 @@ export interface OriginRememberedData {
 const STORAGE_KEY = 'atsg-remembered-test-data';
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-export function getOrigin(urlStr: string): string {
+export function getPageKey(urlStr: string): string {
   try {
-    return new URL(urlStr).origin;
+    const u = new URL(urlStr);
+    return (u.origin + u.pathname).replace(/\/$/, '') || u.origin;
   } catch {
-    return urlStr;
+    return urlStr.replace(/\/$/, '');
   }
+}
+
+export function getOrigin(urlStr: string): string {
+  return getPageKey(urlStr);
 }
 
 export function loadAllRemembered(): Record<string, OriginRememberedData> {
