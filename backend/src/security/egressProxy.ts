@@ -49,7 +49,30 @@ function parseHostAndPort(rawUrl: string, defaultPort = 80): { host: string; por
   }
 }
 
+export type DnsResolver = (host: string) => Promise<string[] | null>;
+let customDnsResolver: DnsResolver | null = null;
+
+export function setDnsResolverForTest(resolver: DnsResolver | null): void {
+  customDnsResolver = resolver;
+}
+
+export function orderAddressesIpv4First(addresses: string[]): string[] {
+  const v4: string[] = [];
+  const v6: string[] = [];
+  for (const addr of addresses) {
+    if (isIP(addr) === 4) {
+      v4.push(addr);
+    } else {
+      v6.push(addr);
+    }
+  }
+  return [...v4, ...v6];
+}
+
 async function resolveAddresses(host: string): Promise<string[] | null> {
+  if (customDnsResolver) {
+    return customDnsResolver(host);
+  }
   if (
     host === 'localhost' ||
     host.endsWith('.localhost') ||
@@ -70,6 +93,8 @@ async function resolveAddresses(host: string): Promise<string[] | null> {
 }
 
 import type { Duplex } from 'node:stream';
+
+const RETRYABLE_CONNECT_ERRORS = new Set(['ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT']);
 
 async function handleConnect(
   req: http.IncomingMessage,
@@ -105,30 +130,61 @@ async function handleConnect(
     return;
   }
 
-  const targetIp = addresses[0];
-  const upstream = net.connect({
-    host: targetIp,
-    port: parsed.port,
-    family: isIP(targetIp),
+  const targetIps = orderAddressesIpv4First(addresses);
+  let index = 0;
+  let activeUpstream: net.Socket | null = null;
+
+  const tryConnect = () => {
+    if (index >= targetIps.length) {
+      clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+      clientSocket.destroy();
+      return;
+    }
+    const targetIp = targetIps[index++];
+    let connected = false;
+
+    const upstream = net.connect({
+      host: targetIp,
+      port: parsed.port,
+      family: isIP(targetIp),
+    });
+    activeUpstream = upstream;
+
+    const timer = setTimeout(() => {
+      if (!connected) {
+        upstream.destroy(Object.assign(new Error('Connect timeout'), { code: 'ETIMEDOUT' }));
+      }
+    }, 5_000);
+
+    upstream.once('connect', () => {
+      connected = true;
+      clearTimeout(timer);
+      upstream.setTimeout(60_000, () => upstream.destroy());
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head && head.length > 0) upstream.write(head);
+      clientSocket.pipe(upstream);
+      upstream.pipe(clientSocket);
+    });
+
+    upstream.once('error', (err: any) => {
+      clearTimeout(timer);
+      upstream.destroy();
+      if (!connected) {
+        if (RETRYABLE_CONNECT_ERRORS.has(err?.code) && index < targetIps.length) {
+          tryConnect();
+          return;
+        }
+        clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+        clientSocket.destroy();
+      }
+    });
+  };
+
+  clientSocket.once('error', () => {
+    activeUpstream?.destroy();
   });
 
-  upstream.setTimeout(60_000, () => upstream.destroy());
-
-  upstream.on('connect', () => {
-    clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-    if (head && head.length > 0) upstream.write(head);
-    clientSocket.pipe(upstream);
-    upstream.pipe(clientSocket);
-  });
-
-  upstream.on('error', () => {
-    clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
-    clientSocket.destroy();
-  });
-
-  clientSocket.on('error', () => {
-    upstream.destroy();
-  });
+  tryConnect();
 }
 
 async function handleHttpRequest(
@@ -178,32 +234,77 @@ async function handleHttpRequest(
     return;
   }
 
-  const targetIp = addresses[0];
-  const forwardReq = http.request(
-    {
-      host: targetIp,
-      port,
-      method: req.method,
-      path: targetUrl.pathname + targetUrl.search,
-      headers: {
-        ...req.headers,
-        host: req.headers.host || targetUrl.host,
-      },
-      timeout: 60_000,
-    },
-    (forwardRes) => {
-      res.writeHead(forwardRes.statusCode ?? 502, forwardRes.headers);
-      forwardRes.pipe(res);
-    },
-  );
+  const targetIps = orderAddressesIpv4First(addresses);
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+  req.on('end', () => {
+    const bodyBuffer = Buffer.concat(chunks);
+    let index = 0;
 
-  forwardReq.on('timeout', () => forwardReq.destroy());
-  forwardReq.on('error', () => {
-    if (!res.headersSent) res.writeHead(502);
-    res.end('Bad Gateway');
+    const tryForward = () => {
+      if (index >= targetIps.length) {
+        if (!res.headersSent) res.writeHead(502);
+        res.end('Bad Gateway');
+        return;
+      }
+      const targetIp = targetIps[index++];
+      let connected = false;
+      let responded = false;
+
+      const forwardReq = http.request(
+        {
+          host: targetIp,
+          port,
+          method: req.method,
+          path: targetUrl.pathname + targetUrl.search,
+          headers: {
+            ...req.headers,
+            host: req.headers.host || targetUrl.host,
+          },
+          family: isIP(targetIp),
+        },
+        (forwardRes) => {
+          responded = true;
+          res.writeHead(forwardRes.statusCode ?? 502, forwardRes.headers);
+          forwardRes.pipe(res);
+        },
+      );
+
+      const timer = setTimeout(() => {
+        if (!connected && !responded) {
+          forwardReq.destroy(Object.assign(new Error('Connect timeout'), { code: 'ETIMEDOUT' }));
+        }
+      }, 5_000);
+
+      forwardReq.on('socket', (socket) => {
+        socket.once('connect', () => {
+          connected = true;
+          clearTimeout(timer);
+          forwardReq.setTimeout(60_000, () => forwardReq.destroy());
+        });
+      });
+
+      forwardReq.on('error', (err: any) => {
+        clearTimeout(timer);
+        forwardReq.destroy();
+        if (!responded) {
+          if (RETRYABLE_CONNECT_ERRORS.has(err?.code) && index < targetIps.length) {
+            tryForward();
+            return;
+          }
+          if (!res.headersSent) res.writeHead(502);
+          res.end('Bad Gateway');
+        }
+      });
+
+      if (bodyBuffer.length > 0) {
+        forwardReq.write(bodyBuffer);
+      }
+      forwardReq.end();
+    };
+
+    tryForward();
   });
-
-  req.pipe(forwardReq);
 }
 
 export async function ensureEgressProxy(): Promise<string | null> {
