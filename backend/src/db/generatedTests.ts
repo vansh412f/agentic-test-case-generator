@@ -24,3 +24,4 @@ export function recordGeneratedTest(input: GeneratedTestInput) {
     return test;
   });
 }
+// Module component implementation.
