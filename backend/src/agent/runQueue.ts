@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { openJobChannel, publishJobEvent } from './jobEvents.ts';
 import { startDetachedRun, type QueuedJob, type RunOne } from './jobRunner.ts';
 import type { RequestLlmKeys } from '../llm/requestKeys.ts';
@@ -7,6 +8,12 @@ import { config } from '../config.ts';
 export interface ClientKey {
   visitorId: string | null;
   ipHash: string;
+}
+
+export interface ClaimToken {
+  id: string;
+  client: ClientKey;
+  claimedAt: number;
 }
 
 export interface RunGroup {
@@ -27,6 +34,7 @@ function matchesClient(a: ClientKey, b: ClientKey): boolean {
 export class RunQueue {
   private activeGroups: RunGroup[] = [];
   private waitingGroups: RunGroup[] = [];
+  private pendingClaims: Map<string, ClaimToken> = new Map();
   private runnerOverride?: (group: RunGroup, onSettled: () => void) => void;
   private runOneOverride?: RunOne;
 
@@ -50,6 +58,39 @@ export class RunQueue {
     );
   }
 
+  claim(client: ClientKey): ClaimToken | null {
+    const now = Date.now();
+    for (const [id, c] of this.pendingClaims.entries()) {
+      if (now - c.claimedAt > 60_000) {
+        this.pendingClaims.delete(id);
+      }
+    }
+
+    for (const group of this.activeGroups) {
+      if (matchesClient(group.client, client)) return null;
+    }
+    for (const group of this.waitingGroups) {
+      if (matchesClient(group.client, client)) return null;
+    }
+    for (const claim of this.pendingClaims.values()) {
+      if (matchesClient(claim.client, client)) return null;
+    }
+
+    const token: ClaimToken = {
+      id: randomUUID(),
+      client,
+      claimedAt: now,
+    };
+    this.pendingClaims.set(token.id, token);
+    return token;
+  }
+
+  releaseClaim(token: ClaimToken | string | null | undefined): void {
+    if (!token) return;
+    const id = typeof token === 'string' ? token : token.id;
+    this.pendingClaims.delete(id);
+  }
+
   activeOrQueuedFor(c: ClientKey): RunGroup | undefined {
     for (const group of this.activeGroups) {
       if (matchesClient(group.client, c)) return group;
@@ -60,7 +101,10 @@ export class RunQueue {
     return undefined;
   }
 
-  enqueue(g: RunGroup): number {
+  enqueue(g: RunGroup, claimToken?: ClaimToken | string | null): number {
+    if (claimToken) {
+      this.releaseClaim(claimToken);
+    }
     for (const job of g.jobs) {
       openJobChannel(job.id);
     }
