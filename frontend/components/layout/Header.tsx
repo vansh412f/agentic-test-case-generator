@@ -6,9 +6,11 @@ import clsx from 'clsx';
 import { toast } from 'sonner';
 import { ApiKeysPanel } from '@/components/settings/ApiKeysPanel';
 import { hasConfiguredKeys, getApiMode, setApiMode, type ApiMode } from '@/lib/api';
+import { useBackendMode } from '@/hooks/useBackendMode';
 
 export function Header() {
   const router = useRouter();
+  const { isLocal } = useBackendMode();
   const [keysOpen, setKeysOpen] = useState(false);
   const [hasKeys, setHasKeys] = useState(false);
   const [apiMode, setApiModeState] = useState<ApiMode>('hosted');
@@ -71,6 +73,12 @@ export function Header() {
           >
             API Keys
           </button>
+
+          {isLocal && (
+            <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium bg-slate-800/80 border border-slate-700 text-slate-300">
+              Local mode · limits off
+            </span>
+          )}
 
           {apiMode === 'local-agent' ? (
             <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold bg-info/10 border border-info/40 text-info">
