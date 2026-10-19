@@ -63,3 +63,4 @@ export function buildJobDetail(
     })),
   };
 }
+// Module component implementation.
