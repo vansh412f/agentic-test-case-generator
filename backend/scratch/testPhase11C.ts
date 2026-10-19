@@ -187,6 +187,41 @@ async function runTests() {
     const status = await budgetStatus({ visitorId: 'v1', ipHash: 'h1' });
     const expectedRemaining = Math.min(vLimit - 2, ipLimit - 2, gLimit - 5);
     assert.equal(status.remaining, expectedRemaining, `Remaining should be min(${vLimit}-2, ${ipLimit}-2, ${gLimit}-5) = ${expectedRemaining}`);
+    setBudgetCountProviderForTest(null);
+
+    // 1.6 countJobsForBudget excludes SERVER_RESTART and SERVER_SHUTDOWN
+    const { prisma } = await import('../src/db/client.ts');
+    const { randomUUID } = await import('node:crypto');
+    const testVisitorId = `v-budget-${randomUUID()}`;
+    const testIpHash = `h-budget-${randomUUID()}`;
+    const now = new Date();
+
+    const jNormal = randomUUID();
+    const jRestart = randomUUID();
+    const jShutdown = randomUUID();
+    const jQueuedCancelled = randomUUID();
+    const jByok = randomUUID();
+
+    try {
+      await prisma.job.createMany({
+        data: [
+          { id: jNormal, targetUrl: 'https://example.com/normal', status: 'completed', visitorId: testVisitorId, ipHash: testIpHash, usedOwnKeys: false, createdAt: now },
+          { id: jRestart, targetUrl: 'https://example.com/restart', status: 'failed', errorCode: 'SERVER_RESTART', visitorId: testVisitorId, ipHash: testIpHash, usedOwnKeys: false, createdAt: now },
+          { id: jShutdown, targetUrl: 'https://example.com/shutdown', status: 'failed', errorCode: 'SERVER_SHUTDOWN', visitorId: testVisitorId, ipHash: testIpHash, usedOwnKeys: false, createdAt: now },
+          { id: jQueuedCancelled, targetUrl: 'https://example.com/cancel', status: 'cancelled', startedAt: null, visitorId: testVisitorId, ipHash: testIpHash, usedOwnKeys: false, createdAt: now },
+          { id: jByok, targetUrl: 'https://example.com/byok', status: 'completed', visitorId: testVisitorId, ipHash: testIpHash, usedOwnKeys: true, createdAt: now },
+        ],
+      });
+
+      const counts = await countJobsForBudget(testVisitorId, testIpHash, now);
+      assert.equal(counts.visitor, 1, 'Only normal completed job should be counted for visitor; SERVER_RESTART, SERVER_SHUTDOWN, queued-cancelled, and BYOK must be excluded');
+      assert.equal(counts.ip, 1, 'Only normal completed job should be counted for IP; SERVER_RESTART, SERVER_SHUTDOWN, queued-cancelled, and BYOK must be excluded');
+      console.log('  ✓ countJobsForBudget excludes SERVER_RESTART and SERVER_SHUTDOWN');
+    } finally {
+      await prisma.job.deleteMany({
+        where: { id: { in: [jNormal, jRestart, jShutdown, jQueuedCancelled, jByok] } },
+      });
+    }
 
     setBudgetCountProviderForTest(null);
     resetReservationsForTest();
@@ -279,6 +314,179 @@ async function runTests() {
     assert.equal(queue.isFull(), false, 'Queue with 4 waiting is no longer full');
 
     queue.resetForTest();
+
+    // 3.2 Two groups queued back-to-back with different RequestLlmKeys:
+    // runOne reads active keys, asserts each group sees own keys, group 2 runs after group 1 settles,
+    // and keys never appear in any prisma write payload.
+    const { getRequestLlmKeys } = await import('../src/llm/requestKeys.ts');
+    const { prisma } = await import('../src/db/client.ts');
+
+    const writePayloads: any[] = [];
+    const models = ['job', 'agentStep', 'generatedTest', 'executionResult'] as const;
+    const writeOps = ['create', 'createMany', 'update', 'updateMany', 'upsert'] as const;
+    const originalFns = new Map<string, Function>();
+
+    for (const m of models) {
+      const delegate = (prisma as any)[m];
+      if (!delegate) continue;
+      for (const op of writeOps) {
+        if (typeof delegate[op] === 'function') {
+          const key = `${m}.${op}`;
+          const orig = delegate[op];
+          originalFns.set(key, orig);
+          delegate[op] = function (...args: any[]) {
+            writePayloads.push({ model: m, op, args });
+            return orig.apply(this, args);
+          };
+        }
+      }
+    }
+
+    try {
+      const queueIso = new RunQueue(1, 5);
+      const executionEvents: string[] = [];
+      let g1KeysSeen: any = null;
+      let g2KeysSeen: any = null;
+
+      let notifyAllDone: () => void = () => {};
+      const allDonePromise = new Promise<void>((resolve) => {
+        notifyAllDone = resolve;
+      });
+
+      queueIso.setRunOneForTest(async (job) => {
+        const activeKeys = getRequestLlmKeys();
+        if (job.id === 'job-iso-1') {
+          g1KeysSeen = activeKeys;
+          executionEvents.push('g1:start');
+          // Perform a simulated prisma write during job execution
+          await prisma.job.updateMany({
+            where: { id: '00000000-0000-0000-0000-000000000001' },
+            data: { status: 'generating' },
+          });
+          await new Promise((r) => setTimeout(r, 60));
+          executionEvents.push('g1:settle');
+          return { generatedTests: [] };
+        } else if (job.id === 'job-iso-2') {
+          g2KeysSeen = activeKeys;
+          assert.ok(executionEvents.includes('g1:settle'), 'Group 2 must only run after Group 1 has settled');
+          executionEvents.push('g2:start');
+          await prisma.job.updateMany({
+            where: { id: '00000000-0000-0000-0000-000000000002' },
+            data: { status: 'executing' },
+          });
+          await new Promise((r) => setTimeout(r, 20));
+          executionEvents.push('g2:settle');
+          notifyAllDone();
+          return { generatedTests: [] };
+        }
+      });
+
+      const secretKey1 = 'gsk_test_group1_iso_secret_abc123';
+      const secretKey2 = 'gsk_test_group2_iso_secret_xyz789';
+
+      const pGroup1 = queueIso.enqueue({
+        groupId: 'g-iso-1',
+        jobs: [{ id: 'job-iso-1', targetUrl: 'https://example.com/1' }],
+        keys: { groq: secretKey1 },
+        client: { visitorId: 'v-iso-1', ipHash: 'h-iso-1' },
+        enqueuedAt: Date.now(),
+      });
+      assert.equal(pGroup1, 0, 'First group should start immediately');
+
+      const pGroup2 = queueIso.enqueue({
+        groupId: 'g-iso-2',
+        jobs: [{ id: 'job-iso-2', targetUrl: 'https://example.com/2' }],
+        keys: { groq: secretKey2 },
+        client: { visitorId: 'v-iso-2', ipHash: 'h-iso-2' },
+        enqueuedAt: Date.now(),
+      });
+      assert.equal(pGroup2, 1, 'Second group should be queued waiting at position 1');
+
+      await allDonePromise;
+
+      assert.deepEqual(executionEvents, ['g1:start', 'g1:settle', 'g2:start', 'g2:settle']);
+      assert.equal(g1KeysSeen?.groq, secretKey1, 'Group 1 must see its own keys');
+      assert.equal(g2KeysSeen?.groq, secretKey2, 'Group 2 must see its own keys');
+
+      // Assert keys never appear in any prisma write payload
+      const payloadsStr = JSON.stringify(writePayloads);
+      assert.ok(!payloadsStr.includes(secretKey1), 'Group 1 keys must never appear in any prisma write payload');
+      assert.ok(!payloadsStr.includes(secretKey2), 'Group 2 keys must never appear in any prisma write payload');
+
+      queueIso.resetForTest();
+      console.log('  ✓ Queue BYOK isolation and no key leakage into prisma verified');
+    } finally {
+      for (const m of models) {
+        const delegate = (prisma as any)[m];
+        if (!delegate) continue;
+        for (const op of writeOps) {
+          const key = `${m}.${op}`;
+          const orig = originalFns.get(key);
+          if (orig) delegate[op] = orig;
+        }
+      }
+    }
+
+    // 3.3 queuePosition in GET /api/jobs/:id payload (runQueue.positionOf(id) ?? null)
+    const { runQueue } = await import('../src/agent/runQueue.ts');
+    const { buildJobDetail } = await import('../src/agent/jobDetail.ts');
+    runQueue.resetForTest();
+    runQueue.setRunnerForTest(() => {}); // Hold active group
+
+    const dummyJob = (id: string): LoadedJob => ({
+      id,
+      targetUrl: 'https://example.com',
+      status: 'pending',
+      errorCode: null,
+      errorMessage: null,
+      appMap: null,
+      testPlan: null,
+      createdAt: new Date(),
+      startedAt: null,
+      completedAt: null,
+      cancelledAt: null,
+      visitorId: 'v-pos',
+      usedOwnKeys: false,
+      runGroupId: null,
+      ipHash: 'h-pos',
+      agentSteps: [],
+      generatedTests: [],
+    });
+
+    // Enqueue 1 active and 1 waiting group into singleton runQueue
+    runQueue.enqueue({
+      groupId: 'g-pos-act',
+      jobs: [{ id: 'job-pos-act', targetUrl: 'https://example.com' }],
+      keys: {},
+      client: { visitorId: 'v-pos-1', ipHash: 'h-pos-1' },
+      enqueuedAt: Date.now(),
+    });
+    runQueue.enqueue({
+      groupId: 'g-pos-wait',
+      jobs: [{ id: 'job-pos-wait', targetUrl: 'https://example.com' }],
+      keys: {},
+      client: { visitorId: 'v-pos-2', ipHash: 'h-pos-2' },
+      enqueuedAt: Date.now(),
+    });
+
+    const activePos = runQueue.positionOf('job-pos-act') ?? null;
+    assert.equal(activePos, null, 'Active job must have queuePosition === null');
+
+    const waitingPos = runQueue.positionOf('job-pos-wait') ?? null;
+    assert.equal(waitingPos, 1, 'Waiting job must have queuePosition === 1');
+
+    const notQueuedPos = runQueue.positionOf('job-not-in-queue') ?? null;
+    assert.equal(notQueuedPos, null, 'Job not in queue must have queuePosition === null');
+
+    const detailWaiting = buildJobDetail(dummyJob('job-pos-wait'));
+    assert.equal(detailWaiting.queuePosition, 1, 'buildJobDetail must expose queuePosition for waiting job');
+
+    const detailActive = buildJobDetail(dummyJob('job-pos-act'));
+    assert.equal(detailActive.queuePosition, null, 'buildJobDetail must expose null queuePosition for active job');
+
+    runQueue.resetForTest();
+    console.log('  ✓ queuePosition computation and detail payload verified');
+
     console.log('  ✓ Queue mechanics passed');
   }
 
@@ -718,7 +926,14 @@ test('login', async ({ page }) => {
   console.log('\n=== All 9 Phase 11C test suites PASSED ===');
 }
 
-runTests().catch((err) => {
-  console.error('\n❌ Phase 11C Test Failure:', err);
-  process.exit(1);
-});
+runTests()
+  .catch((err) => {
+    console.error('\n❌ Phase 11C Test Failure:', err);
+    process.exit(1);
+  })
+  .finally(async () => {
+    try {
+      const { prisma } = await import('../src/db/client.ts');
+      await prisma.$disconnect();
+    } catch {}
+  });
