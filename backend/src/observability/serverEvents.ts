@@ -84,22 +84,81 @@ export function redactSensitiveText(text: string): string {
   return out;
 }
 
+function truncateAndRedact(val: unknown, depth = 0, seen = new WeakSet()): unknown {
+  if (val === null || val === undefined) return val;
+
+  if (typeof val === 'string') {
+    const redacted = redactSensitiveText(val);
+    return redacted.length > 500 ? redacted.slice(0, 500) + '…' : redacted;
+  }
+
+  if (typeof val === 'number' || typeof val === 'boolean') {
+    return val;
+  }
+
+  if (typeof val === 'bigint') {
+    return val.toString();
+  }
+
+  if (typeof val === 'symbol' || typeof val === 'function') {
+    return undefined;
+  }
+
+  if (depth >= 5) {
+    return '[MaxDepth]';
+  }
+
+  if (typeof val === 'object') {
+    if (seen.has(val)) {
+      return '[Circular]';
+    }
+    seen.add(val);
+
+    if (Array.isArray(val)) {
+      const capped = val.slice(0, 20);
+      return capped.map((item) => truncateAndRedact(item, depth + 1, seen));
+    }
+
+    if (val instanceof Error) {
+      return {
+        name: val.name,
+        message: redactSensitiveText(val.message.slice(0, 500)),
+        stack: val.stack ? redactSensitiveText(val.stack.slice(0, 500)) : undefined,
+      };
+    }
+
+    const res: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(val)) {
+      const pruned = truncateAndRedact(v, depth + 1, seen);
+      if (pruned !== undefined) {
+        res[k] = pruned;
+      }
+    }
+    return res;
+  }
+
+  return String(val);
+}
+
 export function redactContext(ctx: unknown): any {
   if (!ctx) return null;
   try {
-    const rawStr = JSON.stringify(ctx, (_k, v) => {
-      if (typeof v === 'string') {
-        return redactSensitiveText(v);
-      }
-      return v;
-    });
+    const structurallyPruned = truncateAndRedact(ctx, 0);
+    const jsonStr = JSON.stringify(structurallyPruned);
+    if (!jsonStr) return null;
 
-    const redactedStr = redactSensitiveText(rawStr);
-    // Hard cap at 4 KB
-    const cappedStr = redactedStr.length > 4096 ? redactedStr.slice(0, 4096) : redactedStr;
-    return JSON.parse(cappedStr);
+    if (jsonStr.length > 4096) {
+      return { _truncated: true, preview: jsonStr.slice(0, 3800) };
+    }
+
+    return JSON.parse(jsonStr);
   } catch {
-    return { error: 'Failed to serialize context' };
+    try {
+      const fallbackStr = String(ctx);
+      return { _truncated: true, preview: fallbackStr.slice(0, 3800) };
+    } catch {
+      return { error: 'Failed to serialize context' };
+    }
   }
 }
 

@@ -48,6 +48,7 @@ export const RUNNER_ERROR_STATUS: Record<RunnerErrorCode, number> = {
   BROWSER_ERROR: 500,
   NO_RESULTS: 500,
   PARSE_ERROR: 500,
+  RUNNER_UNAVAILABLE: 503,
 };
 
 const DATABASE_ERROR_STATUS: Record<DatabaseErrorCode, number> = { DATABASE_UNAVAILABLE: 503 };

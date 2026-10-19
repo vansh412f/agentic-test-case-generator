@@ -14,6 +14,13 @@ import { RunnerError } from './errors.ts';
 import { playwrightRunnerEnv } from './childEnv.ts';
 import { JobCancelledError } from '../agent/cancellation.ts';
 import { ensureEgressProxy } from '../security/egressProxy.ts';
+import { config } from '../config.ts';
+import {
+  buildRunnerArgv,
+  reapRunner,
+  isSelfCheckPassed,
+  withRunnerIsolationLock,
+} from './isolation.ts';
 
 export type FailureClass = 'finding' | 'locator' | 'timeout' | 'other';
 
@@ -159,114 +166,154 @@ export async function executeTests(
   files: Array<{ filename: string; code: string }>,
   options?: ExecuteTestsOptions,
 ): Promise<ExecutionResult> {
-  const runDir = path.join(RUNNER_TESTS_DIR, runId);
-  const resultsPath = path.join(runDir, 'results.json');
-  const outputDir = path.join(runDir, 'artifacts');
-  const executionTimeout = options?.timeoutMs ?? EXECUTION_TIMEOUT_MS;
-
-  try {
-    if (!fsSync.existsSync(PLAYWRIGHT_CLI)) {
-      throw new RunnerError('BROWSER_ERROR', `Playwright CLI not found at ${PLAYWRIGHT_CLI}`);
-    }
-
-    await ensureEgressProxy();
-
-    // 1. Write files to disk (replacing secret tokens with escaped real values)
-    await fs.mkdir(runDir, { recursive: true });
-    for (const file of files) {
-      let codeToWrite = file.code;
-      try {
-        codeToWrite = rewritePlaywrightImport(codeToWrite, '../../agt-capture.ts');
-      } catch (err) {
-        console.warn(`[Executor] Failed to rewrite import for ${file.filename}:`, err);
-      }
-      if (options?.secrets && options.secrets.size > 0) {
-        for (const [token, secretValue] of options.secrets.entries()) {
-          const escaped = JSON.stringify(secretValue).slice(1, -1);
-          codeToWrite = codeToWrite.split(token).join(escaped);
-        }
-      }
-      const filePath = path.join(runDir, file.filename);
-      await fs.writeFile(filePath, codeToWrite, 'utf-8');
-    }
-
-    // Ensure stale results.json from previous runs is removed
-    try {
-      await fs.rm(resultsPath, { force: true });
-    } catch {
-      // Ignore
-    }
-
-    if (options?.signal?.aborted) {
-      throw new JobCancelledError();
-    }
-
-    // 2. Invoke Playwright CLI (use forward slashes for filter regex compatibility)
-    const testArg = path.posix.join('tests', runId.replace(/\\/g, '/'));
-
-    await new Promise<void>((resolve, reject) => {
-      let childProcess: ReturnType<typeof execFile> | undefined;
-
-      const onAbort = () => {
-        if (childProcess && !childProcess.killed) {
-          if (process.platform === 'win32' && childProcess.pid) {
-            try {
-              execFile('taskkill', ['/pid', String(childProcess.pid), '/T', '/F'], () => {});
-            } catch {}
-          }
-          try {
-            childProcess.kill();
-          } catch {}
-        }
-      };
-      options?.signal?.addEventListener('abort', onAbort, { once: true });
-
-      childProcess = execFile(
-        process.execPath,
-        [PLAYWRIGHT_CLI, 'test', testArg, '--output', outputDir],
-        {
-          cwd: RUNNER_DIR,
-          timeout: executionTimeout,
-          env: playwrightRunnerEnv(resultsPath),
-          signal: options?.signal,
-        },
-        (err) => {
-          options?.signal?.removeEventListener('abort', onAbort);
-          if (options?.signal?.aborted) {
-            reject(new JobCancelledError());
-            return;
-          }
-          if (err) {
-            const errnoErr = err as NodeJS.ErrnoException;
-            if (err.killed || err.signal === 'SIGTERM') {
-              reject(
-                new RunnerError(
-                  'EXECUTION_TIMEOUT',
-                  `Execution timed out after ${executionTimeout}ms`,
-                  err,
-                ),
-              );
-              return;
-            }
-            if (typeof errnoErr.code === 'string') {
-              const msg = trimError(redactSecrets(err.message, options?.secrets));
-              reject(
-                new RunnerError(
-                  'BROWSER_ERROR',
-                  `Failed to spawn Playwright runner: ${msg}`,
-                  err,
-                ),
-              );
-              return;
-            }
-            // Normal test failure exit code (e.g. 1)
-            resolve();
-          } else {
-            resolve();
-          }
-        },
+  return withRunnerIsolationLock(async () => {
+    if (config.RUNNER_ISOLATION === 'uid' && !isSelfCheckPassed()) {
+      throw new RunnerError(
+        'RUNNER_UNAVAILABLE',
+        'Test execution is temporarily unavailable.',
       );
-    });
+    }
+
+    const runDir = path.join(RUNNER_TESTS_DIR, runId);
+    const resultsPath = path.join(runDir, 'results.json');
+    const outputDir = path.join(runDir, 'artifacts');
+    const homeDir = path.join(runDir, '.home');
+    const cacheDir = path.join(runDir, '.cache');
+    const executionTimeout = options?.timeoutMs ?? EXECUTION_TIMEOUT_MS;
+
+    try {
+      if (!fsSync.existsSync(PLAYWRIGHT_CLI)) {
+        throw new RunnerError('BROWSER_ERROR', `Playwright CLI not found at ${PLAYWRIGHT_CLI}`);
+      }
+
+      await ensureEgressProxy();
+
+      // 1. Write files to disk (replacing secret tokens with escaped real values)
+      await fs.mkdir(runDir, { recursive: true });
+      await fs.mkdir(homeDir, { recursive: true });
+      await fs.mkdir(cacheDir, { recursive: true });
+      if (config.RUNNER_ISOLATION === 'uid') {
+        try {
+          await fs.chmod(runDir, 0o2770);
+          await fs.chmod(homeDir, 0o2770);
+          await fs.chmod(cacheDir, 0o2770);
+        } catch {
+          // Ignore chmod error on unsupported filesystems
+        }
+      }
+
+      for (const file of files) {
+        let codeToWrite = file.code;
+        try {
+          codeToWrite = rewritePlaywrightImport(codeToWrite, '../../agt-capture.ts');
+        } catch (err) {
+          console.warn(`[Executor] Failed to rewrite import for ${file.filename}:`, err);
+        }
+        if (options?.secrets && options.secrets.size > 0) {
+          for (const [token, secretValue] of options.secrets.entries()) {
+            const escaped = JSON.stringify(secretValue).slice(1, -1);
+            codeToWrite = codeToWrite.split(token).join(escaped);
+          }
+        }
+        const filePath = path.join(runDir, file.filename);
+        await fs.writeFile(filePath, codeToWrite, 'utf-8');
+      }
+
+      // Ensure stale results.json from previous runs is removed
+      try {
+        await fs.rm(resultsPath, { force: true });
+      } catch {
+        // Ignore
+      }
+
+      if (options?.signal?.aborted) {
+        throw new JobCancelledError();
+      }
+
+      // 2. Invoke Playwright CLI (use forward slashes for filter regex compatibility)
+      const testArg = path.posix.join('tests', runId.replace(/\\/g, '/'));
+      const { file: runnerCmd, args: runnerArgs } = buildRunnerArgv(process.execPath, [
+        PLAYWRIGHT_CLI,
+        'test',
+        testArg,
+        '--output',
+        outputDir,
+      ]);
+
+      const runnerEnv = playwrightRunnerEnv(resultsPath, {
+        HOME: homeDir,
+        XDG_CACHE_HOME: cacheDir,
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        let childProcess: ReturnType<typeof execFile> | undefined;
+
+        const onAbort = () => {
+          if (config.RUNNER_ISOLATION === 'uid') {
+            void reapRunner();
+          } else {
+            if (childProcess && !childProcess.killed) {
+              if (process.platform === 'win32' && childProcess.pid) {
+                try {
+                  execFile('taskkill', ['/pid', String(childProcess.pid), '/T', '/F'], () => {});
+                } catch {}
+              }
+              try {
+                childProcess.kill();
+              } catch {}
+            }
+          }
+        };
+        options?.signal?.addEventListener('abort', onAbort, { once: true });
+
+        childProcess = execFile(
+          runnerCmd,
+          runnerArgs,
+          {
+            cwd: RUNNER_DIR,
+            timeout: executionTimeout,
+            env: runnerEnv,
+            signal: options?.signal,
+          },
+          async (err) => {
+            options?.signal?.removeEventListener('abort', onAbort);
+            if (options?.signal?.aborted) {
+              await reapRunner();
+              reject(new JobCancelledError());
+              return;
+            }
+            if (err) {
+              const errnoErr = err as NodeJS.ErrnoException;
+              if (err.killed || err.signal === 'SIGTERM') {
+                await reapRunner();
+                reject(
+                  new RunnerError(
+                    'EXECUTION_TIMEOUT',
+                    `Execution timed out after ${executionTimeout}ms`,
+                    err,
+                  ),
+                );
+                return;
+              }
+              if (typeof errnoErr.code === 'string') {
+                const msg = trimError(redactSecrets(err.message, options?.secrets));
+                reject(
+                  new RunnerError(
+                    'BROWSER_ERROR',
+                    `Failed to spawn Playwright runner: ${msg}`,
+                    err,
+                  ),
+                );
+                return;
+              }
+              // Normal test failure exit code (e.g. 1)
+              resolve();
+            } else {
+              resolve();
+            }
+          },
+        );
+      });
 
     // 3. Read and parse JSON reporter output
     let rawJson: string;
@@ -398,17 +445,23 @@ export async function executeTests(
 
     const success = results.length > 0 && results.every((r) => r.passed);
     return { success, results };
-  } finally {
-    // 5. Cleanup results.json and tests/<runId>/
-    try {
-      await fs.rm(resultsPath, { force: true });
-    } catch {
-      // Ignore cleanup error
+    } finally {
+      // 5. Cleanup: reapRunner BEFORE fs.rm
+      try {
+        await reapRunner();
+      } catch {
+        // Ignore reaper error
+      }
+      try {
+        await fs.rm(resultsPath, { force: true });
+      } catch {
+        // Ignore cleanup error
+      }
+      try {
+        await fs.rm(runDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup error
+      }
     }
-    try {
-      await fs.rm(runDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup error
-    }
-  }
+  });
 }

@@ -21,13 +21,18 @@ if (proxyUrl) {
       let targetHost = 'localhost';
       let targetPort = 0;
 
-      const first = args[0];
+      let first = args[0];
+      if (Array.isArray(first)) {
+        first = first[0];
+      }
+
       if (typeof first === 'object' && first !== null) {
         if (first.path) {
           isPipe = true;
         } else {
           targetPort = Number(first.port);
-          targetHost = String(first.host || first.hostname || 'localhost').toLowerCase();
+          const rawHost = first.host ?? first.hostname ?? 'localhost';
+          targetHost = String(rawHost).toLowerCase();
         }
       } else if (typeof first === 'string' && !/^\d+$/.test(first)) {
         isPipe = true;
@@ -42,11 +47,12 @@ if (proxyUrl) {
         return originalConnect.apply(this, args);
       }
 
+      targetHost = targetHost.replace(/^\[|\]$/g, '');
+
       const isLoopback =
         targetHost === '127.0.0.1' ||
         targetHost === 'localhost' ||
-        targetHost === '::1' ||
-        targetHost === '[::1]';
+        targetHost === '::1';
 
       if (isLoopback && targetPort === proxyPort) {
         return originalConnect.apply(this, args);

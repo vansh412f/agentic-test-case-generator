@@ -3,6 +3,7 @@ export const RUNNER_ERROR_CODES = [
   'BROWSER_ERROR',
   'NO_RESULTS',
   'PARSE_ERROR',
+  'RUNNER_UNAVAILABLE',
 ] as const;
 
 export type RunnerErrorCode = (typeof RUNNER_ERROR_CODES)[number];

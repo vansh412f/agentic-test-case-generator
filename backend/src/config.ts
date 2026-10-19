@@ -56,6 +56,24 @@ const configSchema = z.object({
   FRONTEND_ORIGIN: z.string().optional(),
   JOB_TOKEN_BUDGET: z.coerce.number().int().min(0).default(40000),
   RUNNER_TIMEOUT_SCALE: z.coerce.number().min(1).default(1),
+  RUNNER_ISOLATION: z.enum(['none', 'uid']).default('none'),
+  RUNNER_UID: z.coerce.number().int().default(1001),
+  RUNNER_GID: z.coerce.number().int().default(1002),
+  CORS_PREVIEW_ORIGIN_REGEX: z
+    .string()
+    .optional()
+    .refine(
+      (val) => {
+        if (!val) return true;
+        try {
+          new RegExp(val);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: 'CORS_PREVIEW_ORIGIN_REGEX must be a valid regular expression' },
+    ),
 });
 
 export type Config = z.infer<typeof configSchema> & {
@@ -74,6 +92,12 @@ const parseConfig = (): Config => {
   // Production guard: LOCAL_AGENT_MODE cannot be enabled in production
   if (result.data.NODE_ENV === 'production' && result.data.LOCAL_AGENT_MODE) {
     console.error('FATAL: LOCAL_AGENT_MODE cannot be enabled when NODE_ENV is production.');
+    process.exit(1);
+  }
+
+  // Production guard: RUNNER_ISOLATION must be 'uid' in production
+  if (result.data.NODE_ENV === 'production' && result.data.RUNNER_ISOLATION !== 'uid') {
+    console.error('FATAL: RUNNER_ISOLATION must be "uid" when NODE_ENV is production.');
     process.exit(1);
   }
 

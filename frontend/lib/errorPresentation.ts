@@ -216,6 +216,13 @@ export function presentError(
         raw,
       };
 
+    case 'RUNNER_UNAVAILABLE':
+      return {
+        title: 'Test runner unavailable',
+        body: 'Test execution is temporarily unavailable. Try again later.',
+        raw,
+      };
+
     default:
       return {
         title: 'Request failed',

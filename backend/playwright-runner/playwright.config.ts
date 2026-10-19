@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+process.umask(0o007);
+
 const proxyServer = process.env.AGT_EGRESS_PROXY;
 const proxy = proxyServer ? { server: proxyServer } : undefined;
 

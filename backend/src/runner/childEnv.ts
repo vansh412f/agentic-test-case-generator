@@ -28,10 +28,15 @@ export function childProcessEnv(extra: Record<string, string> = {}): NodeJS.Proc
   return { ...env, ...extra };
 }
 
-export function playwrightRunnerEnv(resultsPath: string): NodeJS.ProcessEnv {
+export function playwrightRunnerEnv(
+  resultsPath: string,
+  extraEnv: Record<string, string> = {},
+): NodeJS.ProcessEnv {
   const extra: Record<string, string> = {
     PLAYWRIGHT_JSON_OUTPUT_FILE: resultsPath,
     HEADLESS: config.HEADLESS ? 'true' : 'false', // explicit, from validated config
+    RUNNER_TIMEOUT_SCALE: String(config.RUNNER_TIMEOUT_SCALE),
+    ...extraEnv,
   };
 
   if (!config.LOCAL_AGENT_MODE && process.env.AGT_EGRESS_PROXY) {

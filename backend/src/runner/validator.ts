@@ -58,7 +58,7 @@ export async function validateTestCode(
   }
 
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
-  const tsconfigRunPath = path.join(RUNNER_DIR, `tsconfig.${runId}.json`);
+  const tsconfigRunPath = path.join(runDir, 'tsconfig.json');
 
   try {
     // 1. Write files to disk
@@ -68,11 +68,10 @@ export async function validateTestCode(
       await fs.writeFile(filePath, file.code, 'utf-8');
     }
 
-    // 2. Write per-run scoped tsconfig
-    const includePattern = `tests/${runId.replace(/\\/g, '/')}/**/*.ts`;
+    // 2. Write per-run scoped tsconfig inside runDir
     const runTsconfig = {
-      extends: './tsconfig.json',
-      include: [includePattern, 'playwright.config.ts'],
+      extends: '../../tsconfig.json',
+      include: ['./**/*.ts', '../../playwright.config.ts'],
     };
     await fs.writeFile(tsconfigRunPath, JSON.stringify(runTsconfig, null, 2), 'utf-8');
 

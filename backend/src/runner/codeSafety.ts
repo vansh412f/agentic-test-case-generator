@@ -1,11 +1,28 @@
 import ts from 'typescript';
 
 const ALLOWED_MODULES = new Set(['@playwright/test', '@axe-core/playwright']);
+
+const FORBIDDEN_NAMES = new Set([
+  'constructor',
+  'prototype',
+  '__proto__',
+  '__defineGetter__',
+  '__defineSetter__',
+  '__lookupGetter__',
+  '__lookupSetter__',
+  'caller',
+  'callee',
+  'arguments',
+]);
+
 const FORBIDDEN_IDENTIFIERS = new Set([
   'process', 'require', 'eval', 'Function', 'globalThis', 'module', '__dirname', '__filename',
   'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource',
   'chromium', 'firefox', 'webkit',
   'playwright', 'browser', 'browserType', 'browserName', 'launchOptions', 'connectOptions',
+  // Rules b additions:
+  'Reflect', 'Proxy', 'Object', 'Symbol', 'WebAssembly', 'SharedArrayBuffer', 'Atomics',
+  'WeakRef', 'FinalizationRegistry', 'setInterval',
 ]);
 
 const ALLOWED_PLAYWRIGHT_NAMED_IMPORTS = new Set([
@@ -18,6 +35,9 @@ const FORBIDDEN_PROPERTY_NAMES = new Set([
   'launch', 'launchPersistentContext', 'launchServer', 'connect', 'connectOverCDP',
   'browserType', 'browser', 'newBrowserCDPSession', 'route', 'routeFromHAR', 'unroute',
   'setExtraHTTPHeaders', 'addInitScript', 'exposeFunction', 'exposeBinding',
+  // Rules c additions:
+  'info', 'attach', 'newCDPSession', 'tracing', 'storageState', 'saveAs', 'pdf',
+  'addScriptTag', 'addStyleTag', 'video', 'setFiles',
 ]);
 
 const TEST_RUNNER_METHODS = new Set([
@@ -35,6 +55,19 @@ function isTestRunnerCall(expr: ts.Expression): boolean {
     }
   }
   return false;
+}
+
+function getFirstSegment(expr: ts.Expression): string | null {
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
+    return expr.text;
+  }
+  if (ts.isTemplateExpression(expr)) {
+    return expr.head.text;
+  }
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return getFirstSegment(expr.left);
+  }
+  return null;
 }
 
 export function findUnsafeConstructs(code: string, filename = 'test.spec.ts'): string[] {
@@ -116,6 +149,80 @@ export function findUnsafeConstructs(code: string, filename = 'test.spec.ts'): s
         problems.add('test.use() is not allowed in generated tests.');
       }
 
+      // Check setTimeout with string argument
+      if (ts.isIdentifier(node.expression) && node.expression.text === 'setTimeout') {
+        if (node.arguments.length > 0) {
+          const firstArg = node.arguments[0];
+          if (
+            ts.isStringLiteral(firstArg) ||
+            ts.isNoSubstitutionTemplateLiteral(firstArg) ||
+            ts.isTemplateExpression(firstArg) ||
+            ts.isBinaryExpression(firstArg)
+          ) {
+            problems.add('setTimeout with a string argument is not allowed in generated tests.');
+          }
+        }
+      }
+
+      // Check waitForEvent('download' | 'filechooser')
+      if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'waitForEvent'
+      ) {
+        if (node.arguments.length > 0) {
+          const firstArg = node.arguments[0];
+          if (ts.isStringLiteral(firstArg) || ts.isNoSubstitutionTemplateLiteral(firstArg)) {
+            if (firstArg.text === 'download' || firstArg.text === 'filechooser') {
+              problems.add(`waitForEvent('${firstArg.text}') is not allowed in generated tests.`);
+            }
+          }
+        }
+      }
+
+      // Check setInputFiles: first argument must be an object literal or an array literal of object literals
+      if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'setInputFiles'
+      ) {
+        const firstArg = node.arguments[0];
+        let valid = false;
+        if (firstArg && ts.isObjectLiteralExpression(firstArg)) {
+          valid = true;
+        } else if (firstArg && ts.isArrayLiteralExpression(firstArg)) {
+          if (firstArg.elements.length > 0 && firstArg.elements.every((el) => ts.isObjectLiteralExpression(el))) {
+            valid = true;
+          }
+        }
+        if (!valid) {
+          problems.add(
+            'setInputFiles: first argument must be an object literal or an array literal of object literals',
+          );
+        }
+      }
+
+      // Check page.goto / frame.goto
+      if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'goto'
+      ) {
+        const firstArg = node.arguments[0];
+        if (!firstArg) {
+          problems.add('goto target must start with http:// or https://');
+        } else if (ts.isStringLiteral(firstArg)) {
+          if (/^\s*file:/i.test(firstArg.text)) {
+            problems.add('file: URLs are not allowed; tests may only visit the target application.');
+          }
+        } else {
+          const firstSegment = getFirstSegment(firstArg);
+          if (
+            !firstSegment ||
+            (!firstSegment.startsWith('http://') && !firstSegment.startsWith('https://'))
+          ) {
+            problems.add('goto target must start with http:// or https://');
+          }
+        }
+      }
+
       // Check test(), test.describe(), test.beforeEach(), etc. callbacks
       if (isTestRunnerCall(node.expression)) {
         for (const arg of node.arguments) {
@@ -125,8 +232,11 @@ export function findUnsafeConstructs(code: string, filename = 'test.spec.ts'): s
         }
       }
     } else if (ts.isPropertyAccessExpression(node)) {
-      if (FORBIDDEN_PROPERTY_NAMES.has(node.name.text)) {
-        problems.add(`Access to property "${node.name.text}" is not allowed.`);
+      const propName = node.name.text;
+      if (FORBIDDEN_PROPERTY_NAMES.has(propName)) {
+        problems.add(`Access to property "${propName}" is not allowed.`);
+      } else if (propName.startsWith('_')) {
+        problems.add(`Access to private property "${propName}" is not allowed.`);
       }
     } else if (ts.isElementAccessExpression(node)) {
       if (!ts.isNumericLiteral(node.argumentExpression)) {
@@ -138,18 +248,31 @@ export function findUnsafeConstructs(code: string, filename = 'test.spec.ts'): s
       const propName = ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : null;
       if (propName === 'proxy' || propName === 'launchOptions') {
         problems.add(`Setting "${propName}" is not allowed in generated tests.`);
+      } else if (propName === 'path') {
+        problems.add('Property "path" in object literals is not allowed.');
+      } else if (propName && propName.startsWith('_')) {
+        problems.add(`Property "${propName}" starting with "_" is not allowed.`);
       }
-    } else if (ts.isIdentifier(node) && FORBIDDEN_IDENTIFIERS.has(node.text)) {
-      const parent = node.parent;
-      const isPropertyName =
-        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-        (ts.isPropertyAssignment(parent) && parent.name === node);
-      if (!isPropertyName) problems.add(`Use of "${node.text}" is not allowed in generated tests.`);
+    } else if (ts.isIdentifier(node)) {
+      if (FORBIDDEN_NAMES.has(node.text)) {
+        problems.add(`Use of "${node.text}" is not allowed in generated tests.`);
+      } else if (FORBIDDEN_IDENTIFIERS.has(node.text)) {
+        const parent = node.parent;
+        const isPropertyName =
+          (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+          (ts.isPropertyAssignment(parent) && parent.name === node);
+        if (!isPropertyName) problems.add(`Use of "${node.text}" is not allowed in generated tests.`);
+      }
     } else if (
-      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node)) &&
-      /^\s*file:/i.test(node.text)
+      ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isTemplateHead(node)
     ) {
-      problems.add('file: URLs are not allowed; tests may only visit the target application.');
+      if (FORBIDDEN_NAMES.has(node.text)) {
+        problems.add(`Use of "${node.text}" is not allowed in generated tests.`);
+      } else if (/^\s*file:/i.test(node.text)) {
+        problems.add('file: URLs are not allowed; tests may only visit the target application.');
+      }
     }
     ts.forEachChild(node, visit);
   };

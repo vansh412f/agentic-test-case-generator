@@ -13,7 +13,22 @@ import { recordServerEvent } from './observability/serverEvents.ts';
 import { CrawlError } from './crawler/crawlErrors.ts';
 import { toHttpError } from './api/errors.ts';
 
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { selfCheck } from './runner/isolation.ts';
+
 const bootedAt = new Date();
+
+const isDirectRun = Boolean(
+  process.argv[1] &&
+    (path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) ||
+      process.argv[1].endsWith('index.ts') ||
+      process.argv[1].endsWith('index.js')),
+);
+
+if (isDirectRun && config.RUNNER_ISOLATION === 'uid') {
+  await selfCheck();
+}
 
 const app = express();
 
@@ -38,7 +53,47 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// CORS middleware driven by FRONTEND_ORIGIN allowlist (comma-separated), Vercel previews, and localhost.
+export interface IsAllowedOriginOptions {
+  nodeEnv: string;
+  localMode: boolean;
+  frontendOrigins: string[] | string;
+  previewRegex?: string | RegExp | null;
+}
+
+export function isAllowedOrigin(origin: string, options: IsAllowedOriginOptions): boolean {
+  if (!origin) return false;
+
+  const allowedOrigins = Array.isArray(options.frontendOrigins)
+    ? options.frontendOrigins
+    : (options.frontendOrigins || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+  if (allowedOrigins.includes(origin)) {
+    return true;
+  }
+
+  if (options.previewRegex) {
+    const regex =
+      typeof options.previewRegex === 'string'
+        ? new RegExp(options.previewRegex)
+        : options.previewRegex;
+    if (regex.test(origin)) {
+      return true;
+    }
+  }
+
+  if (options.localMode || options.nodeEnv !== 'production') {
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// CORS middleware driven by FRONTEND_ORIGIN allowlist (comma-separated), preview regex, and localhost.
 // Needed in production for direct SSE stream fallback (WP6) and in local agent mode for PNA.
 app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.header('origin');
@@ -47,28 +102,25 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     return;
   }
 
-  const allowedOrigins = (config.FRONTEND_ORIGIN || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const allowed = isAllowedOrigin(origin, {
+    nodeEnv: config.NODE_ENV,
+    localMode: config.LOCAL_AGENT_MODE,
+    frontendOrigins: config.FRONTEND_ORIGIN || '',
+    previewRegex: config.CORS_PREVIEW_ORIGIN_REGEX,
+  });
 
-  const isAllowedOrigin =
-    allowedOrigins.includes(origin) ||
-    /^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/.test(origin) ||
-    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-
-  if (isAllowedOrigin) {
+  if (allowed) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     res.setHeader(
       'Access-Control-Allow-Headers',
-      'Content-Type, X-Visitor-Id, X-Groq-Api-Key, X-Gemini-Api-Key, X-Admin-Secret',
+      'Content-Type, X-Visitor-Id, X-Groq-Api-Key, X-Gemini-Api-Key',
     );
     res.setHeader('Access-Control-Expose-Headers', 'X-Visitor-Id');
   }
 
   if (req.method === 'OPTIONS') {
-    if (isAllowedOrigin) {
+    if (allowed) {
       if (config.LOCAL_AGENT_MODE) {
         res.setHeader('Access-Control-Allow-Private-Network', 'true');
       }
@@ -129,33 +181,40 @@ app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, r
   });
 });
 
-const server = app.listen(config.PORT, () => {
-  console.log(`Server running on http://localhost:${config.PORT}`);
-  console.log(`Environment: ${config.NODE_ENV}`);
-  void reconcileOrphanedJobs(bootedAt);
+let server: ReturnType<typeof app.listen> | undefined;
 
-  if (!config.LOCAL_AGENT_MODE) {
-    const retentionTimer = setTimeout(() => {
-      void runRetention();
-      const dailyTimer = setInterval(() => {
+if (isDirectRun) {
+  server = app.listen(config.PORT, () => {
+    console.log(`Server running on http://localhost:${config.PORT}`);
+    console.log(`Environment: ${config.NODE_ENV}`);
+    void reconcileOrphanedJobs(bootedAt);
+
+    if (!config.LOCAL_AGENT_MODE) {
+      const retentionTimer = setTimeout(() => {
         void runRetention();
-      }, 24 * 60 * 60 * 1000);
-      dailyTimer.unref();
-    }, 60_000);
-    retentionTimer.unref();
-  }
-});
+        const dailyTimer = setInterval(() => {
+          void runRetention();
+        }, 24 * 60 * 60 * 1000);
+        dailyTimer.unref();
+      }, 60_000);
+      retentionTimer.unref();
+    }
+  });
 
-process.on('unhandledRejection', (reason) => {
-  console.error('[Fatal] Unhandled promise rejection:', reason instanceof Error ? reason.message : String(reason));
-  recordServerEvent('error', 'process:unhandledRejection', reason);
-});
+  process.on('unhandledRejection', (reason) => {
+    console.error('[Fatal] Unhandled promise rejection:', reason instanceof Error ? reason.message : String(reason));
+    recordServerEvent('error', 'process:unhandledRejection', reason);
+  });
 
-process.on('uncaughtException', (error) => {
-  console.error('[Fatal] Uncaught exception:', error instanceof Error ? error.message : String(error));
-  recordServerEvent('error', 'process:uncaughtException', error);
-  shutdown('uncaughtException');
-});
+  process.on('uncaughtException', (error) => {
+    console.error('[Fatal] Uncaught exception:', error instanceof Error ? error.message : String(error));
+    recordServerEvent('error', 'process:uncaughtException', error);
+    shutdown('uncaughtException');
+  });
+
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
+}
 
 let shuttingDown = false;
 async function failInFlightJobs(): Promise<void> {
@@ -184,19 +243,20 @@ function shutdown(signal: string): void {
   void failInFlightJobs().finally(() => {
     // SSE connections never go idle; without this server.close() waits for the deadline.
     closeAllJobStreams();
-    server.close((error) => {
-      // Detached pipelines + Chromium children keep the event loop alive, so exit explicitly.
-      void prisma.$disconnect()
-        .catch((cause: unknown) => {
-          console.error('Database disconnect failed:', cause instanceof Error ? cause.message : String(cause));
-        })
-        .finally(() => process.exit(error ? 1 : 0));
-    });
-    server.closeIdleConnections();
+    if (server) {
+      server.close((error) => {
+        // Detached pipelines + Chromium children keep the event loop alive, so exit explicitly.
+        void prisma.$disconnect()
+          .catch((cause: unknown) => {
+            console.error('Database disconnect failed:', cause instanceof Error ? cause.message : String(cause));
+          })
+          .finally(() => process.exit(error ? 1 : 0));
+      });
+      server.closeIdleConnections();
+    } else {
+      process.exit(0);
+    }
   });
 }
-
-process.once('SIGTERM', () => shutdown('SIGTERM'));
-process.once('SIGINT', () => shutdown('SIGINT'));
 
 export default app;

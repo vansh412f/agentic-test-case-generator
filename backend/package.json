@@ -24,6 +24,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.1",
     "playwright": "^1.63.0",
+    "prisma": "6.19.3",
     "prismjs": "1.30.0",
     "typescript": "5.9.3",
     "zod": "^4.6.7"
@@ -33,7 +34,6 @@
     "@types/compression": "^1.8.1",
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.4",
-    "prisma": "6.19.3",
     "tsx": "^4.19.3"
   }
 }
