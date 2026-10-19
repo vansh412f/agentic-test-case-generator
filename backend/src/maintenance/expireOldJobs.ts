@@ -1,5 +1,6 @@
 import { prisma } from '../db/client.ts';
 import { config } from '../config.ts';
+import { recordServerEvent } from '../observability/serverEvents.ts';
 
 export async function runRetention(): Promise<{ deletedJobs: number; truncatedAttempts: number }> {
   if (config.LOCAL_AGENT_MODE) {
@@ -28,6 +29,7 @@ export async function runRetention(): Promise<{ deletedJobs: number; truncatedAt
     }
   } catch (err) {
     console.warn(`[Retention] Failed to delete expired jobs: ${err instanceof Error ? err.message : String(err)}`);
+    recordServerEvent('warn', 'retention:jobs', err);
   }
 
   let truncatedAttempts = 0;
@@ -48,6 +50,20 @@ export async function runRetention(): Promise<{ deletedJobs: number; truncatedAt
     }
   } catch (err) {
     console.warn(`[Retention] Failed to truncate intermediate attempt code: ${err instanceof Error ? err.message : String(err)}`);
+    recordServerEvent('warn', 'retention:intermediate_code', err);
+  }
+
+  try {
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    const deleteEvents = await prisma.serverEvent.deleteMany({
+      where: { createdAt: { lt: fourteenDaysAgo } },
+    });
+    if (deleteEvents.count > 0) {
+      console.log(`[Retention] Deleted ${deleteEvents.count} server event(s) older than 14 days.`);
+    }
+  } catch (err) {
+    console.warn(`[Retention] Failed to delete expired server events: ${err instanceof Error ? err.message : String(err)}`);
+    recordServerEvent('warn', 'retention:server_events', err);
   }
 
   return { deletedJobs, truncatedAttempts };

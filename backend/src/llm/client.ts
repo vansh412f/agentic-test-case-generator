@@ -9,6 +9,7 @@ import type { LlmProviderName } from './providers.config.ts';
 import { PROVIDER_REGISTRY } from './providers/index.ts';
 import { hasAnyRequestKey, llmKeyOverride } from './requestKeys.ts';
 import { JobCancelledError } from '../agent/cancellation.ts';
+import { recordServerEvent } from '../observability/serverEvents.ts';
 
 interface LlmCallLog {
   timestamp: string;
@@ -238,9 +239,12 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
     }
   }
 
+  const allFailedMsg = `All ${effectiveProviders.length} provider(s) exhausted. Failures: ${JSON.stringify(collectedFailures)}`;
+  recordServerEvent('error', 'llm:all_providers_failed', allFailedMsg);
+
   throw new LlmError(
     'ALL_PROVIDERS_FAILED',
-    `All ${effectiveProviders.length} provider(s) exhausted. Failures: ${JSON.stringify(collectedFailures)}`,
+    allFailedMsg,
     collectedFailures,
   );
 }

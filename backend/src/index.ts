@@ -9,6 +9,7 @@ import { publishJobEvent } from './agent/jobEvents.ts';
 import { closeAllJobStreams } from './api/jobStream.ts';
 import { reconcileOrphanedJobs } from './maintenance/reconcileJobs.ts';
 import { runRetention } from './maintenance/expireOldJobs.ts';
+import { recordServerEvent } from './observability/serverEvents.ts';
 
 const bootedAt = new Date();
 
@@ -112,10 +113,15 @@ const server = app.listen(config.PORT, () => {
   }
 });
 
-// Detached pipelines (Phase 8) make an unhandled rejection a process-killer.
-// Every detached chain has its own .catch; this is defense in depth.
 process.on('unhandledRejection', (reason) => {
   console.error('[Fatal] Unhandled promise rejection:', reason instanceof Error ? reason.message : String(reason));
+  recordServerEvent('error', 'process:unhandledRejection', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[Fatal] Uncaught exception:', error instanceof Error ? error.message : String(error));
+  recordServerEvent('error', 'process:uncaughtException', error);
+  shutdown('uncaughtException');
 });
 
 let shuttingDown = false;

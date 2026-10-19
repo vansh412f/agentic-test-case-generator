@@ -9,6 +9,7 @@ import type { AppMap } from './types.ts';
 
 import { assertPublicTarget } from '../security/netPolicy.ts';
 import { ensureEgressProxy } from '../security/egressProxy.ts';
+import { recordServerEvent } from '../observability/serverEvents.ts';
 
 function assertCrawlableUrl(url: string): void {
   let parsed: URL;
@@ -40,6 +41,7 @@ async function launchBrowser(): Promise<Browser> {
   } catch (err) {
     // Launch errors embed executable paths / missing libs: log, never return.
     console.error(`[Crawler] Browser launch failed: ${err instanceof Error ? err.message : String(err)}`);
+    recordServerEvent('error', 'crawler:launch', err);
     throw new CrawlError('BROWSER_LAUNCH_FAILED', 'The crawler browser could not start. Please retry shortly.', err);
   }
 }

@@ -4,6 +4,7 @@ import dns from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { config } from '../config.ts';
 import { isPublicAddress } from './netPolicy.ts';
+import { recordServerEvent } from '../observability/serverEvents.ts';
 
 let proxyServer: http.Server | null = null;
 let proxyPort = 0;
@@ -345,14 +346,16 @@ export async function ensureEgressProxy(): Promise<string | null> {
 
   startPromise = new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      handleHttpRequest(req, res).catch(() => {
+      handleHttpRequest(req, res).catch((err) => {
+        recordServerEvent('error', 'egress_proxy:http', err);
         if (!res.headersSent) res.writeHead(500);
         res.end('Internal Proxy Error');
       });
     });
 
     server.on('connect', (req, clientSocket, head) => {
-      handleConnect(req, clientSocket, head).catch(() => {
+      handleConnect(req, clientSocket, head).catch((err) => {
+        recordServerEvent('error', 'egress_proxy:connect', err);
         clientSocket.write('HTTP/1.1 500 Internal Error\r\n\r\n');
         clientSocket.destroy();
       });

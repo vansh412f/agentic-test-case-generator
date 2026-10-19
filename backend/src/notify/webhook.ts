@@ -4,6 +4,7 @@ import { isIP } from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../config.ts';
 import { WEBHOOK_RETRY_DELAY_MS, WEBHOOK_TIMEOUT_MS } from '../agent/run.config.ts';
+import { recordServerEvent } from '../observability/serverEvents.ts';
 
 export interface WebhookTarget { url: string; secret: string; }
 
@@ -89,6 +90,15 @@ export async function deliverJobWebhook(target: WebhookTarget, payload: JobWebho
     await sleep(WEBHOOK_RETRY_DELAY_MS);
     outcome = await postOnce(target, body, deliveryId);
   }
-  if (outcome !== 'ok') console.warn(`[Webhook] ${payload.jobId}: delivery to ${url.host} failed (${outcome}).`);
+  if (outcome !== 'ok') {
+    console.warn(`[Webhook] ${payload.jobId}: delivery to ${url.host} failed (${outcome}).`);
+    recordServerEvent(
+      'warn',
+      'webhook:delivery',
+      `Webhook delivery to ${url.host} failed (${outcome})`,
+      { jobId: payload.jobId },
+      payload.jobId,
+    );
+  }
 }
 // Module component implementation.

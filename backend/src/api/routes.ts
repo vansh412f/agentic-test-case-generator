@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import jobsRouter from './jobsRoutes.ts';
+import adminRouter from './adminRoutes.ts';
 import { CrawlRequestSchema, GenerateRequestSchema } from './schemas.ts';
 import { crawlPage } from '../crawler/pageCrawler.ts';
 import type { QueuedJob } from '../agent/jobRunner.ts';
@@ -33,6 +34,7 @@ import { prisma } from '../db/client.ts';
 const router = Router();
 router.use(visitorMiddleware);
 router.use('/jobs', jobsRouter);
+router.use('/admin', adminRouter);
 
 router.get('/health', (_req, res) => {
   res.json({ ok: true, uptimeSec: Math.floor(process.uptime()) });
