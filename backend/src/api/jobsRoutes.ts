@@ -78,7 +78,9 @@ router.get('/:id', async (req, res) => {
         },
       });
     }
-    res.json(buildJobDetail(job as any, { viewerVisitorId: req.visitorId, groupRemainingJobs }));
+    const detail = buildJobDetail(job as any, { viewerVisitorId: req.visitorId, groupRemainingJobs });
+    const queuePosition = runQueue.positionOf(job.id) ?? null;
+    res.json({ ...detail, queuePosition });
   } catch (error) {
     respondWithError(res, error);
   }
