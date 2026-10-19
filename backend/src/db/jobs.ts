@@ -31,7 +31,10 @@ export async function createPendingJobs(
 }
 
 export function markJobStarted(id: string) {
-  return prisma.job.update({ where: { id }, data: { status: 'crawling', startedAt: new Date() } });
+  return prisma.job.updateMany({
+    where: { id, status: { notIn: ['completed', 'failed', 'cancelled'] } },
+    data: { status: 'crawling', startedAt: new Date() },
+  });
 }
 
 export function failNonTerminalJobs(
@@ -58,26 +61,38 @@ export async function getJobStatus(id: string) {
 }
 
 export function updateJobStatus(id: string, status: JobStatus) {
-  return prisma.job.update({ where: { id }, data: { status } });
+  return prisma.job.updateMany({
+    where: { id, status: { notIn: ['completed', 'failed', 'cancelled'] } },
+    data: { status },
+  });
 }
 
 export function setAppMap(id: string, appMap: AppMap) {
-  return prisma.job.update({ where: { id }, data: { appMap: toDatabaseJson(appMap), status: 'planning' } });
+  return prisma.job.updateMany({
+    where: { id, status: { notIn: ['completed', 'failed', 'cancelled'] } },
+    data: { appMap: toDatabaseJson(appMap), status: 'planning' },
+  });
 }
 
 export function setTestPlan(id: string, testPlan: TestPlan) {
-  return prisma.job.update({ where: { id }, data: { testPlan: toDatabaseJson(testPlan), status: 'generating' } });
+  return prisma.job.updateMany({
+    where: { id, status: { notIn: ['completed', 'failed', 'cancelled'] } },
+    data: { testPlan: toDatabaseJson(testPlan), status: 'generating' },
+  });
 }
 
 export function completeJob(id: string) {
-  return prisma.job.update({
-    where: { id },
+  return prisma.job.updateMany({
+    where: { id, status: { notIn: ['completed', 'failed', 'cancelled'] } },
     data: { status: 'completed', completedAt: new Date(), errorCode: null, errorMessage: null },
   });
 }
 
 export function failJob(id: string, errorCode: string, errorMessage: string) {
-  return prisma.job.update({ where: { id }, data: { status: 'failed', errorCode, errorMessage, completedAt: new Date() } });
+  return prisma.job.updateMany({
+    where: { id, status: { notIn: ['completed', 'failed', 'cancelled'] } },
+    data: { status: 'failed', errorCode, errorMessage, completedAt: new Date() },
+  });
 }
 
 export async function getJobById(id: string) {
