@@ -115,7 +115,10 @@ router.post('/:id/cancel', async (req, res) => {
   }
 
   try {
-    const job = await getJobById(parsedParams.data.id);
+    const job = await prisma.job.findUnique({
+      where: { id: parsedParams.data.id },
+      select: { id: true, visitorId: true, status: true, runGroupId: true },
+    });
     if (!job || !req.visitorId || job.visitorId !== req.visitorId) {
       throw new JobError('JOB_NOT_FOUND', 'Job not found.');
     }
