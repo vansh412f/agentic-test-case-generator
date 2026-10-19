@@ -9,3 +9,4 @@ export function generateDiffHtml(before: string, after: string, attempt: number)
   }).join('');
   return `<pre class="diff">${lines}</pre>`;
 }
+// Module component implementation.
