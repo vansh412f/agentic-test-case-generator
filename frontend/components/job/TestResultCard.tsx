@@ -17,6 +17,7 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
 
   const isFailed = test.finalStatus === 'failed';
   const isGaveUp = test.finalStatus === 'gave_up';
+  const isNeedsReview = test.finalStatus === 'needs_review';
   const isCorrected = test.executionResults.some((r) => r.corrected);
   const originalAttempt = test.executionResults.find((r) => r.attemptNumber === 1);
   const lastFailedAttempt = [...test.executionResults]
@@ -29,6 +30,7 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
     originalAttempt.code !== test.finalCode;
   const hasError =
     isFailed ||
+    isNeedsReview ||
     test.executionResults.some((r) => r.validationPassed === false) ||
     Boolean(lastFailedAttempt?.executionError) ||
     isGaveUp;
@@ -36,7 +38,7 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
   const title = plannedCase?.title ?? test.filename;
   const failureCategory =
     lastFailedAttempt?.failureClass ??
-    (lastFailedAttempt?.validationErrors ? 'VALIDATION' : isFailed ? 'finding' : isGaveUp ? 'gave_up' : null);
+    (lastFailedAttempt?.validationErrors ? 'VALIDATION' : isFailed ? 'finding' : isGaveUp ? 'gave_up' : isNeedsReview ? 'needs_review' : null);
 
   const errorString =
     lastFailedAttempt?.executionError ??
@@ -45,6 +47,32 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
       : lastFailedAttempt?.validationErrors
         ? JSON.stringify(lastFailedAttempt.validationErrors, null, 2)
         : 'Assertion or locator failure encountered during execution.');
+
+  const fc = (test.failureContext ?? lastFailedAttempt?.failureContext) as
+    | { finalUrl?: string; canonicalUrl?: string }
+    | undefined;
+  let finalPath = 'another page';
+  if (fc?.finalUrl) {
+    try {
+      const u = new URL(fc.finalUrl);
+      finalPath = u.pathname + (u.hash && u.hash.startsWith('#/') ? u.hash : '');
+    } catch {
+      finalPath = fc.finalUrl;
+    }
+  }
+
+  const fs = (test.failureSummary ?? lastFailedAttempt?.failureSummary) as
+    | {
+        kind?: string;
+        headline?: string;
+        expected?: string;
+        received?: string;
+        target?: string;
+        line?: number;
+        codeFrame?: string;
+      }
+    | undefined;
+  const target = fs?.target ?? 'an element';
 
   return (
     <article className="test-case">
@@ -58,11 +86,20 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
           aria-hidden="true"
           className={cn('chev h-4 w-4 shrink-0', open && 'rotated')}
         />
-        <span className={cn('test-status-icon shrink-0', isFailed && 'failed', isGaveUp && 'gave-up')}>
+        <span
+          className={cn(
+            'test-status-icon shrink-0',
+            isFailed && 'failed',
+            isGaveUp && 'gave-up',
+            isNeedsReview && 'needs-review',
+          )}
+        >
           {isFailed ? (
             '!'
           ) : isGaveUp ? (
             <Warning aria-hidden="true" className="h-3.5 w-3.5" />
+          ) : isNeedsReview ? (
+            '?'
           ) : (
             <Check aria-hidden="true" className="h-3.5 w-3.5" />
           )}
@@ -70,7 +107,7 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
         <span className="test-name">
           <strong>
             {title}
-            {(plannedCase?.origin === 'baseline' || test.testCaseId.startsWith('smoke-')) && (
+            {plannedCase?.origin === 'baseline' || test.testCaseId.startsWith('smoke-') ? (
               <span
                 style={{
                   color: '#0369a1',
@@ -82,10 +119,40 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
                   marginLeft: '8px',
                 }}
               >
-                Baseline · no AI
+                Built-in check
+              </span>
+            ) : (
+              <span
+                style={{
+                  color: '#4f46e5',
+                  background: '#eef2ff',
+                  borderRadius: '4px',
+                  padding: '2px 6px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  marginLeft: '8px',
+                }}
+              >
+                Generated scenario
               </span>
             )}
           </strong>
+          {isNeedsReview && (
+            <div
+              style={{
+                marginTop: '4px',
+                padding: '4px 8px',
+                background: '#f3f4f6',
+                border: '1px solid #e5e7eb',
+                borderRadius: '4px',
+                color: '#4b5563',
+                fontSize: '11px',
+                lineHeight: '1.4',
+              }}
+            >
+              The page moved to <strong>{finalPath}</strong> before this check ran. It looks for <strong>{target}</strong> from the previous page, so the expectation is likely wrong, not your site.
+            </div>
+          )}
           <small>
             {test.totalAttempts} {test.totalAttempts === 1 ? 'attempt' : 'attempts'}
             {isCorrected ? ' · auto-corrected' : ''}
@@ -132,7 +199,7 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
                   Secret values were injected at run time and are not stored.
                 </div>
               )}
-              <CodeViewer code={test.finalCode} filename={test.filename} />
+              <CodeViewer code={test.finalCode} filename={test.filename} highlightLine={fs?.line} />
             </>
           ) : null}
 
@@ -148,9 +215,45 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
               <span>
                 FAILURE CATEGORY · <b>{failureCategory?.toUpperCase() ?? 'FINDING'}</b>
               </span>
-              <code>{errorString}</code>
-              <p>
-                {failureCategory === 'finding'
+              {fs?.headline && (
+                <div style={{ margin: '8px 0', fontSize: '13px', fontWeight: 600, color: '#b91c1c' }}>
+                  {fs.headline}
+                </div>
+              )}
+              {(fs?.expected || fs?.received) && (
+                <div style={{ margin: '6px 0', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  {fs.expected && (
+                    <div>
+                      <span style={{ fontWeight: 600, color: '#047857' }}>Expected: </span>
+                      <code style={{ background: '#f0fdf4', padding: '1px 4px', borderRadius: '3px', color: '#065f46' }}>{fs.expected}</code>
+                    </div>
+                  )}
+                  {fs.received && (
+                    <div>
+                      <span style={{ fontWeight: 600, color: '#b91c1c' }}>Received: </span>
+                      <code style={{ background: '#fef2f2', padding: '1px 4px', borderRadius: '3px', color: '#991b1b' }}>{fs.received}</code>
+                    </div>
+                  )}
+                </div>
+              )}
+              {fs?.line && (
+                <div style={{ marginTop: '10px' }}>
+                  <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>
+                    Failing line ({fs.line}):
+                  </div>
+                  <CodeViewer code={test.finalCode} filename={test.filename} highlightLine={fs.line} />
+                </div>
+              )}
+              <details style={{ marginTop: '12px', fontSize: '11px', color: '#6b7280' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Technical details</summary>
+                <pre style={{ marginTop: '6px', padding: '10px', background: '#161c18', color: '#b8c4bc', borderRadius: '6px', overflow: 'auto', maxHeight: '200px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: '11px' }}>
+                  {errorString}
+                </pre>
+              </details>
+              <p style={{ marginTop: '10px' }}>
+                {isNeedsReview
+                  ? 'Stale expectation: page navigated before this assertion ran.'
+                  : failureCategory === 'finding'
                   ? 'Assertion preserved. This appears to be a real application defect and was not auto-corrected.'
                   : 'Mechanical failure encountered during execution and retry attempts.'}
               </p>
