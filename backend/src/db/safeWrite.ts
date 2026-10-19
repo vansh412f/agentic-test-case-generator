@@ -113,3 +113,4 @@ export async function safeWrite<T>(
     return undefined;
   }
 }
+// Module component implementation.
