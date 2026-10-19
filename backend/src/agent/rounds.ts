@@ -357,3 +357,4 @@ export async function runRounds(
     }
   }
 }
+// Module component implementation.
