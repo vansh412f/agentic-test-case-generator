@@ -26,4 +26,12 @@ Out-of-job server events and errors are recorded in the `ServerEvent` table with
 - View edge client IP verification: `GET /api/admin/whoami` (requires `X-Admin-Secret` header).
 - Automatic retention: Expired server events (>14 days) are automatically deleted by the daily maintenance loop (`runRetention`).
 
+## Local Development & Agent Mode
+
+When running locally, set `LOCAL_AGENT_MODE=true` in `backend/.env`:
+- **All usage limits disabled:** Rate limits, daily IP/visitor quotas, and proof-of-work (PoW) verification are turned off.
+- **Localhost and private targets allowed:** Test local web apps directly on loopback or private IP addresses without needing tunnels. Runs are marked as `quotaExempt`.
+- **Production guard:** If `NODE_ENV=production` and `LOCAL_AGENT_MODE=true`, the backend exits fatally (`process.exit(1)`) on boot to prevent deploying with limits turned off.
+- **Protections that stay on:** `JOB_TOKEN_BUDGET`, `QUEUE_MAX_WAITING_GROUPS`, and `PIPELINE_CONCURRENCY` remain active to safeguard your local machine and API key consumption.
+
 For step-by-step deploy instructions and environment configuration, see [DEPLOY.md](./DEPLOY.md).
