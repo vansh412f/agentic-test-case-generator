@@ -16,9 +16,10 @@ const MonacoEditor = dynamic(
 interface CodeViewerProps {
   code: string;
   filename: string;
+  highlightLine?: number;
 }
 
-export function CodeViewer({ code, filename }: CodeViewerProps) {
+export function CodeViewer({ code, filename, highlightLine }: CodeViewerProps) {
   const [copied, setCopied] = useState(false);
 
   async function copyCode(): Promise<void> {
@@ -51,6 +52,23 @@ export function CodeViewer({ code, filename }: CodeViewerProps) {
         <MonacoEditor
           language="typescript"
           loading={<div className="skeleton-line h-full w-full" />}
+          onMount={(editor, monaco) => {
+            if (highlightLine && highlightLine > 0) {
+              editor.revealLineInCenter(highlightLine);
+              editor.deltaDecorations(
+                [],
+                [
+                  {
+                    range: new monaco.Range(highlightLine, 1, highlightLine, 1),
+                    options: {
+                      isWholeLine: true,
+                      className: 'failing-line-highlight',
+                    },
+                  },
+                ],
+              );
+            }
+          }}
           options={{
             automaticLayout: true,
             fontFamily: 'var(--font-mono), monospace',
