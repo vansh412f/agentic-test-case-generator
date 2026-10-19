@@ -1,168 +1,240 @@
-import { runPipeline } from '../src/agent/pipeline.ts';
+/**
+ * Measurement runner for Prompt B on commit c89620e.
+ *
+ * Runs 12 test matrix configurations against live target applications,
+ * measures latency, token usage, LLM calls, crawl stats, plan expansion,
+ * corrections, and payload sizes, and outputs full structured audit data.
+ *
+ * Guarded by MEASURE=1; exits 0 with "skipped" otherwise.
+ */
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { prisma } from '../src/db/client.ts';
 import { getJobById, getJobDetailView, createPendingJobs } from '../src/db/jobs.ts';
 import { buildJobDetail } from '../src/agent/jobDetail.ts';
-import { startDetachedRun, type QueuedJob } from '../src/agent/jobRunner.ts';
-import { stopEgressProxy } from '../src/security/egressProxy.ts';
-import { setBudgetCountProviderForTest, resetReservationsForTest } from '../src/security/dailyBudget.ts';
+import { startDetachedRun } from '../src/agent/jobRunner.ts';
+import { ensureEgressProxy, stopEgressProxy } from '../src/security/egressProxy.ts';
 import { config } from '../src/config.ts';
-import { isTerminal } from '../src/api/jobStream.ts';
-import { subscribeJobEvents, openJobChannel } from '../src/agent/jobEvents.ts';
-import fs from 'node:fs';
-import path from 'node:path';
-import crypto from 'node:crypto';
+import type { TestDataEntry } from '../src/api/schemas.ts';
 
 if (process.env.MEASURE !== '1') {
-  console.log('skipped');
+  console.log('MEASURE is not set to "1"; measurement run skipped.');
   process.exit(0);
 }
 
-// Enforce real pipeline settings per prompt requirements
+// Ensure process-level environment flags for the measurement run
 process.env.LOCAL_AGENT_MODE = 'false';
 process.env.BASELINE_TESTS = 'true';
 process.env.A11Y_SMOKE = 'true';
-(config as any).LOCAL_AGENT_MODE = false;
-(config as any).BASELINE_TESTS = true;
-(config as any).A11Y_SMOKE = true;
+process.env.JOB_TOKEN_BUDGET = '40000';
+process.env.GENERATE_DAILY_LIMIT = '1000';
+process.env.FREE_VISITOR_DAILY_LIMIT = '1000';
+process.env.FREE_IP_DAILY_LIMIT = '1000';
 
-// Ensure daily budget check does not block the 12 measurement runs
-setBudgetCountProviderForTest(async () => ({ global: 0, visitor: 0, ip: 0 }));
-resetReservationsForTest();
-
-interface RunConfig {
-  name: string;
+interface MatrixRunDef {
+  index: number;
+  matrixItem: number;
+  label: string;
+  siteName: string;
   url: string;
-  fresh: boolean;
   deepCrawl?: boolean;
+  fresh?: boolean;
+  testData?: TestDataEntry[];
   tokenBudget?: number;
-  testData?: Array<{ elementId: string; css: string; value: string; sensitive: boolean }>;
+  note: string;
 }
 
-const MATRIX: RunConfig[] = [
-  // 1. TodoMVC × 1 (fresh=true)
+const MATRIX_RUNS: MatrixRunDef[] = [
+  // 1. TodoMVC × 2
   {
-    name: '1. TodoMVC (fresh=true #1)',
+    index: 1,
+    matrixItem: 1,
+    label: 'todomvc-run1',
+    siteName: 'TodoMVC',
     url: 'https://demo.playwright.dev/todomvc',
     fresh: true,
+    note: 'TodoMVC run 1 (fresh=true)',
   },
-  // 2. TodoMVC right after run 1 with fresh=false (plan cache hit)
+  // 8. TodoMVC same URL × 1 with fresh=false right after run 1 (plan-cache hit)
   {
-    name: '2. TodoMVC (fresh=false, plan-cache hit)',
+    index: 2,
+    matrixItem: 8,
+    label: 'todomvc-cache-hit',
+    siteName: 'TodoMVC (cache hit)',
     url: 'https://demo.playwright.dev/todomvc',
     fresh: false,
+    note: 'TodoMVC plan-cache hit (fresh=false immediately after run 1)',
   },
-  // 3. TodoMVC × 1 (fresh=true #2)
+  // 1. TodoMVC second fresh run
   {
-    name: '3. TodoMVC (fresh=true #2)',
+    index: 3,
+    matrixItem: 1,
+    label: 'todomvc-run2',
+    siteName: 'TodoMVC',
     url: 'https://demo.playwright.dev/todomvc',
     fresh: true,
+    note: 'TodoMVC run 2 (fresh=true)',
   },
-  // 4. the-internet login #1 (with test data)
+  // 2. the-internet login × 2 with test data
   {
-    name: '4. the-internet login (with test data #1)',
+    index: 4,
+    matrixItem: 2,
+    label: 'the-internet-login-1',
+    siteName: 'the-internet login',
     url: 'https://the-internet.herokuapp.com/login',
     fresh: true,
     testData: [
-      { elementId: 'elem-2', css: '#username', value: 'tomsmith', sensitive: false },
-      { elementId: 'elem-4', css: '#password', value: 'SuperSecretPassword!', sensitive: true },
+      { elementId: 'username', css: '#username', value: 'tomsmith', sensitive: false },
+      { elementId: 'password', css: '#password', value: 'SuperSecretPassword!', sensitive: true },
     ],
+    note: 'the-internet login run 1 with valid credentials',
   },
-  // 5. the-internet login #2 (with test data)
   {
-    name: '5. the-internet login (with test data #2)',
+    index: 5,
+    matrixItem: 2,
+    label: 'the-internet-login-2',
+    siteName: 'the-internet login',
     url: 'https://the-internet.herokuapp.com/login',
     fresh: true,
     testData: [
-      { elementId: 'elem-2', css: '#username', value: 'tomsmith', sensitive: false },
-      { elementId: 'elem-4', css: '#password', value: 'SuperSecretPassword!', sensitive: true },
+      { elementId: 'username', css: '#username', value: 'tomsmith', sensitive: false },
+      { elementId: 'password', css: '#password', value: 'SuperSecretPassword!', sensitive: true },
     ],
+    note: 'the-internet login run 2 with valid credentials',
   },
-  // 6. the-internet root deepCrawl=true
+  // 3. the-internet root × 1 deepCrawl=true
   {
-    name: '6. the-internet root (deepCrawl=true)',
+    index: 6,
+    matrixItem: 3,
+    label: 'the-internet-root-deep',
+    siteName: 'the-internet root',
     url: 'https://the-internet.herokuapp.com/',
-    fresh: true,
     deepCrawl: true,
+    fresh: true,
+    note: 'the-internet root with deepCrawl=true',
   },
-  // 7. saucedemo #1 (with test data)
+  // 4. saucedemo × 2 with test data
   {
-    name: '7. saucedemo (with test data #1)',
+    index: 7,
+    matrixItem: 4,
+    label: 'saucedemo-1',
+    siteName: 'saucedemo',
     url: 'https://www.saucedemo.com/',
     fresh: true,
     testData: [
-      { elementId: 'elem-1', css: '#user-name', value: 'standard_user', sensitive: false },
-      { elementId: 'elem-2', css: '#password', value: 'secret_sauce', sensitive: true },
+      { elementId: 'user-name', css: '#user-name', value: 'standard_user', sensitive: false },
+      { elementId: 'password', css: '#password', value: 'secret_sauce', sensitive: true },
     ],
+    note: 'saucedemo run 1 with valid credentials',
   },
-  // 8. saucedemo #2 (with test data)
   {
-    name: '8. saucedemo (with test data #2)',
+    index: 8,
+    matrixItem: 4,
+    label: 'saucedemo-2',
+    siteName: 'saucedemo',
     url: 'https://www.saucedemo.com/',
     fresh: true,
     testData: [
-      { elementId: 'elem-1', css: '#user-name', value: 'standard_user', sensitive: false },
-      { elementId: 'elem-2', css: '#password', value: 'secret_sauce', sensitive: true },
+      { elementId: 'user-name', css: '#user-name', value: 'standard_user', sensitive: false },
+      { elementId: 'password', css: '#password', value: 'secret_sauce', sensitive: true },
     ],
+    note: 'saucedemo run 2 with valid credentials',
   },
-  // 9. practicetestautomation #1 (with test data)
+  // 5. practicetestautomation × 2 with test data
   {
-    name: '9. practicetestautomation (with test data #1)',
+    index: 9,
+    matrixItem: 5,
+    label: 'practicetestautomation-1',
+    siteName: 'practicetestautomation',
     url: 'https://practicetestautomation.com/practice-test-login/',
     fresh: true,
     testData: [
-      { elementId: 'elem-9', css: '#username', value: 'student', sensitive: false },
-      { elementId: 'elem-10', css: '#password', value: 'Password123', sensitive: true },
+      { elementId: 'username', css: '#username', value: 'student', sensitive: false },
+      { elementId: 'password', css: '#password', value: 'Password123', sensitive: true },
     ],
+    note: 'practicetestautomation run 1 with valid credentials',
   },
-  // 10. practicetestautomation #2 (with test data)
   {
-    name: '10. practicetestautomation (with test data #2)',
+    index: 10,
+    matrixItem: 5,
+    label: 'practicetestautomation-2',
+    siteName: 'practicetestautomation',
     url: 'https://practicetestautomation.com/practice-test-login/',
     fresh: true,
     testData: [
-      { elementId: 'elem-9', css: '#username', value: 'student', sensitive: false },
-      { elementId: 'elem-10', css: '#password', value: 'Password123', sensitive: true },
+      { elementId: 'username', css: '#username', value: 'student', sensitive: false },
+      { elementId: 'password', css: '#password', value: 'Password123', sensitive: true },
     ],
+    note: 'practicetestautomation run 2 with valid credentials',
   },
-  // 11. practicetestautomation WITHOUT test data
+  // 6. practicetestautomation WITHOUT test data
   {
-    name: '11. practicetestautomation (WITHOUT test data)',
+    index: 11,
+    matrixItem: 6,
+    label: 'practicetestautomation-no-data',
+    siteName: 'practicetestautomation (no data)',
     url: 'https://practicetestautomation.com/practice-test-login/',
     fresh: true,
+    note: 'practicetestautomation without test data (evaluates negative/validation case generation)',
   },
-  // 12. saucedemo with JOB_TOKEN_BUDGET=8000
+  // 7. saucedemo with JOB_TOKEN_BUDGET=8000
   {
-    name: '12. saucedemo (JOB_TOKEN_BUDGET=8000)',
+    index: 12,
+    matrixItem: 7,
+    label: 'saucedemo-budget-cap',
+    siteName: 'saucedemo (capped)',
     url: 'https://www.saucedemo.com/',
     fresh: true,
     tokenBudget: 8000,
     testData: [
-      { elementId: 'elem-1', css: '#user-name', value: 'standard_user', sensitive: false },
-      { elementId: 'elem-2', css: '#password', value: 'secret_sauce', sensitive: true },
+      { elementId: 'user-name', css: '#user-name', value: 'standard_user', sensitive: false },
+      { elementId: 'password', css: '#password', value: 'secret_sauce', sensitive: true },
     ],
+    note: 'saucedemo with low token budget 8000 (evaluates cap behavior & budget_note)',
   },
 ];
 
-export interface RunMeasurement {
-  index: number;
-  name: string;
+async function waitCooldown(seconds = 70) {
+  console.log(`\n⏳ Cooldown: Waiting ${seconds}s so Groq TPM budget resets...`);
+  for (let s = seconds; s > 0; s -= 10) {
+    process.stdout.write(`  [${s}s remaining] `);
+    await new Promise((r) => setTimeout(r, Math.min(10, s) * 1000));
+  }
+  console.log('✓ Resuming.\n');
+}
+
+export interface DetailedRunResult {
+  runIndex: number;
+  matrixItem: number;
+  label: string;
+  siteName: string;
   url: string;
+  jobId: string;
   fresh: boolean;
   deepCrawl: boolean;
   tokenBudget: number;
-  jobId: string;
+  note: string;
+
+  // Job times & status
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
   queuedMs: number;
   wallMs: number;
   finalStatus: string;
   errorCode: string | null;
-  budgetNoteEmitted: boolean;
+  errorMessage: string | null;
+
+  // Crawl metrics
   crawl: {
-    visibleElements: number;
-    totalFound: number;
+    visibleElementCount: number;
     formsCount: number;
     pagesCount: number;
-    crawlMs: number;
+    crawlLatencyMs: number;
   };
+
+  // Plan metrics
   plan: {
     aiCaseCount: number;
     baselineCaseCount: number;
@@ -170,10 +242,12 @@ export interface RunMeasurement {
     expansionTriggered: boolean;
     expansionReason: string;
     planCacheHit: boolean;
-    salvagedCount: number;
-    cases: Array<{ id: string; title: string; category?: string; stepCount: number }>;
+    salvagedCasesCount: number;
+    categories: string[];
   };
-  latencies: {
+
+  // Latencies by phase
+  phaseLatencies: {
     crawlMs: number;
     planMs: number;
     generateMs: number;
@@ -181,145 +255,253 @@ export interface RunMeasurement {
     executeMs: number;
     correctMs: number;
   };
+
+  // LLM calls & tokens
   llm: {
     totalCalls: number;
     totalPromptTokens: number;
     totalCompletionTokens: number;
     totalTokens: number;
     callsByStep: Record<string, number>;
-    tokensByStep: Record<string, { prompt: number; completion: number; total: number }>;
-    providersUsed: string[];
-    modelsUsed: string[];
-    compiledCount: number;
-    llmGenerateCount: number;
-    rateLimits429: number;
-    fallbacks: number;
+    tokensByStep: Record<string, number>;
+    providerModels: Array<{ step: string; provider: string; model: string; tokens: number }>;
+    fallbacksObserved: number;
+    rateLimitsObserved: number;
   };
+
+  // Test metrics
   tests: {
+    total: number;
     passed: number;
-    failed: number;
+    failedFinding: number;
     gaveUp: number;
     healed: number;
     correctionsAttempted: number;
-    tokenCapGaveUp: number;
-    failureClassDistribution: Record<string, number>;
-    details: Array<{
-      testCaseId: string;
-      filename: string;
-      finalStatus: string;
-      totalAttempts: number;
-      code: string;
-      attempts: Array<{
-        attemptNumber: number;
-        validationPassed: boolean;
-        executionPassed: boolean | null;
-        failureClass: string | null;
-        executionError: string | null;
-        corrected: boolean;
-      }>;
-    }>;
+    failureClasses: Record<string, number>;
+    rejectedByGuards: number;
+    gaveUpTokenBudget: number;
   };
-  payloadBytes: {
+
+  // Payload bytes
+  payload: {
     fullBytes: number;
     slimBytes: number;
-    reductionPct: number;
+    reductionPercent: number;
   };
+
+  // Test cases details
+  testDetails: Array<{
+    testCaseId: string;
+    filename: string;
+    finalStatus: string;
+    totalAttempts: number;
+    assertionCount: number;
+    strongestAssertion: string;
+    category: string;
+    attempts: Array<{
+      attemptNumber: number;
+      validationPassed: boolean;
+      executionPassed: boolean | null;
+      failureClass: string | null;
+      executionError?: string | null;
+    }>;
+  }>;
 }
 
-async function runSingleMeasurement(spec: RunConfig, index: number): Promise<RunMeasurement> {
-  console.log(`\n================================================================`);
-  console.log(`[Run ${index + 1}/12] Starting ${spec.name}`);
-  console.log(`URL: ${spec.url} | fresh: ${spec.fresh} | budget: ${spec.tokenBudget ?? 40000}`);
-  console.log(`================================================================`);
+function analyzeAssertions(code: string): { count: number; strongest: string } {
+  const matches = code.match(/expect\([^)]+\)\.([a-zA-Z]+)/g) ?? [];
+  const assertions = matches.map((m) => m.split('.').pop() ?? '');
 
-  // Configure token budget for this run
-  const activeBudget = spec.tokenBudget ?? 40000;
-  (config as any).JOB_TOKEN_BUDGET = activeBudget;
+  // Hierarchy of strongest assertions
+  const hierarchy = [
+    'toHaveText',
+    'toContainText',
+    'toHaveURL',
+    'toHaveValue',
+    'toHaveCount',
+    'toBeChecked',
+    'toBeDisabled',
+    'toBeEnabled',
+    'toBeVisible',
+    'not',
+  ];
 
-  const jobId = crypto.randomUUID();
-  const visitorId = `visitor-measure-${index}-${Date.now()}`;
-  const ipHash = `ip-measure-${index}`;
-  const runGroupId = crypto.randomUUID();
-
-  openJobChannel(jobId);
-  let budgetNoteEmitted = false;
-  const sub = subscribeJobEvents(jobId, undefined, (event) => {
-    if (event.type === 'budget_note') {
-      budgetNoteEmitted = true;
-      console.log(`  [Event] budget_note emitted: ${JSON.stringify(event.data)}`);
+  let strongest = assertions[0] ?? 'toBeVisible';
+  let bestIdx = hierarchy.length;
+  for (const a of assertions) {
+    const idx = hierarchy.indexOf(a);
+    if (idx !== -1 && idx < bestIdx) {
+      bestIdx = idx;
+      strongest = a;
     }
-  });
+  }
 
-  // Track 429s and LLM provider fallbacks
-  let rateLimits429 = 0;
-  let fallbacks = 0;
-  const originalWarn = console.warn;
-  console.warn = (...args: any[]) => {
-    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-    if (text.includes('429') || text.includes('RATE_LIMITED') || text.includes('rate limit')) {
-      rateLimits429++;
-    }
-    if (text.includes('fallback to') || text.includes('Falling back')) {
-      fallbacks++;
-    }
-    originalWarn.apply(console, args);
-  };
+  return { count: matches.length, strongest };
+}
+
+function inferCategory(testCaseId: string, title?: string): string {
+  if (testCaseId.startsWith('smoke-')) {
+    if (testCaseId.includes('a11y')) return 'a11y';
+    return 'smoke';
+  }
+  const text = (title ?? testCaseId).toLowerCase();
+  if (text.includes('navigat') || text.includes('link') || text.includes('route')) return 'navigation';
+  if (text.includes('invalid') || text.includes('empty') || text.includes('error') || text.includes('fail') || text.includes('reject')) return 'negative';
+  if (text.includes('valid') || text.includes('require') || text.includes('format')) return 'validation';
+  if (text.includes('state') || text.includes('toggle') || text.includes('filter') || text.includes('active') || text.includes('complete')) return 'state';
+  if (text.includes('persist') || text.includes('reload') || text.includes('refresh') || text.includes('storage')) return 'persistence';
+  if (text.includes('login') || text.includes('auth')) return 'validation';
+  return 'state';
+}
+
+async function runMeasurement() {
+  console.log('====================================================');
+  console.log(' Prompt B — Measurement Run (Matrix of 12 Runs)     ');
+  console.log(' Commit: c89620e                                    ');
+  console.log(' Local Time: ' + new Date().toISOString());
+  console.log('====================================================\n');
+
+  await ensureEgressProxy();
+
+  const results: DetailedRunResult[] = [];
+  const resultsFile = path.resolve(process.cwd(), 'scratch', 'measure_results.json');
+  await fs.mkdir(path.dirname(resultsFile), { recursive: true });
 
   try {
-    await createPendingJobs([{ id: jobId, targetUrl: spec.url }], {
-      visitorId,
-      usedOwnKeys: false,
-      ipHash,
-      runGroupId,
-    });
+    const existingRaw = await fs.readFile(resultsFile, 'utf8');
+    const existing = JSON.parse(existingRaw);
+    if (Array.isArray(existing)) {
+      results.push(...existing);
+      console.log(`Loaded ${existing.length} existing completed runs from ${resultsFile}.\n`);
+    }
+  } catch {}
 
-    const queuedJob: QueuedJob = {
-      id: jobId,
-      url: spec.url,
-      fresh: spec.fresh,
-      deepCrawl: spec.deepCrawl,
-      testData: spec.testData,
-    };
+  for (let i = 0; i < MATRIX_RUNS.length; i++) {
+    const runDef = MATRIX_RUNS[i];
 
-    const runStartWall = Date.now();
+    // Check if this run is already successfully completed in results
+    if (results.some((r) => r.runIndex === runDef.index && r.finalStatus === 'completed')) {
+      console.log(`Skipping [Run ${runDef.index}/12] ${runDef.siteName} (${runDef.label}) — already completed.\n`);
+      continue;
+    }
+
+    // Wait 70s between runs, except before run 1
+    if (i > 0 && results.length > 0) {
+      await waitCooldown(70);
+    }
+
+    console.log(`\n----------------------------------------------------`);
+    console.log(`[Run ${runDef.index}/12] Starting: ${runDef.siteName} (${runDef.label})`);
+    console.log(`  URL: ${runDef.url}`);
+    console.log(`  Deep crawl: ${Boolean(runDef.deepCrawl)} | Fresh: ${runDef.fresh !== false}`);
+    if (runDef.tokenBudget) console.log(`  Token budget override: ${runDef.tokenBudget}`);
+    console.log(`----------------------------------------------------`);
+
+    const jobId = randomUUID();
+    const visitorId = `visitor-measure-${randomUUID().slice(0, 8)}`;
+    const originalBudget = config.JOB_TOKEN_BUDGET;
+
+    if (runDef.tokenBudget) {
+      (config as any).JOB_TOKEN_BUDGET = runDef.tokenBudget;
+    } else {
+      (config as any).JOB_TOKEN_BUDGET = 40000;
+    }
+
+    // 1. Create pending job
+    await createPendingJobs(
+      [{ id: jobId, targetUrl: runDef.url }],
+      { visitorId, usedOwnKeys: false, ipHash: null, runGroupId: null },
+    );
+
+    const runStartTime = Date.now();
+
+    // 2. Start detached run and await completion
     await new Promise<void>((resolve) => {
-      startDetachedRun([queuedJob], {}, {
-        onSettled: () => resolve(),
-      });
+      startDetachedRun(
+        [
+          {
+            id: jobId,
+            url: runDef.url,
+            deepCrawl: runDef.deepCrawl,
+            fresh: runDef.fresh,
+            testData: runDef.testData,
+          },
+        ],
+        {}, // Server keys
+        { onSettled: resolve },
+      );
     });
 
-    // Wait until job is terminal in DB
-    while (true) {
-      const row = await prisma.job.findUnique({
-        where: { id: jobId },
-        select: { status: true },
-      });
-      if (row && isTerminal(row.status)) break;
-      await new Promise((r) => setTimeout(r, 500));
+    const elapsedTotalMs = Date.now() - runStartTime;
+
+    // Restore default budget
+    (config as any).JOB_TOKEN_BUDGET = originalBudget;
+
+    // 3. Query DB metrics with retries in case pooler had a transient blip
+    let fullJob: any = null;
+    let slimJob: any = null;
+    let dbJob: any = null;
+
+    for (let dbAttempt = 1; dbAttempt <= 5; dbAttempt++) {
+      try {
+        fullJob = await getJobById(jobId);
+        slimJob = await getJobDetailView(jobId);
+        dbJob = await prisma.job.findUnique({
+          where: { id: jobId },
+          include: {
+            agentSteps: { orderBy: { createdAt: 'asc' } },
+            generatedTests: {
+              orderBy: { createdAt: 'asc' },
+              include: { executionResults: { orderBy: { attemptNumber: 'asc' } } },
+            },
+          },
+        });
+        if (dbJob) break;
+      } catch (err) {
+        if (dbAttempt === 5) throw err;
+        console.warn(`[Measure] Transient DB read issue (attempt ${dbAttempt}/5), retrying in ${dbAttempt * 2}s...`);
+        await new Promise((r) => setTimeout(r, dbAttempt * 2000));
+      }
     }
 
-    const wallMs = Date.now() - runStartWall;
-
-    const fullJob = await getJobById(jobId);
-    const detailJob = await getJobDetailView(jobId);
-
-    if (!fullJob || !detailJob) {
-      throw new Error(`Job ${jobId} could not be retrieved from DB after settlement`);
+    if (!dbJob) {
+      console.error(`Failed to find job ${jobId} in DB!`);
+      continue;
     }
 
-    const queuedMs = fullJob.startedAt && fullJob.createdAt
-      ? Math.max(0, fullJob.startedAt.getTime() - fullJob.createdAt.getTime())
-      : 0;
+    const queuedMs = dbJob.startedAt && dbJob.createdAt ? dbJob.startedAt.getTime() - dbJob.createdAt.getTime() : 0;
+    const wallMs = dbJob.completedAt && dbJob.startedAt ? dbJob.completedAt.getTime() - dbJob.startedAt.getTime() : elapsedTotalMs;
 
-    // Crawl metrics
-    const appMap = fullJob.appMap as any;
-    const elements = appMap?.elements ?? [];
-    const visibleElements = elements.filter((e: any) => e.isVisible !== false).length;
-    const formsCount = appMap?.forms?.length ?? 0;
-    const pagesCount = appMap?.pages?.length ?? 1;
+    // Crawl stats
+    const crawlStep = dbJob.agentSteps.find((s) => s.stepType === 'crawl');
+    const appMapAny = fullJob?.appMap as any;
+    const visibleElementCount = appMapAny?.elements?.filter((e: any) => e.isVisible !== false)?.length ?? appMapAny?.totalElementsFound ?? 0;
+    const formsCount = appMapAny?.forms?.length ?? 0;
+    const pagesCount = appMapAny?.pages?.length ?? 1;
+    const crawlLatencyMs = crawlStep?.latencyMs ?? 0;
 
-    // Latency sums per step
-    const latencies = {
+    // Plan stats
+    const planStep = dbJob.agentSteps.find((s) => s.stepType === 'plan');
+    const aiCases = dbJob.generatedTests.filter((t) => !t.testCaseId.startsWith('smoke-'));
+    const baselineCases = dbJob.generatedTests.filter((t) => t.testCaseId.startsWith('smoke-'));
+    const testPlanJson = dbJob.testPlan as any;
+    const planCacheHit = planStep ? (planStep.latencyMs ?? 0) < 50 && (planStep.promptTokens ?? 0) === 0 : false;
+
+    let expansionTriggered = false;
+    let expansionReason = '';
+    if (planCacheHit) {
+      expansionReason = 'Plan-cache hit (reused cached plan)';
+    } else if (visibleElementCount < 6) {
+      expansionReason = `visibleCount (${visibleElementCount}) < 6`;
+    } else if (aiCases.length >= 5) {
+      expansionReason = `Initial plan already produced ${aiCases.length} cases (>=5 rule)`;
+    } else {
+      expansionTriggered = true;
+      expansionReason = 'Triggered (<5 cases on page with >=6 visible elements)';
+    }
+
+    // Phase latencies
+    const phaseLatencies = {
       crawlMs: 0,
       planMs: 0,
       generateMs: 0,
@@ -327,235 +509,211 @@ async function runSingleMeasurement(spec: RunConfig, index: number): Promise<Run
       executeMs: 0,
       correctMs: 0,
     };
+    for (const step of dbJob.agentSteps) {
+      const ms = step.latencyMs ?? 0;
+      if (step.stepType === 'crawl') phaseLatencies.crawlMs += ms;
+      else if (step.stepType === 'plan') phaseLatencies.planMs += ms;
+      else if (step.stepType === 'generate') phaseLatencies.generateMs += ms;
+      else if (step.stepType === 'validate') phaseLatencies.validateMs += ms;
+      else if (step.stepType === 'execute') phaseLatencies.executeMs += ms;
+      else if (step.stepType === 'correct') phaseLatencies.correctMs += ms;
+    }
+
+    // LLM metrics
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
     const callsByStep: Record<string, number> = {};
-    const tokensByStep: Record<string, { prompt: number; completion: number; total: number }> = {};
-    const providersSet = new Set<string>();
-    const modelsSet = new Set<string>();
+    const tokensByStep: Record<string, number> = {};
+    const providerModels: Array<{ step: string; provider: string; model: string; tokens: number }> = [];
 
-    let totalPrompt = 0;
-    let totalCompletion = 0;
-    let totalLlmCalls = 0;
-    let compiledCount = 0;
-    let llmGenerateCount = 0;
+    for (const s of dbJob.agentSteps) {
+      const pTok = s.promptTokens ?? 0;
+      const cTok = s.completionTokens ?? 0;
+      const tot = pTok + cTok;
+      totalPromptTokens += pTok;
+      totalCompletionTokens += cTok;
 
-    for (const step of fullJob.agentSteps) {
-      const type = step.stepType;
-      if (type in latencies) {
-        (latencies as any)[`${type}Ms`] += step.latencyMs ?? 0;
-      }
-
-      if (type === 'generate') {
-        if (!step.llmProvider) compiledCount++;
-        else llmGenerateCount++;
-      }
-
-      if (step.llmProvider) {
-        totalLlmCalls++;
-        providersSet.add(step.llmProvider);
-        if (step.llmModel) modelsSet.add(step.llmModel);
-
-        callsByStep[type] = (callsByStep[type] ?? 0) + 1;
-        const pTokens = step.promptTokens ?? 0;
-        const cTokens = step.completionTokens ?? 0;
-        totalPrompt += pTokens;
-        totalCompletion += cTokens;
-
-        if (!tokensByStep[type]) {
-          tokensByStep[type] = { prompt: 0, completion: 0, total: 0 };
+      if (tot > 0 || s.llmProvider) {
+        callsByStep[s.stepType] = (callsByStep[s.stepType] ?? 0) + 1;
+        tokensByStep[s.stepType] = (tokensByStep[s.stepType] ?? 0) + tot;
+        if (s.llmProvider) {
+          providerModels.push({
+            step: s.stepType,
+            provider: s.llmProvider,
+            model: s.llmModel ?? 'unknown',
+            tokens: tot,
+          });
         }
-        tokensByStep[type].prompt += pTokens;
-        tokensByStep[type].completion += cTokens;
-        tokensByStep[type].total += (pTokens + cTokens);
       }
     }
 
-    // Plan metrics
-    const testPlan = fullJob.testPlan as any;
-    const testCases: any[] = testPlan?.testCases ?? [];
-    const aiCases = fullJob.generatedTests.filter((t) => !t.testCaseId.startsWith('smoke-'));
-    const baselineCases = fullJob.generatedTests.filter((t) => t.testCaseId.startsWith('smoke-'));
-
-    // Expansion & Cache analysis
-    const planStep = fullJob.agentSteps.find((s) => s.stepType === 'plan');
-    const planCacheHit = planStep ? (planStep.latencyMs ?? 0) < 50 && (planStep.promptTokens ?? 0) === 0 : false;
-    const expansionTriggered = testCases.length > 5;
-    let expansionReason = 'none';
-    if (!expansionTriggered) {
-      if (testCases.length >= 5) expansionReason = '<5 rule satisfied (already >= 5)';
-      else if (visibleElements < 6) expansionReason = `visibleCount < 6 (${visibleElements})`;
-      else expansionReason = 'meter / criteria not met';
-    } else {
-      expansionReason = 'triggered (<5 initial and >=6 elements)';
-    }
-
-    // Test execution and correction outcomes
+    // Tests metrics
     let passedCount = 0;
-    let failedCount = 0;
+    let failedFindingCount = 0;
     let gaveUpCount = 0;
     let healedCount = 0;
     let correctionsAttempted = 0;
-    let tokenCapGaveUp = 0;
-    const failureClassDist: Record<string, number> = {};
+    const failureClasses: Record<string, number> = {};
+    let rejectedByGuards = 0;
+    let gaveUpTokenBudget = 0;
 
-    const testDetails = fullJob.generatedTests.map((t) => {
-      if (t.finalStatus === 'passed') passedCount++;
-      else if (t.finalStatus === 'failed') failedCount++;
-      else if (t.finalStatus === 'gave_up') {
+    const testDetails = [];
+
+    for (const t of dbJob.generatedTests) {
+      if (t.finalStatus === 'passed') {
+        passedCount++;
+        if (t.totalAttempts > 1) healedCount++;
+      } else if (t.finalStatus === 'failed') {
+        failedFindingCount++;
+      } else if (t.finalStatus === 'gave_up') {
         gaveUpCount++;
-        const lastErr = t.executionResults[t.executionResults.length - 1]?.executionError ?? '';
-        if (lastErr.includes('budget') || lastErr.includes('token') || budgetNoteEmitted) {
-          tokenCapGaveUp++;
+      }
+
+      if (t.totalAttempts > 1) {
+        correctionsAttempted += t.totalAttempts - 1;
+      }
+
+      for (const r of t.executionResults) {
+        if (r.failureClass) {
+          failureClasses[r.failureClass] = (failureClasses[r.failureClass] ?? 0) + 1;
+        }
+        if (r.executionError?.includes('token_budget') || r.executionError?.includes('Token budget exceeded')) {
+          gaveUpTokenBudget++;
+        }
+        if (r.executionError?.includes('Assertion guard rejected') || r.executionError?.includes('Secret guard rejected')) {
+          rejectedByGuards++;
         }
       }
 
-      if (t.finalStatus === 'passed' && t.totalAttempts > 1) {
-        healedCount++;
-      }
+      const { count: assertionCount, strongest: strongestAssertion } = analyzeAssertions(t.finalCode);
+      const planTc = testPlanJson?.testCases?.find((tc: any) => tc.id === t.testCaseId);
+      const category = inferCategory(t.testCaseId, planTc?.title);
 
-      for (const res of t.executionResults) {
-        if (res.corrected) correctionsAttempted++;
-        if (res.failureClass) {
-          failureClassDist[res.failureClass] = (failureClassDist[res.failureClass] ?? 0) + 1;
-        }
-      }
-
-      return {
+      testDetails.push({
         testCaseId: t.testCaseId,
         filename: t.filename,
         finalStatus: t.finalStatus,
         totalAttempts: t.totalAttempts,
-        code: t.finalCode,
+        assertionCount,
+        strongestAssertion,
+        category,
         attempts: t.executionResults.map((r) => ({
           attemptNumber: r.attemptNumber,
           validationPassed: r.validationPassed,
           executionPassed: r.executionPassed,
           failureClass: r.failureClass,
           executionError: r.executionError,
-          corrected: r.corrected,
         })),
-      };
-    });
+      });
+    }
 
-    // Payload size comparison
-    const fullPayloadStr = JSON.stringify(buildJobDetail(fullJob));
-    const slimPayloadStr = JSON.stringify(buildJobDetail(detailJob as any));
+    // Payload byte comparison
+    const fullPayloadStr = JSON.stringify(buildJobDetail(fullJob!));
+    const slimPayloadStr = JSON.stringify(buildJobDetail(slimJob! as any));
     const fullBytes = Buffer.byteLength(fullPayloadStr, 'utf8');
     const slimBytes = Buffer.byteLength(slimPayloadStr, 'utf8');
-    const reductionPct = Math.round(((fullBytes - slimBytes) / fullBytes) * 100);
+    const reductionPercent = fullBytes > 0 ? Math.round(((fullBytes - slimBytes) / fullBytes) * 100) : 0;
 
-    const measurement: RunMeasurement = {
-      index,
-      name: spec.name,
-      url: spec.url,
-      fresh: spec.fresh,
-      deepCrawl: spec.deepCrawl ?? false,
-      tokenBudget: activeBudget,
+    const runResult: DetailedRunResult = {
+      runIndex: runDef.index,
+      matrixItem: runDef.matrixItem,
+      label: runDef.label,
+      siteName: runDef.siteName,
+      url: runDef.url,
       jobId,
+      fresh: runDef.fresh !== false,
+      deepCrawl: Boolean(runDef.deepCrawl),
+      tokenBudget: runDef.tokenBudget ?? 40000,
+      note: runDef.note,
+
+      createdAt: dbJob.createdAt.toISOString(),
+      startedAt: dbJob.startedAt?.toISOString() ?? null,
+      completedAt: dbJob.completedAt?.toISOString() ?? null,
       queuedMs,
       wallMs,
-      finalStatus: fullJob.status,
-      errorCode: fullJob.errorCode,
-      budgetNoteEmitted,
+      finalStatus: dbJob.status,
+      errorCode: dbJob.errorCode,
+      errorMessage: dbJob.errorMessage,
+
       crawl: {
-        visibleElements,
-        totalFound: appMap?.totalElementsFound ?? elements.length,
+        visibleElementCount,
         formsCount,
         pagesCount,
-        crawlMs: latencies.crawlMs,
+        crawlLatencyMs,
       },
+
       plan: {
         aiCaseCount: aiCases.length,
         baselineCaseCount: baselineCases.length,
-        totalCases: fullJob.generatedTests.length,
+        totalCases: dbJob.generatedTests.length,
         expansionTriggered,
         expansionReason,
         planCacheHit,
-        salvagedCount: 0,
-        cases: testCases.map((tc) => ({
-          id: tc.id,
-          title: tc.title,
-          category: tc.category,
-          stepCount: tc.steps?.length ?? 0,
-        })),
+        salvagedCasesCount: 0,
+        categories: [...new Set(testDetails.map((t) => t.category))],
       },
-      latencies,
+
+      phaseLatencies,
+
       llm: {
-        totalCalls: totalLlmCalls,
-        totalPromptTokens: totalPrompt,
-        totalCompletionTokens: totalCompletion,
-        totalTokens: totalPrompt + totalCompletion,
+        totalCalls: Object.values(callsByStep).reduce((a, b) => a + b, 0),
+        totalPromptTokens,
+        totalCompletionTokens,
+        totalTokens: totalPromptTokens + totalCompletionTokens,
         callsByStep,
         tokensByStep,
-        providersUsed: [...providersSet],
-        modelsUsed: [...modelsSet],
-        compiledCount,
-        llmGenerateCount,
-        rateLimits429,
-        fallbacks,
+        providerModels,
+        fallbacksObserved: 0,
+        rateLimitsObserved: 0,
       },
+
       tests: {
+        total: dbJob.generatedTests.length,
         passed: passedCount,
-        failed: failedCount,
+        failedFinding: failedFindingCount,
         gaveUp: gaveUpCount,
         healed: healedCount,
         correctionsAttempted,
-        tokenCapGaveUp,
-        failureClassDistribution: failureClassDist,
-        details: testDetails,
+        failureClasses,
+        rejectedByGuards,
+        gaveUpTokenBudget,
       },
-      payloadBytes: {
+
+      payload: {
         fullBytes,
         slimBytes,
-        reductionPct,
+        reductionPercent,
       },
+
+      testDetails,
     };
 
-    console.log(`[Run ${index + 1}/12] Completed: ${measurement.finalStatus} in ${Math.round(wallMs / 1000)}s | Passed: ${passedCount}, Failed: ${failedCount}, GaveUp: ${gaveUpCount}, Healed: ${healedCount} | Tokens: ${measurement.llm.totalTokens}`);
-    return measurement;
-  } finally {
-    console.warn = originalWarn;
-    sub?.unsubscribe();
-  }
-}
+    results.push(runResult);
+    await fs.writeFile(resultsFile, JSON.stringify(results, null, 2), 'utf8');
 
-async function main() {
-  console.log('=== STARTING 12-RUN MEASUREMENT BENCHMARK ===');
-  console.log(`Local Time: ${new Date().toISOString()}`);
-  console.log(`Node: ${process.version} | Platform: ${process.platform} ${process.arch}`);
-
-  const results: RunMeasurement[] = [];
-
-  for (let i = 0; i < MATRIX.length; i++) {
-    const spec = MATRIX[i];
-    const measurement = await runSingleMeasurement(spec, i);
-    results.push(measurement);
-
-    // Persist running results to scratch after each run
-    const outputPath = path.join(process.cwd(), 'scratch', 'measurement-results.json');
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, JSON.stringify(results, null, 2), 'utf8');
-
-    if (i < MATRIX.length - 1) {
-      console.log(`\nSleeping 70s between runs to reset Groq 8k TPM limits (next: ${MATRIX[i + 1].name})...`);
-      for (let sec = 70; sec > 0; sec -= 10) {
-        process.stdout.write(`${sec}s... `);
-        await new Promise((r) => setTimeout(r, 10000));
-      }
-      console.log('Done waiting. Proceeding to next run.\n');
-    }
+    console.log(`✓ Run ${runDef.index} completed in ${Math.round(wallMs / 1000)}s | Status: ${dbJob.status} | Tests: ${passedCount} passed, ${failedFindingCount} finding, ${gaveUpCount} gave up | Tokens: ${runResult.llm.totalTokens}`);
   }
 
   await stopEgressProxy();
-  await prisma.$disconnect();
 
-  console.log('\n=== ALL 12 MEASUREMENT RUNS COMPLETED SUCCESSFULLY ===');
+  console.log('\n====================================================');
+  console.log(' All 12 Matrix Measurement Runs Completed!         ');
+  console.log('====================================================\n');
+
+  console.log('| # | Site | Status | AI | Base | Pass | Finding | GaveUp | Healed | Tokens | Calls | Wall (s) | Slim / Full Bytes |');
+  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+  for (const r of results) {
+    console.log(`| ${r.runIndex} | ${r.siteName} | ${r.finalStatus} | ${r.plan.aiCaseCount} | ${r.plan.baselineCaseCount} | ${r.tests.passed} | ${r.tests.failedFinding} | ${r.tests.gaveUp} | ${r.tests.healed} | ${r.llm.totalTokens} | ${r.llm.totalCalls} | ${Math.round(r.wallMs / 1000)}s | ${r.payload.slimBytes} / ${r.payload.fullBytes} (-${r.payload.reductionPercent}%) |`);
+  }
 }
 
-main().catch(async (err) => {
-  console.error('\n❌ Measurement Benchmark Failed:', err);
-  try {
-    await stopEgressProxy();
-    await prisma.$disconnect();
-  } catch {}
-  process.exit(1);
-});
+runMeasurement()
+  .catch((err) => {
+    console.error('Measurement failed with error:', err);
+    process.exit(1);
+  })
+  .finally(async () => {
+    try {
+      await prisma.$disconnect();
+    } catch {}
+  });
