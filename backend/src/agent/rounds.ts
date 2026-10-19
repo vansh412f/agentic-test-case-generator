@@ -1,6 +1,8 @@
 import type { TestCase } from './prompts/plannerPrompt.ts';
 import type { ScopedElement } from './types.ts';
 import type { FailureClass, TestCaseResult } from '../runner/executor.ts';
+import type { AppMap } from '../crawler/types.ts';
+import { isStaleExpectation } from './staleExpectation.ts';
 
 export interface TestAttempt {
   attemptNumber: number;
@@ -10,6 +12,7 @@ export interface TestAttempt {
   executionPassed?: boolean;
   executionError?: string;
   failureClass?: FailureClass;
+  failureContext?: { finalUrl: string; navigations: string[] };
   durationMs?: number;
   corrected: boolean;
   gaveUpReason?: string;
@@ -25,7 +28,7 @@ export interface RoundTest {
   elementsInScope: ScopedElement[];
   attempts: TestAttempt[];
   priorErrors: string[];
-  status: 'open' | 'passed' | 'failed' | 'gave_up';
+  status: 'open' | 'passed' | 'failed' | 'gave_up' | 'needs_review';
   recorded: boolean;
   announced?: boolean;
 }
@@ -70,6 +73,8 @@ export interface RoundDeps {
   emitTerminal?: (test: RoundTest) => Promise<void>;
   signal?: AbortSignal;
   canCorrect?: (test: RoundTest) => boolean;
+  appMap?: AppMap | null;
+  startUrl?: string;
 }
 
 export async function runRounds(
@@ -77,6 +82,26 @@ export async function runRounds(
   deps: RoundDeps,
 ): Promise<void> {
   const maxRounds = 3;
+
+  function markGaveUpOrNeedsReview(t: RoundTest) {
+    const lastAttempt = t.attempts[t.attempts.length - 1];
+    if (
+      t.origin !== 'baseline' &&
+      lastAttempt &&
+      isStaleExpectation({
+        failureClass: lastAttempt.failureClass,
+        failureContext: lastAttempt.failureContext,
+        error: lastAttempt.executionError,
+        appMap: deps.appMap,
+        startUrl: deps.startUrl,
+        isBaseline: false,
+      })
+    ) {
+      t.status = 'needs_review';
+    } else {
+      t.status = 'gave_up';
+    }
+  }
 
   for (let round = 1; round <= maxRounds; round++) {
     deps.signal?.throwIfAborted();
@@ -111,11 +136,11 @@ export async function runRounds(
           if (test.priorErrors.length > 2) {
             test.priorErrors.splice(0, test.priorErrors.length - 2);
           }
-          test.status = 'gave_up';
           if (deps.canCorrect && !deps.canCorrect(test)) {
             attempt.gaveUpReason = 'token_budget';
             attempt.executionError = (attempt.executionError ? attempt.executionError + ' ' : '') + '[gaveUpReason: token_budget]';
           }
+          markGaveUpOrNeedsReview(test);
         } else {
           const correction = await deps.correct({
             test,
@@ -133,7 +158,7 @@ export async function runRounds(
             // ValidatedVersion remains unchanged, so validatedVersion !== codeVersion
             // Test stays open but will NOT be executed in this round!
           } else {
-            test.status = 'gave_up';
+            markGaveUpOrNeedsReview(test);
           }
         }
       }
@@ -212,11 +237,11 @@ export async function runRounds(
             if (test.priorErrors.length > 2) {
               test.priorErrors.splice(0, test.priorErrors.length - 2);
             }
-            test.status = 'gave_up';
             if (deps.canCorrect && !deps.canCorrect(test)) {
               attempt.gaveUpReason = 'token_budget';
               attempt.executionError = (attempt.executionError ? attempt.executionError + ' ' : '') + '[gaveUpReason: token_budget]';
             }
+            markGaveUpOrNeedsReview(test);
           } else {
             const correction = await deps.correct({
               test,
@@ -234,7 +259,7 @@ export async function runRounds(
               // ValidatedVersion is not updated, so validatedVersion !== codeVersion
               // Test stays open but will NOT be executed in this round!
             } else {
-              test.status = 'gave_up';
+              markGaveUpOrNeedsReview(test);
             }
           }
         }
@@ -277,6 +302,7 @@ export async function runRounds(
         const execPassed = Boolean(result.passed);
         const execError = result.error;
         const failureClass = result.failureClass;
+        const failureContext = result.failureContext;
         const durationMs = result.durationMs ?? 0;
 
         const attempt = pushAttempt(test, {
@@ -285,6 +311,7 @@ export async function runRounds(
           executionPassed: execPassed,
           ...(execError ? { executionError: execError } : {}),
           ...(failureClass ? { failureClass } : {}),
+          ...(failureContext ? { failureContext } : {}),
           durationMs,
           corrected: test.origin === 'corrected',
         });
@@ -303,15 +330,27 @@ export async function runRounds(
         } else if (failureClass === 'finding') {
           // Real finding: never corrected
           test.status = 'failed';
+        } else if (
+          test.origin !== 'baseline' &&
+          isStaleExpectation({
+            failureClass,
+            failureContext,
+            error: execError,
+            appMap: deps.appMap,
+            startUrl: deps.startUrl,
+            isBaseline: false,
+          })
+        ) {
+          test.status = 'needs_review';
         } else if (test.origin === 'baseline') {
           // Baselines: never corrected
           test.status = 'gave_up';
         } else if (round < maxRounds) {
           const canProceed = deps.canCorrect ? deps.canCorrect(test) : true;
           if (!canProceed) {
-            test.status = 'gave_up';
             attempt.gaveUpReason = 'token_budget';
             attempt.executionError = (attempt.executionError ? attempt.executionError + ' ' : '') + '[gaveUpReason: token_budget]';
+            markGaveUpOrNeedsReview(test);
           } else {
             const errorText = execError || 'Test execution failed';
 
@@ -330,11 +369,11 @@ export async function runRounds(
               test.origin = 'corrected';
               // Test stays open; validatedVersion is old so it will be validated in round + 1
             } else {
-              test.status = 'gave_up';
+              markGaveUpOrNeedsReview(test);
             }
           }
         } else {
-          test.status = 'gave_up';
+          markGaveUpOrNeedsReview(test);
         }
       }
     }
@@ -347,14 +386,13 @@ export async function runRounds(
     }
   }
 
-  // 6. Final sweep: any test still open after round loop gives up
+  // 6. Final sweep: any test still open after round loop gives up or becomes needs_review
   for (const test of tests) {
     if (test.status === 'open') {
-      test.status = 'gave_up';
+      markGaveUpOrNeedsReview(test);
     }
     if (!test.recorded) {
       await deps.emitTerminal?.(test);
     }
   }
 }
-// Module component implementation.
