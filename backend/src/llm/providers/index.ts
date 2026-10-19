@@ -9,3 +9,4 @@ export const PROVIDER_REGISTRY: Record<LlmProviderName, LlmProvider> = {
   gemini: geminiProvider,
   nvidia: nvidiaProvider,
 };
+// Module component implementation.
