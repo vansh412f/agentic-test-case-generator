@@ -24,3 +24,4 @@ export function recordExecutionResult(
     data: { ...data, ...(validationErrors ? { validationErrors: toDatabaseJson(validationErrors) } : {}) },
   });
 }
+// Module component implementation.
