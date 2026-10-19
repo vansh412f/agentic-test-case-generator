@@ -56,3 +56,4 @@ export function reasoningEffortFor(
 export const LLM_REQUEST_TIMEOUT_MS = 120_000;
 
 export const LLM_MAX_RETRIES_PER_PROVIDER = 2;
+// Module component implementation.
