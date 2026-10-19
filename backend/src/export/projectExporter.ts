@@ -60,7 +60,8 @@ export function transformSecretTokens(code: string): { code: string; tokens: str
 }
 
 export async function exportProject(job: LoadedJob, destination: Writable): Promise<void> {
-  const tests = job.generatedTests.filter((test) => test.finalStatus !== 'gave_up');
+  const tests = job.generatedTests.filter((test) => test.finalStatus !== 'gave_up' && test.finalStatus !== 'needs_review');
+  const needsReviewTests = job.generatedTests.filter((test) => test.finalStatus === 'needs_review');
   const names = new Set<string>();
   for (const test of tests) {
     const key = test.filename.toLowerCase();
@@ -186,6 +187,12 @@ To run this workflow in GitHub Actions:
 ${secretList.length > 0 ? `3. Configure the following repository secrets under **Settings > Secrets and variables > Actions > Secrets**:\n${secretList.map((t) => `   - \`${t}\``).join('\n')}\n` : ''}4. Trigger the workflow manually via the **Actions** tab ("Run workflow")${!isLocalTarget ? ' or push to `main`' : ''}.
 `;
 
+    const needsReviewSection = needsReviewTests.length > 0 ? `
+## Needs review (not included)
+The following tests had stale expectations and require review before they can be run:
+${needsReviewTests.map((t) => `- \`${t.filename}\` (${t.testCaseId})`).join('\n')}
+` : '';
+
     archive.append(`# Generated Playwright test project
 
 Job: ${job.id}
@@ -193,7 +200,7 @@ Target URL (JSON encoded): ${JSON.stringify(job.targetUrl)}
 
 Requires Node.js 20 or newer and a running target application reachable from this machine.
 Review the generated code before running it. Tests may change application data.
-Tests that found application bugs are included and may still fail. gave_up tests are excluded.
+Tests that found application bugs are included and may still fail. gave_up and needs_review tests are excluded.
 
 Run these commands from this directory:
 
@@ -208,7 +215,8 @@ On a Linux machine without browser system dependencies, use:
 The baseURL is set in playwright.config.ts (or overridden with the BASE_URL environment variable). Tests may also contain absolute URLs;
 update those if you move the target application. A localhost target must run on the machine executing these tests.
 ${envReadmeSection}
-${githubActionsReadmeSection}`, { name: 'README.md' });
+${githubActionsReadmeSection}
+${needsReviewSection}`, { name: 'README.md' });
 
     await Promise.all([completed, archive.finalize()]);
   } catch (cause) {
