@@ -158,6 +158,7 @@ async function runPersistedPipeline(
 ): Promise<PipelineResult> {
   const runId = `run-${jobId}`;
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
+  let finishedPublished = false;
 
   try {
     signal?.throwIfAborted();
@@ -455,14 +456,22 @@ async function runPersistedPipeline(
     if (completeRes && completeRes.count === 0) {
       const current = await prisma.job.findUnique({
         where: { id: jobId },
-        select: { status: true },
+        select: { status: true, errorCode: true },
       });
-      if (current?.status === 'cancelled') {
-        publishJobEvent(jobId, { type: 'job_finished', data: { status: 'cancelled', errorCode: null } });
-        throw new JobCancelledError();
+      const rowStatus = (current?.status as 'cancelled' | 'failed' | 'completed') ?? 'cancelled';
+      if (!finishedPublished) {
+        finishedPublished = true;
+        publishJobEvent(jobId, {
+          type: 'job_finished',
+          data: { status: rowStatus, errorCode: current?.errorCode ?? null },
+        });
       }
+      return { jobId, appMap, testPlan, generatedTests };
     } else {
-      publishJobEvent(jobId, { type: 'job_finished', data: { status: 'completed', errorCode: null } });
+      if (!finishedPublished) {
+        finishedPublished = true;
+        publishJobEvent(jobId, { type: 'job_finished', data: { status: 'completed', errorCode: null } });
+      }
     }
     return { jobId, appMap, testPlan, generatedTests };
   } catch (error) {
@@ -482,7 +491,10 @@ async function runPersistedPipeline(
         { critical: true },
       );
       announcePhase(jobId, 'cancelled');
-      publishJobEvent(jobId, { type: 'job_finished', data: { status: 'cancelled', errorCode: null } });
+      if (!finishedPublished) {
+        finishedPublished = true;
+        publishJobEvent(jobId, { type: 'job_finished', data: { status: 'cancelled', errorCode: null } });
+      }
       throw new JobCancelledError();
     }
     const code = toJobErrorCode(error);
@@ -490,14 +502,21 @@ async function runPersistedPipeline(
     if (failRes && failRes.count === 0) {
       const current = await prisma.job.findUnique({
         where: { id: jobId },
-        select: { status: true },
+        select: { status: true, errorCode: true },
       });
-      if (current?.status === 'cancelled') {
-        publishJobEvent(jobId, { type: 'job_finished', data: { status: 'cancelled', errorCode: null } });
-        throw new JobCancelledError();
+      const rowStatus = (current?.status as 'cancelled' | 'failed' | 'completed') ?? 'failed';
+      if (!finishedPublished) {
+        finishedPublished = true;
+        publishJobEvent(jobId, {
+          type: 'job_finished',
+          data: { status: rowStatus, errorCode: current?.errorCode ?? code },
+        });
       }
     } else {
-      publishJobEvent(jobId, { type: 'job_finished', data: { status: 'failed', errorCode: code } });
+      if (!finishedPublished) {
+        finishedPublished = true;
+        publishJobEvent(jobId, { type: 'job_finished', data: { status: 'failed', errorCode: code } });
+      }
     }
     throw error;
   } finally {
