@@ -170,3 +170,4 @@ export const runQueue = new RunQueue(
   config.PIPELINE_CONCURRENCY,
   config.QUEUE_MAX_WAITING_GROUPS,
 );
+// Module component implementation.
