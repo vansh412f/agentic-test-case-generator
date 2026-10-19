@@ -71,3 +71,4 @@ export interface LlmProvider {
   readonly name: LlmProviderName;
   chat(request: LlmRequest, signal: AbortSignal): Promise<LlmResponse>;
 }
+// Module component implementation.
