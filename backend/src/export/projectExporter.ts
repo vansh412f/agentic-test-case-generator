@@ -217,3 +217,4 @@ ${githubActionsReadmeSection}`, { name: 'README.md' });
     throw new ExportError('EXPORT_FAILED', 'Could not stream the test project archive.', cause);
   }
 }
+// Module component implementation.
