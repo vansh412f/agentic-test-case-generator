@@ -116,3 +116,4 @@ ${JSON.stringify(args.elementsInScope, null, 2)}
 
 Generate the Playwright .spec.ts file for this test case now.`;
 }
+// Module component implementation.
