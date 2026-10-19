@@ -295,6 +295,7 @@ export function startGeneration(
   options: {
     deepCrawl?: boolean;
     testData?: TestDataParam[];
+    testDataByUrl?: Record<string, TestDataParam[]>;
     focus?: FocusParam[];
     fresh?: boolean;
   } = {},
@@ -315,6 +316,9 @@ export function startGeneration(
         }
       : {
           urls,
+          ...(options.testDataByUrl && Object.keys(options.testDataByUrl).length > 0
+            ? { testDataByUrl: options.testDataByUrl }
+            : {}),
           ...base,
         };
 
