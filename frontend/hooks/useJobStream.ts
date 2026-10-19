@@ -79,7 +79,11 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
   const startTerminal = initialStatus !== undefined && isTerminalJobStatus(initialStatus);
 
   useEffect(() => {
-    if (swr.data && isTerminalJobStatus(swr.data.status) && transport === 'polling') {
+    if (!swr.data) return;
+    if (transport === 'polling') {
+      setLiveStatus(swr.data.status);
+    }
+    if (isTerminalJobStatus(swr.data.status) && transport === 'polling') {
       setTransport('idle');
     }
   }, [swr.data, transport]);
