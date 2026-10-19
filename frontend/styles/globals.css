@@ -1175,9 +1175,17 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
 }
 
 .job-hero h1 { font-size: 36px; letter-spacing: -2px; margin: 10px 0 5px; font-weight: 700; }
-.job-hero a { color: #7f8b83; font-size: 10px; display: flex; gap: 5px; align-items: center; text-decoration: none; }
-.job-hero a:hover { color: #17201b; }
-.job-hero a svg { width: 12px; }
+.job-hero a:not(.primary-button):not(.secondary-button) { color: #7f8b83; font-size: 10px; display: flex; gap: 5px; align-items: center; text-decoration: none; }
+.job-hero a:not(.primary-button):not(.secondary-button):hover { color: #17201b; }
+.job-hero a:not(.primary-button):not(.secondary-button) svg { width: 12px; }
+
+.primary-button,
+.primary-button:hover,
+.primary-button:focus-visible,
+.primary-button:visited,
+.primary-button:active {
+  color: #ffffff;
+}
 
 .job-actions { display: flex; gap: 8px; }
 .secondary-button {
@@ -1328,6 +1336,7 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
 .test-status-icon svg { width: 12px; }
 .test-status-icon.failed { background: #f9e6e3; color: #b3443e; font-weight: 800; }
 .test-status-icon.gave-up { background: #fef3c7; color: #b45309; }
+.test-status-icon.needs-review { background: #f3f4f6; color: #4b5563; font-weight: 800; }
 
 .test-name { flex: 1; display: flex; flex-direction: column; }
 .test-name strong { font-size: 11px; }
@@ -1361,6 +1370,10 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
   border-radius: 7px;
   margin-top: 8px;
   overflow: hidden;
+}
+
+.failing-line-highlight {
+  background-color: rgba(239, 68, 68, 0.25) !important;
 }
 
 .code-top {
