@@ -10,3 +10,4 @@ export const prisma = globalThis.prismaClient ?? new PrismaClient({
 });
 
 if (config.NODE_ENV !== 'production') globalThis.prismaClient = prisma;
+// Module component implementation.
