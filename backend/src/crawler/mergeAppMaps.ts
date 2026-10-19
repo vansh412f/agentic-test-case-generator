@@ -69,3 +69,4 @@ export function mergeAppMaps(start: AppMap, extras: CrawledPage[]): AppMap {
     isTruncated: start.isTruncated || extras.some((e) => e.map.isTruncated),
   });
 }
+// Module component implementation.
