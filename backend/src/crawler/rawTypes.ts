@@ -57,3 +57,4 @@ export interface RawPageExtraction {
   // True when the cap dropped some elements
   truncated: boolean;
 }
+// Module component implementation.
