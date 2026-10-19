@@ -78,6 +78,10 @@ export function classifyTarget(raw: string): ClassifyResult {
     return { kind: 'invalid', normalized: null };
   }
 
+  if (parsed.username || parsed.password) {
+    return { kind: 'invalid', normalized: null };
+  }
+
   // Clean hostname: strip IPv6 brackets and trailing dot
   const rawHost = parsed.hostname.toLowerCase();
   const host = rawHost.replace(/^\[|\]$/g, '').replace(/\.$/, '');
