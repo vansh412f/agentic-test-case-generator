@@ -11,6 +11,7 @@ export interface AttemptInput {
   executionPassed?: boolean;
   executionError?: string;
   failureClass?: FailureClass;
+  failureContext?: unknown;
   durationMs?: number;
   corrected: boolean;
 }
@@ -19,9 +20,13 @@ export function recordExecutionResult(
   input: AttemptInput & { generatedTestId: string },
   database: Prisma.TransactionClient = prisma,
 ) {
-  const { validationErrors, ...data } = input;
+  const { validationErrors, failureContext, ...data } = input;
   return database.executionResult.create({
-    data: { ...data, ...(validationErrors ? { validationErrors: toDatabaseJson(validationErrors) } : {}) },
+    data: {
+      ...data,
+      ...(validationErrors ? { validationErrors: toDatabaseJson(validationErrors) } : {}),
+      ...(failureContext !== undefined ? { failureContext: toDatabaseJson(failureContext) } : {}),
+    },
   });
 }
 // Module component implementation.
