@@ -146,3 +146,4 @@ export function toPlannerView(appMap: AppMap, options?: PlannerViewOptions): Pla
     discoveredLinks: (appMap.discoveredLinks ?? []).slice(0, 25),
   };
 }
+// Module component implementation.
