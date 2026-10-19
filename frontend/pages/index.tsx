@@ -5,6 +5,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { toast } from 'sonner';
 import { Seo } from '@/components/common/Seo';
+import { ErrorNotice } from '@/components/common/ErrorNotice';
 import { CrawlPreview } from '@/components/home/CrawlPreview';
 import { HowItWorks } from '@/components/home/HowItWorks';
 import { PipelineProgress } from '@/components/home/PipelineProgress';
@@ -16,10 +17,12 @@ import { PowWidget } from '@/components/home/PowWidget';
 import { HeroTerminal } from '@/components/home/HeroTerminal';
 import { RunGroupList } from '@/components/home/RunGroupList';
 import { useJobStream } from '@/hooks/useJobStream';
+import { useBackendMode } from '@/hooks/useBackendMode';
 import { isTerminalJobStatus } from '@/lib/utils';
 import { classifyTarget, isTunnelUrl, getDeploymentMode } from '@/lib/targetUrl';
 import { SITE_URL } from '@/lib/site';
 import { handleGenerationError } from '@/lib/generationErrors';
+import { presentError } from '@/lib/errorPresentation';
 
 import {
   apiBase,
@@ -181,6 +184,7 @@ function errorMessage(error: unknown): string {
 
 export default function HomePage() {
   const router = useRouter();
+  const { isLocal } = useBackendMode();
   const [state, dispatch] = useReducer(reducer, initialState);
   const isRunGroup = state.jobIds.length > 1;
   const { data: groupList } = useSWR<JobsListResponse, Error>(
@@ -248,6 +252,9 @@ export default function HomePage() {
       } else {
         setWakingCrawl(null);
         let msg = errorMessage(err);
+        if (err instanceof ApiError) {
+          msg = presentError(err.code, err.details, err.message).body;
+        }
         toast.error(msg);
         dispatch({ type: 'FAILED', message: msg });
       }
@@ -340,12 +347,14 @@ export default function HomePage() {
     void router.push(`/jobs/${liveJob.id}`);
   }, [liveJob, state.phase, state.jobIds, router]);
 
-  async function handleCrawl(url: string): Promise<void> {
-    const classified = classifyTarget(url);
+  async function handleCrawl(rawUrl: string): Promise<void> {
+    const classified = classifyTarget(rawUrl);
+    const url = classified.normalized || rawUrl;
     const mode = getDeploymentMode();
-    const isLocalApi = getApiMode() === 'local-agent';
+    const isLocalApi = isLocal || getApiMode() === 'local-agent';
 
     if (
+      !isLocal &&
       mode === 'hosted' &&
       !isLocalApi &&
       (classified.kind === 'loopback' || classified.kind === 'private')
@@ -401,6 +410,9 @@ export default function HomePage() {
         }
       }
       let msg = errorMessage(error);
+      if (error instanceof ApiError) {
+        msg = presentError(error.code, error.details, error.message).body;
+      }
       if (isTunnelUrl(url)) {
         msg +=
           ' (Tunnel URLs stop working when the cloudflared terminal is closed, and change every time you restart it. Re-run the command and paste the new URL.)';
@@ -410,8 +422,8 @@ export default function HomePage() {
     }
   }
 
-  async function handleGenerate(): Promise<void> {
-    if (!hasCustomKeys && !altchaPayload) {
+  async function handleGenerate(testDataByUrlParam?: Record<string, TestDataParam[]>): Promise<void> {
+    if (!isLocal && !hasCustomKeys && !altchaPayload) {
       toast('Bot check is still running — one moment');
       return;
     }
@@ -446,6 +458,7 @@ export default function HomePage() {
       const { jobIds } = await startGeneration(urls, payloadToUse, {
         deepCrawl: state.deepCrawl,
         testData: testDataEntries.length > 0 ? testDataEntries : undefined,
+        testDataByUrl: testDataByUrlParam,
         fresh: isFresh,
       });
       dispatch({ type: 'JOBS_ACCEPTED', jobIds });
@@ -455,9 +468,16 @@ export default function HomePage() {
       }
     } catch (error) {
       void mutateBudget();
-      const msg = handleGenerationError(error, {
-        onQuota: (details) => setQuotaDetails(details),
+      let msg = handleGenerationError(error, {
+        onQuota: (details) => {
+          if (!isLocal) {
+            setQuotaDetails(details);
+          }
+        },
       });
+      if (error instanceof ApiError) {
+        msg = presentError(error.code, error.details, error.message).body;
+      }
       dispatch({ type: 'FAILED', message: msg });
     }
   }
@@ -583,7 +603,7 @@ export default function HomePage() {
         </div>
       ) : null}
 
-      {quotaDetails ? (
+      {!isLocal && quotaDetails ? (
         <QuotaExhaustedPanel
           limit={quotaDetails.limit}
           onDismiss={() => setQuotaDetails(null)}
@@ -593,22 +613,22 @@ export default function HomePage() {
       ) : null}
 
       {state.error && !quotaDetails && !wakingCrawl ? (
-        <div className="error-banner mb-12" role="alert">
-          <span>
-            <Warning aria-hidden="true" className="h-5 w-5" />
-          </span>
-          <div>
-            <strong>Request failed</strong>
-            <p>{state.error}</p>
-          </div>
+        <div className="mb-12">
+          <ErrorNotice
+            title="Request failed"
+            body={state.error}
+            raw={state.error}
+          />
           {state.jobIds[0] ? (
-            <Link
-              className="inline-flex items-center gap-1.5 font-bold"
-              href={`/jobs/${state.jobIds[0]}`}
-            >
-              Open job
-              <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-            </Link>
+            <div className="mt-2 text-right">
+              <Link
+                className="inline-flex items-center gap-1.5 font-bold text-xs"
+                href={`/jobs/${state.jobIds[0]}`}
+              >
+                Open job
+                <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
+              </Link>
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -619,9 +639,9 @@ export default function HomePage() {
           appMap={state.appMap}
           budget={budget}
           deepCrawl={state.deepCrawl}
-          disabled={!hasCustomKeys && !altchaPayload}
+          disabled={!isLocal && !hasCustomKeys && !altchaPayload}
           generating={false}
-          onGenerate={() => void handleGenerate()}
+          onGenerate={(testDataByUrl) => void handleGenerate(testDataByUrl)}
           onReset={() => {
             setAltchaPayload(null);
             dispatch({ type: 'RESET' });
@@ -655,7 +675,7 @@ export default function HomePage() {
         />
       ) : null}
 
-      {state.appMap && state.phase !== 'submitting' && !groupRunning && !hasCustomKeys ? (
+      {!isLocal && state.appMap && state.phase !== 'submitting' && !groupRunning && !hasCustomKeys ? (
         <PowWidget key={powEpoch} onPayload={setAltchaPayload} />
       ) : null}
 
