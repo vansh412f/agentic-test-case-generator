@@ -11,3 +11,4 @@ export const prismJs = [
   'components/prism-javascript.min.js',
   'components/prism-typescript.min.js',
 ].map(read).join('\n').replace(/<\/script/gi, '<\\/script');
+// Module component implementation.
