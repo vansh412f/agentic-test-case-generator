@@ -25,6 +25,7 @@ export const crawlIpLimiter = rateLimit({
   keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
   handler: rateLimitHandler,
   skip: async (req) => {
+    if (config.LOCAL_AGENT_MODE) return true;
     const groqKey = req.header('x-groq-api-key')?.trim();
     if (groqKey) {
       const status = await checkProviderKey('groq', groqKey);
@@ -46,6 +47,7 @@ export const powChallengeLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
   handler: rateLimitHandler,
+  skip: () => config.LOCAL_AGENT_MODE,
 });
 
 export const byokValidateLimiter = rateLimit({
@@ -55,5 +57,6 @@ export const byokValidateLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
   handler: rateLimitHandler,
+  skip: () => config.LOCAL_AGENT_MODE,
 });
 // Module component implementation.
