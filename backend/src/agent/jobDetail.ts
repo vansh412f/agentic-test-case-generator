@@ -5,11 +5,20 @@ import { scoreTestConfidence } from './confidence.ts';
 import type { ConfidenceScore } from './confidence.ts';
 import { isTerminal } from '../api/jobStream.ts';
 import { runQueue } from './runQueue.ts';
+import { sanitizeError } from '../runner/sanitizeError.ts';
+import { summarizeFailure, type FailureSummary } from '../report/failureSummary.ts';
 
 type PersistedTest = LoadedJob['generatedTests'][number];
+type PersistedAttempt = PersistedTest['executionResults'][number];
 
-export interface JobDetailTest extends PersistedTest {
+export interface JobDetailAttempt extends PersistedAttempt {
+  failureSummary?: FailureSummary;
+}
+
+export interface JobDetailTest extends Omit<PersistedTest, 'executionResults'> {
   confidence: ConfidenceScore;
+  failureSummary?: FailureSummary;
+  executionResults: JobDetailAttempt[];
 }
 
 export interface JobDetail extends Omit<LoadedJob, 'generatedTests' | 'visitorId'> {
@@ -51,16 +60,36 @@ export function buildJobDetail(
     groupRemainingJobs: options?.groupRemainingJobs,
     usedOwnKeys: Boolean(job.usedOwnKeys),
     tokenUsage: summarizeTokenUsage(job.agentSteps),
-    generatedTests: job.generatedTests.map((test: PersistedTest) => ({
-      ...test,
-      confidence: scoreTestConfidence({
-        code: test.finalCode,
-        finalStatus: test.finalStatus,
-        attempts: [...test.executionResults].sort(
-          (a, b) => a.attemptNumber - b.attemptNumber,
-        ),
-      }),
-    })),
+    generatedTests: job.generatedTests.map((test: PersistedTest) => {
+      const sortedAttempts: JobDetailAttempt[] = [...test.executionResults]
+        .sort((a, b) => a.attemptNumber - b.attemptNumber)
+        .map((attempt) => {
+          const sanitizedError = attempt.executionError
+            ? sanitizeError(attempt.executionError)
+            : attempt.executionError;
+          const failureSummary = sanitizedError
+            ? summarizeFailure(sanitizedError)
+            : undefined;
+          return {
+            ...attempt,
+            executionError: sanitizedError,
+            failureSummary,
+          };
+        });
+
+      const lastAttempt = sortedAttempts[sortedAttempts.length - 1];
+      const failureSummary = lastAttempt?.failureSummary;
+
+      return {
+        ...test,
+        failureSummary,
+        executionResults: sortedAttempts,
+        confidence: scoreTestConfidence({
+          code: test.finalCode,
+          finalStatus: test.finalStatus,
+          attempts: sortedAttempts,
+        }),
+      };
+    }),
   };
 }
-// Module component implementation.
