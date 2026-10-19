@@ -11,6 +11,7 @@ import {
   X,
 } from '@phosphor-icons/react';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { ErrorNotice } from '@/components/common/ErrorNotice';
 import { Seo } from '@/components/common/Seo';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { TestResultCard } from '@/components/job/TestResultCard';
@@ -74,6 +75,17 @@ export const getServerSideProps: GetServerSideProps<JobPageProps> = async ({
     };
   }
 };
+
+function formatStepDuration(latencyMs: number | null | undefined): string {
+  if (typeof latencyMs !== 'number' || isNaN(latencyMs) || latencyMs <= 0) {
+    return '—';
+  }
+  const sec = latencyMs / 1000;
+  if (sec < 10) {
+    return `${sec.toFixed(1)}s`;
+  }
+  return `${Math.round(sec)}s`;
+}
 
 function cleanDomain(urlStr: string): string {
   try {
@@ -245,6 +257,9 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
   const correctedCount = job.generatedTests.filter((t) =>
     t.executionResults.some((r) => r.corrected),
   ).length;
+  const needsReviewCount = job.generatedTests.filter(
+    (t) => t.finalStatus === 'needs_review',
+  ).length;
 
   const passRate =
     job.generatedTests.length > 0
@@ -334,7 +349,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
                 rel="noreferrer"
                 target="_blank"
               >
-                <DownloadSimple aria-hidden="true" className="h-4 w-4" /> Download Report
+                <ArrowSquareOut aria-hidden="true" className="h-4 w-4" /> View full report
               </a>
             ) : null}
 
@@ -378,6 +393,16 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             )}
           </div>
         </section>
+
+        {job.status === 'failed' && (
+          <div style={{ margin: '16px 0' }}>
+            <ErrorNotice
+              title="Run failed"
+              body={job.errorMessage || 'The test generation run encountered an unexpected error.'}
+              raw={job.errorMessage ?? undefined}
+            />
+          </div>
+        )}
 
         {wakingInfo && !terminal && (
           <div
@@ -534,16 +559,23 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
               {job.agentSteps.map((step, i) => {
                 const isFailed = (step as { success?: boolean }).success === false || step.status === 'failure';
                 const isCorrected = step.stepType === 'correct';
-                const duration = step.latencyMs
-                  ? `${Math.round(step.latencyMs / 1000)}s`
-                  : '—';
+                const duration = formatStepDuration(step.latencyMs);
                 const tokens = (
                   (step.promptTokens ?? 0) + (step.completionTokens ?? 0)
                 ).toLocaleString();
                 const hasLlm = Boolean(step.llmModel);
+                const testTitle = step.testCaseId
+                  ? job.testPlan?.testCases.find((tc) => tc.id === step.testCaseId)?.title
+                  : undefined;
+                const tooltipParts = [
+                  step.testCaseId,
+                  testTitle,
+                  step.llmModel,
+                ].filter(Boolean);
+                const tooltip = tooltipParts.length > 0 ? tooltipParts.join(' · ') : undefined;
 
                 return (
-                  <div key={step.id || i}>
+                  <div key={step.id || i} title={tooltip}>
                     <span className={isFailed ? 'failed' : isCorrected ? 'corrected' : ''}>
                       {isFailed ? (
                         <X aria-hidden="true" className="h-3 w-3" />
@@ -557,15 +589,13 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
                       {step.stepType.charAt(0).toUpperCase() + step.stepType.slice(1)}
                     </strong>
                     <small>
-                      {step.testCaseId && (
+                      {duration}
+                      {hasLlm && (
                         <>
-                          <span>{step.testCaseId}</span>
                           <br />
+                          {tokens} tokens
                         </>
                       )}
-                      {duration}
-                      <br />
-                      {hasLlm ? `${tokens} tokens` : 'no LLM'}
                     </small>
                   </div>
                 );
@@ -585,6 +615,9 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
               <span>
                 {failedCount} {failedCount === 1 ? 'finding' : 'findings'}
               </span>
+              {needsReviewCount > 0 && (
+                <span>{needsReviewCount} needs review</span>
+              )}
               <span>{correctedCount} corrected</span>
             </div>
           </div>
