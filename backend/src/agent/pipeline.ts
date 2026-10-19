@@ -46,7 +46,7 @@ export interface GeneratedTestResult {
   testCaseId: string;
   filename: string;
   code: string; // final code (last attempt)
-  status: 'passed' | 'failed' | 'gave_up';
+  status: 'passed' | 'failed' | 'gave_up' | 'needs_review';
   attempts: TestAttempt[];
   confidence: ConfidenceScore;
 }
@@ -76,6 +76,45 @@ export function toJobErrorCode(error: unknown): string {
     return error.code;
   }
   return 'INTERNAL_ERROR';
+}
+
+export function toJobErrorMessage(error: unknown): string {
+  if (error instanceof CrawlError) {
+    let msg = error.message.replace(/^[A-Z0-9_]+:\s*/, '');
+    const details = error.details as Record<string, unknown> | undefined;
+    const host = (details?.host as string) || '';
+    if (details?.reason === 'dns_not_found') {
+      return host ? `Website not found: could not resolve ${host}. Check the URL spelling.` : 'Website not found. Check the URL spelling.';
+    }
+    if (details?.reason === 'dns_temporary') {
+      return host ? `Couldn't look up ${host}. The address lookup failed temporarily.` : 'The address lookup failed temporarily.';
+    }
+    if (details?.reason === 'connection_refused') {
+      return host ? `Connection refused at ${host}. Make sure the server is running.` : 'Connection refused. Make sure the server is running.';
+    }
+    if (msg.includes('getaddrinfo') || msg.includes('ENOTFOUND')) {
+      const extractedHost = msg.match(/ENOTFOUND\s+([^\s]+)/)?.[1] || host;
+      return extractedHost ? `Website not found: could not resolve ${extractedHost}. Check the URL spelling.` : 'Website not found. Check the URL spelling.';
+    }
+    return msg;
+  }
+  if (error instanceof Error) {
+    let msg = error.message.replace(/^[A-Z0-9_]+:\s*/, '');
+    if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
+      const extractedHost = msg.match(/(?:ENOTFOUND|EAI_AGAIN)\s+([^\s]+)/)?.[1] || '';
+      return extractedHost
+        ? `Website not found: could not resolve ${extractedHost}. Check the URL spelling.`
+        : 'Website not found. Check the URL spelling.';
+    }
+    if (msg.includes('ECONNREFUSED')) {
+      const extractedHost = msg.match(/ECONNREFUSED\s+([^\s]+)/)?.[1] || '';
+      return extractedHost
+        ? `Connection refused at ${extractedHost}. Make sure the server is running.`
+        : 'Connection refused. Make sure the server is running.';
+    }
+    return msg;
+  }
+  return String(error);
 }
 
 async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -291,6 +330,8 @@ async function runPersistedPipeline(
 
     await runRounds(tests, {
       signal,
+      appMap,
+      startUrl: url,
       checkSafety: (code, filename) => findUnsafeConstructs(code, filename),
       validateBatch: async (filesToValidate) => {
         const startTsc = Date.now();
@@ -498,7 +539,8 @@ async function runPersistedPipeline(
       throw new JobCancelledError();
     }
     const code = toJobErrorCode(error);
-    const failRes = await safeWrite('failJob', () => failJob(jobId, code, error instanceof Error ? error.message : String(error)), { critical: true });
+    const message = toJobErrorMessage(error);
+    const failRes = await safeWrite('failJob', () => failJob(jobId, code, message), { critical: true });
     if (failRes && failRes.count === 0) {
       const current = await prisma.job.findUnique({
         where: { id: jobId },
