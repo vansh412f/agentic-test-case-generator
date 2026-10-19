@@ -6,6 +6,8 @@ import { escapeHtml as h } from './escape.ts';
 import { prismCss, prismJs } from './prismAssets.ts';
 import { summarizeTokenUsage } from '../agent/tokenUsage.ts';
 import { scoreTestConfidence } from '../agent/confidence.ts';
+import { sanitizeError } from '../runner/sanitizeError.ts';
+import { summarizeFailure } from './failureSummary.ts';
 
 function confidenceBadge(score: number, band: string): string {
   const color = band === 'high' ? '#65dc99' : band === 'medium' ? '#f4cd78' : '#ff8e98';
@@ -13,8 +15,14 @@ function confidenceBadge(score: number, band: string): string {
 }
 
 function badge(status: string): string {
-  const color = status === 'passed' || status === 'success' || status === 'completed'
-    ? '#65dc99' : status === 'failed' || status === 'failure' ? '#ff8e98' : status === 'cancelled' ? '#94a3b8' : '#f4cd78';
+  const color =
+    status === 'passed' || status === 'success' || status === 'completed'
+      ? '#65dc99'
+      : status === 'failed' || status === 'failure'
+      ? '#ff8e98'
+      : status === 'cancelled' || status === 'needs_review'
+      ? '#94a3b8'
+      : '#f4cd78';
   return `<strong style="color:${color}">${h(status)}</strong>`;
 }
 
@@ -38,11 +46,14 @@ export function generateHtmlReport(job: LoadedJob): string {
     const history = attempts.map((attempt, index) => {
       const previous = attempts[index - 1];
       const execution = attempt.executionPassed === null ? 'not executed' : attempt.executionPassed ? 'passed' : 'failed';
+      const cleanError = attempt.executionError ? sanitizeError(attempt.executionError) : attempt.executionError;
+      const failureSummary = cleanError ? summarizeFailure(cleanError) : undefined;
       return `<details><summary>Attempt ${attempt.attemptNumber}${attempt.corrected ? ' (corrected)' : ''}</summary>
         <p>Validation: ${badge(attempt.validationPassed ? 'passed' : 'failed')} · Execution: ${badge(execution)}</p>
         <p>Classification: ${h(attempt.failureClass ?? '—')} · Correction applied: ${attempt.corrected ? 'yes' : 'no'} · Browser duration: ${h(attempt.durationMs ?? '—')} ms</p>
+        ${failureSummary ? `<p><strong>${h(failureSummary.headline)}</strong></p>` : ''}
         ${attempt.validationErrors ? `<pre>${h(JSON.stringify(attempt.validationErrors, null, 2))}</pre>` : ''}
-        ${attempt.executionError ? `<pre>${h(attempt.executionError)}</pre>` : ''}
+        ${cleanError ? `<pre>${h(cleanError)}</pre>` : ''}
         ${previous ? generateDiffHtml(previous.code, attempt.code, attempt.attemptNumber) : ''}
         ${code(attempt.code)}</details>`;
     }).join('');
@@ -76,7 +87,7 @@ export function generateHtmlReport(job: LoadedJob): string {
   <section><h2>Test Results</h2>${tests || '<p>No completed test cases persisted.</p>'}</section>
   <section><h2>Token Usage</h2><p class="muted">Calls count provider attempts, including retries and planner repair. Failed requests with no usage returned have unknown token usage; totals include only reported tokens.</p>
   <table><thead><tr><th>Step</th><th>Calls</th><th>Prompt tokens</th><th>Completion tokens</th></tr></thead><tbody>${usageRows}<tr><th>Total</th><th>${llmSteps.length}</th><th>${totalPrompt}</th><th>${totalCompletion}</th></tr></tbody></table>
-  <table><thead><tr><th>Provider</th><th>Model</th><th>Calls</th><th>Prompt tokens</th><th>Completion tokens</th></tr></thead><tbody>${tokenRows || '<tr><td colspan="5">No LLM calls recorded.</td></tr>'}</tbody></table></section>
+  <table><thead><tr><th>Provider</th><th>Model</th><th>Calls</th><th>Prompt tokens</th><th>Completion tokens</th></tr></thead><tbody>${tokenRows || '<tr><td colspan="5">No model calls recorded.</td></tr>'}</tbody></table></section>
   <section><h2>Agent Step Timeline</h2><table><thead><tr><th>Started at</th><th>Step</th><th>Test / attempt</th><th>Status</th><th>Latency ms</th><th>Provider / model</th><th>Error</th></tr></thead><tbody>${timeline}</tbody></table></section>
   <script>window.Prism={manual:true};</script><script>${prismJs}</script><script>Prism.highlightAll();</script>
   </body></html>`;
