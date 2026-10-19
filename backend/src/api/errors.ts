@@ -102,3 +102,4 @@ export function toHttpError(err: unknown): HttpErrorResponse | null {
   }
   return null;
 }
+// Module component implementation.
