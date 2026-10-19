@@ -183,3 +183,4 @@ export function correctionPreservesSecrets(prev: string, next: string): boolean 
   return true;
 }
 
+// Module component implementation.
