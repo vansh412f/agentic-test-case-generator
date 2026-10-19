@@ -71,8 +71,14 @@ const parseConfig = (): Config => {
     process.exit(1);
   }
 
+  // Production guard: LOCAL_AGENT_MODE cannot be enabled in production
+  if (result.data.NODE_ENV === 'production' && result.data.LOCAL_AGENT_MODE) {
+    console.error('FATAL: LOCAL_AGENT_MODE cannot be enabled when NODE_ENV is production.');
+    process.exit(1);
+  }
+
   // Production fail-fast validation when not in LOCAL_AGENT_MODE
-  if (result.data.NODE_ENV === 'production' && !result.data.LOCAL_AGENT_MODE) {
+  if (result.data.NODE_ENV === 'production') {
     const missing: string[] = [];
 
     if (!result.data.VISITOR_SIGNING_SECRET || result.data.VISITOR_SIGNING_SECRET.trim().length === 0) {
