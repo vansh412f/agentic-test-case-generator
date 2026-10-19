@@ -98,7 +98,12 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
       return;
     }
 
-    const source = new EventSource(`${apiBase()}/api/jobs/${jobId}/stream`);
+    // NEXT_PUBLIC_STREAM_ORIGIN (optional): direct EventSource connection bypassing Vercel rewrite.
+    // The SSE stream needs no custom headers; standard browser EventSource connects directly.
+    const streamOrigin = process.env.NEXT_PUBLIC_STREAM_ORIGIN
+      ? process.env.NEXT_PUBLIC_STREAM_ORIGIN.replace(/\/+$/, '')
+      : apiBase();
+    const source = new EventSource(`${streamOrigin}/api/jobs/${jobId}/stream`);
     let errors = 0;
     let timer: number | null = null;
     let stepTimer: number | null = null;
