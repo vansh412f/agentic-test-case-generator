@@ -1,0 +1,9 @@
+node_modules
+dist
+.env*
+logs
+scratch
+playwright-runner/tests/*
+playwright-runner/test-results
+*.log
+*.local

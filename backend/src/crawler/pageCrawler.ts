@@ -22,11 +22,16 @@ async function launchBrowser(): Promise<Browser> {
   try {
     const proxyUrl = await ensureEgressProxy();
     const proxy = proxyUrl ? { server: proxyUrl } : undefined;
-    const args = proxyUrl ? [
+    const baseArgs = [
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+    ];
+    const proxyArgs = proxyUrl ? [
       '--proxy-bypass-list=<-loopback>',
       '--disable-quic',
       '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-    ] : undefined;
+    ] : [];
+    const args = [...baseArgs, ...proxyArgs];
     return await chromium.launch({
       headless: config.HEADLESS,
       proxy,
