@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
+import { clientIp } from '../security/clientIp.ts';
 import { config } from '../config.ts';
 import { checkProviderKey } from '../llm/keyCheck.ts';
 
@@ -21,7 +22,7 @@ export const crawlIpLimiter = rateLimit({
   skipFailedRequests: true,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  keyGenerator: (req) => ipKeyGenerator(req.ip ?? ''),
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
   handler: rateLimitHandler,
   skip: async (req) => {
     const groqKey = req.header('x-groq-api-key')?.trim();
@@ -43,7 +44,7 @@ export const powChallengeLimiter = rateLimit({
   limit: config.POW_DAILY_LIMIT_PER_IP,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  keyGenerator: (req) => ipKeyGenerator(req.ip ?? ''),
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
   handler: rateLimitHandler,
 });
 
@@ -52,7 +53,7 @@ export const byokValidateLimiter = rateLimit({
   limit: config.BYOK_VALIDATE_DAILY_LIMIT_PER_IP,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  keyGenerator: (req) => ipKeyGenerator(req.ip ?? ''),
+  keyGenerator: (req) => ipKeyGenerator(clientIp(req)),
   handler: rateLimitHandler,
 });
 // Module component implementation.

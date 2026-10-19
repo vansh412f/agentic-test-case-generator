@@ -16,6 +16,7 @@ import {
 } from './rateLimits.ts';
 import { checkProviderKey } from '../llm/keyCheck.ts';
 import { powService } from '../security/pow.ts';
+import { clientIp } from '../security/clientIp.ts';
 import {
   ipHashFor,
   tryReserveRun,
@@ -216,7 +217,7 @@ router.get('/budget', async (req, res) => {
     return;
   }
 
-  const ipHash = ipHashFor(req.ip ?? '');
+  const ipHash = ipHashFor(clientIp(req));
   const status = await budgetStatus({ visitorId: req.visitorId, ipHash });
   res.json({
     byok: false,
@@ -299,7 +300,7 @@ router.post('/generate', async (req, res) => {
     }
   }
 
-  const ipHash = ipHashFor(req.ip ?? '');
+  const ipHash = ipHashFor(clientIp(req));
   const client = { visitorId: req.visitorId, ipHash };
 
   // 5. Active or queued check: one active or queued run group at a time per visitor and per IP

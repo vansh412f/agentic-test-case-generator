@@ -3,6 +3,8 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { prisma } from '../db/client.ts';
 import { config } from '../config.ts';
 
+import { clientIp } from '../security/clientIp.ts';
+
 const adminRouter = Router();
 
 function requireAdmin(req: Request, res: Response, next: NextFunction): void {
@@ -61,6 +63,15 @@ adminRouter.get('/events', async (req: Request, res: Response) => {
   } catch (err) {
     res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to retrieve server events.' });
   }
+});
+
+adminRouter.get('/whoami', (req: Request, res: Response) => {
+  res.json({
+    clientIp: clientIp(req),
+    reqIp: req.ip ?? null,
+    forwardedFor: req.header('x-forwarded-for') ?? null,
+    edgeClientIp: req.header('x-agt-client-ip') ?? null,
+  });
 });
 
 export default adminRouter;

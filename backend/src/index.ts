@@ -28,37 +28,55 @@ app.use(express.json());
 // Middleware: Parse URL-encoded request bodies
 app.use(express.urlencoded({ extended: true }));
 
-// Gated CORS and Private-Network-Access middleware for Local Agent mode
-if (config.LOCAL_AGENT_MODE) {
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    const origin = req.header('origin');
-    const isAllowedOrigin =
-      origin &&
-      (/^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/.test(origin) ||
-        (config.FRONTEND_ORIGIN && origin === config.FRONTEND_ORIGIN) ||
-        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin));
+// Security headers (nosniff, strict-origin-when-cross-origin, DENY frame options)
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'DENY');
+  next();
+});
 
-    if (isAllowedOrigin && origin) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-      res.setHeader(
-        'Access-Control-Allow-Headers',
-        'Content-Type, X-Visitor-Id, X-Groq-Api-Key, X-Gemini-Api-Key',
-      );
-      res.setHeader('Access-Control-Expose-Headers', 'X-Visitor-Id');
-    }
-
-    if (req.method === 'OPTIONS') {
-      if (isAllowedOrigin) {
-        res.setHeader('Access-Control-Allow-Private-Network', 'true');
-        res.sendStatus(204);
-        return;
-      }
-    }
-
+// CORS middleware driven by FRONTEND_ORIGIN allowlist (comma-separated), Vercel previews, and localhost.
+// Needed in production for direct SSE stream fallback (WP6) and in local agent mode for PNA.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.header('origin');
+  if (!origin) {
     next();
-  });
-}
+    return;
+  }
+
+  const allowedOrigins = (config.FRONTEND_ORIGIN || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const isAllowedOrigin =
+    allowedOrigins.includes(origin) ||
+    /^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/.test(origin) ||
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+
+  if (isAllowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, X-Visitor-Id, X-Groq-Api-Key, X-Gemini-Api-Key, X-Admin-Secret',
+    );
+    res.setHeader('Access-Control-Expose-Headers', 'X-Visitor-Id');
+  }
+
+  if (req.method === 'OPTIONS') {
+    if (isAllowedOrigin) {
+      if (config.LOCAL_AGENT_MODE) {
+        res.setHeader('Access-Control-Allow-Private-Network', 'true');
+      }
+      res.sendStatus(204);
+      return;
+    }
+  }
+
+  next();
+});
 
 
 // API Routes
