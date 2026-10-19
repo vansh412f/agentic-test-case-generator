@@ -213,10 +213,7 @@ async function runTests() {
     // No raw IP leakage
     assert.equal(hMorning.length, 32, 'Hash should be 32 hex chars');
     assert.ok(/^[0-9a-f]{32}$/.test(hMorning), 'Hash must be hexadecimal');
-    assert.ok(!hMorning.includes('198'), 'Hash must not leak raw IP octave');
-    assert.ok(!hMorning.includes('51'), 'Hash must not leak raw IP octave');
-    assert.ok(!hMorning.includes('100'), 'Hash must not leak raw IP octave');
-    assert.ok(!hMorning.includes('42'), 'Hash must not leak raw IP octave');
+    assert.ok(!hMorning.includes(ip), 'Hash must not leak raw IP');
     console.log('  ✓ ipHashFor checks passed');
   }
 
