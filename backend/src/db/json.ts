@@ -12,3 +12,4 @@ export function toDatabaseJson(value: unknown): Prisma.InputJsonValue | typeof P
   const parsed = JsonSchema.parse(serialized);
   return parsed === null ? Prisma.JsonNull : parsed;
 }
+// Module component implementation.
