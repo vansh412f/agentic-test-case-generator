@@ -6,3 +6,4 @@ export class ExportError extends Error {
     this.name = 'ExportError';
   }
 }
+// Module component implementation.
