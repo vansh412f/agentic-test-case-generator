@@ -241,6 +241,7 @@ async function runPersistedPipeline(
           priorErrors: [],
           status: 'open',
           recorded: false,
+          announced: false,
         });
         continue;
       }
@@ -283,6 +284,7 @@ async function runPersistedPipeline(
         priorErrors: [],
         status: 'open',
         recorded: false,
+        announced: false,
       });
     }
 
@@ -398,14 +400,17 @@ async function runPersistedPipeline(
         if (res !== undefined) {
           test.recorded = true;
         }
-        publishJobEvent(jobId, {
-          type: 'test_completed',
-          data: {
-            testCaseId: test.testCase.id,
-            status: finalStatus,
-            totalAttempts: test.attempts.length,
-          },
-        });
+        if (!test.announced) {
+          test.announced = true;
+          publishJobEvent(jobId, {
+            type: 'test_completed',
+            data: {
+              testCaseId: test.testCase.id,
+              status: finalStatus,
+              totalAttempts: test.attempts.length,
+            },
+          });
+        }
       },
       canCorrect: () => {
         if (tokenBudget <= 0) return true;
@@ -446,8 +451,19 @@ async function runPersistedPipeline(
       }),
     }));
 
-    await safeWrite('completeJob', () => completeJob(jobId), { critical: true });
-    publishJobEvent(jobId, { type: 'job_finished', data: { status: 'completed', errorCode: null } });
+    const completeRes = await safeWrite('completeJob', () => completeJob(jobId), { critical: true });
+    if (completeRes && completeRes.count === 0) {
+      const current = await prisma.job.findUnique({
+        where: { id: jobId },
+        select: { status: true },
+      });
+      if (current?.status === 'cancelled') {
+        publishJobEvent(jobId, { type: 'job_finished', data: { status: 'cancelled', errorCode: null } });
+        throw new JobCancelledError();
+      }
+    } else {
+      publishJobEvent(jobId, { type: 'job_finished', data: { status: 'completed', errorCode: null } });
+    }
     return { jobId, appMap, testPlan, generatedTests };
   } catch (error) {
     if (
@@ -470,8 +486,19 @@ async function runPersistedPipeline(
       throw new JobCancelledError();
     }
     const code = toJobErrorCode(error);
-    await safeWrite('failJob', () => failJob(jobId, code, error instanceof Error ? error.message : String(error)), { critical: true });
-    publishJobEvent(jobId, { type: 'job_finished', data: { status: 'failed', errorCode: code } });
+    const failRes = await safeWrite('failJob', () => failJob(jobId, code, error instanceof Error ? error.message : String(error)), { critical: true });
+    if (failRes && failRes.count === 0) {
+      const current = await prisma.job.findUnique({
+        where: { id: jobId },
+        select: { status: true },
+      });
+      if (current?.status === 'cancelled') {
+        publishJobEvent(jobId, { type: 'job_finished', data: { status: 'cancelled', errorCode: null } });
+        throw new JobCancelledError();
+      }
+    } else {
+      publishJobEvent(jobId, { type: 'job_finished', data: { status: 'failed', errorCode: code } });
+    }
     throw error;
   } finally {
     try {
