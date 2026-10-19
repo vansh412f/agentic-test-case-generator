@@ -45,3 +45,4 @@ export const GenerateRequestSchema = z.union([
 ]);
 
 export type GenerateRequest = z.infer<typeof GenerateRequestSchema>;
+// Module component implementation.
