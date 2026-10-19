@@ -1,38 +1,46 @@
 import ts from 'typescript';
 
 /**
- * Rewrites `@playwright/test` import declarations to a target specifier using the TypeScript AST.
+ * Rewrites `@playwright/test` import and export declarations to a target specifier using text splicing.
+ * Output is byte-identical to original code except for the replaced module specifier string literals.
  */
 export function rewritePlaywrightImport(code: string, targetSpecifier: string): string {
-  const sourceFile = ts.createSourceFile('test.spec.ts', code, ts.ScriptTarget.Latest, true);
+  const sf = ts.createSourceFile('test.spec.ts', code, ts.ScriptTarget.Latest, true);
 
-  const transformer = <T extends ts.Node>(context: ts.TransformationContext) => {
-    return (rootNode: T) => {
-      const visit = (node: ts.Node): ts.Node => {
-        if (ts.isImportDeclaration(node)) {
-          if (
-            ts.isStringLiteral(node.moduleSpecifier) &&
-            node.moduleSpecifier.text === '@playwright/test'
-          ) {
-            return context.factory.updateImportDeclaration(
-              node,
-              node.modifiers,
-              node.importClause,
-              context.factory.createStringLiteral(targetSpecifier),
-              node.assertClause,
-            );
-          }
-        }
-        return ts.visitEachChild(node, visit, context);
-      };
-      return ts.visitNode(rootNode, visit) as T;
-    };
-  };
+  const specs: ts.StringLiteral[] = [];
 
-  const result = ts.transform(sourceFile, [transformer]);
-  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
-  const transformedSource = result.transformed[0] as ts.SourceFile;
-  const newCode = printer.printFile(transformedSource);
-  result.dispose();
-  return newCode;
+  for (const stmt of sf.statements) {
+    if (ts.isImportDeclaration(stmt)) {
+      if (
+        ts.isStringLiteral(stmt.moduleSpecifier) &&
+        stmt.moduleSpecifier.text === '@playwright/test'
+      ) {
+        specs.push(stmt.moduleSpecifier);
+      }
+    } else if (ts.isExportDeclaration(stmt)) {
+      if (
+        stmt.moduleSpecifier &&
+        ts.isStringLiteral(stmt.moduleSpecifier) &&
+        stmt.moduleSpecifier.text === '@playwright/test'
+      ) {
+        specs.push(stmt.moduleSpecifier);
+      }
+    }
+  }
+
+  if (specs.length === 0) {
+    return code;
+  }
+
+  // Sort in reverse order of start position so splicing later offsets does not shift earlier offsets
+  specs.sort((a, b) => b.getStart(sf) - a.getStart(sf));
+
+  let result = code;
+  const replacement = JSON.stringify(targetSpecifier);
+
+  for (const spec of specs) {
+    result = result.slice(0, spec.getStart(sf)) + replacement + result.slice(spec.getEnd());
+  }
+
+  return result;
 }

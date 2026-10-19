@@ -10,6 +10,8 @@ import { closeAllJobStreams } from './api/jobStream.ts';
 import { reconcileOrphanedJobs } from './maintenance/reconcileJobs.ts';
 import { runRetention } from './maintenance/expireOldJobs.ts';
 import { recordServerEvent } from './observability/serverEvents.ts';
+import { CrawlError } from './crawler/crawlErrors.ts';
+import { toHttpError } from './api/errors.ts';
 
 const bootedAt = new Date();
 
@@ -96,6 +98,19 @@ app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, r
     next(err);
     return;
   }
+  if (err instanceof CrawlError) {
+    const httpErr = toHttpError(err);
+    if (httpErr) {
+      if (httpErr.headers) {
+        for (const [key, value] of Object.entries(httpErr.headers)) {
+          res.setHeader(key, value);
+        }
+      }
+      res.status(httpErr.status).json(httpErr.body);
+      return;
+    }
+  }
+
   const status = typeof err?.status === 'number' ? err.status : (typeof err?.statusCode === 'number' ? err.statusCode : 500);
 
   if (status < 500) {

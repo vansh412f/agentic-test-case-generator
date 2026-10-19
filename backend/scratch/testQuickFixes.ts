@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { normalizeTargetUrl } from '../src/security/targetUrl.ts';
+import { CrawlRequestSchema, GenerateRequestSchema } from '../src/api/schemas.ts';
 import { CrawlError } from '../src/crawler/crawlErrors.ts';
 import { mapGotoError } from '../src/crawler/gotoErrors.ts';
 import { sanitizeError } from '../src/runner/sanitizeError.ts';
@@ -50,6 +51,42 @@ async function testNormalizeTargetUrl() {
   );
 
   console.log('✓ normalizeTargetUrl passed');
+}
+
+async function testSchemasValidation() {
+  console.log('--- 1b. Schemas safeParse (no throw) ---');
+
+  // safeParse({url:'ftp://x.com'}) returns success: false without throwing
+  let ftpResult: any;
+  assert.doesNotThrow(() => {
+    ftpResult = CrawlRequestSchema.safeParse({ url: 'ftp://x.com' });
+  });
+  assert.equal(ftpResult.success, false);
+  const ftpIssue = ftpResult.error.issues.find((i: any) => i.params?.code === 'INVALID_URL');
+  assert.ok(ftpIssue, 'Must produce INVALID_URL issue params');
+
+  // safeParse({url:'http://u:p@x.com'}) returns success: false without throwing
+  let credResult: any;
+  assert.doesNotThrow(() => {
+    credResult = CrawlRequestSchema.safeParse({ url: 'http://u:p@x.com' });
+  });
+  assert.equal(credResult.success, false);
+  const credIssue = credResult.error.issues.find((i: any) => i.params?.code === 'INVALID_URL');
+  assert.ok(credIssue, 'Must produce INVALID_URL issue params for credentials');
+
+  // testDataByUrl key 'ftp://x' returns success: false without throwing
+  let testDataResult: any;
+  assert.doesNotThrow(() => {
+    testDataResult = GenerateRequestSchema.safeParse({
+      urls: ['https://example.com/'],
+      testDataByUrl: {
+        'ftp://x': [],
+      },
+    });
+  });
+  assert.equal(testDataResult.success, false);
+
+  console.log('✓ Schemas safeParse passed');
 }
 
 async function testErrorMapping() {
@@ -264,19 +301,25 @@ async function testStaleExpectation() {
 async function testImportRewrite() {
   console.log('--- 7. rewritePlaywrightImport ---');
 
-  const originalCode = `import { test, expect } from '@playwright/test';
+  const fixture = `// Top-level comment
+import { test, expect } from '@playwright/test';
 
-test('sample test', async ({ page }) => {
-  await page.goto('/');
-  await expect(page).toHaveTitle('Demo');
-});
+// Intermediate comment
+export { expect } from '@playwright/test';
+
+function helper() {
+  const a = 1;
+  return a;
+}
 `;
 
-  const rewritten = rewritePlaywrightImport(originalCode, '../../agt-capture.ts');
+  const output = rewritePlaywrightImport(fixture, '../../agt-capture.ts');
 
-  assert.ok(rewritten.includes('../../agt-capture.ts'), 'Rewritten code must import agt-capture');
-  assert.ok(!rewritten.includes("from '@playwright/test'"), 'Original @playwright/test import should be replaced');
-  assert.ok(originalCode.includes("from '@playwright/test'"), 'Original string must remain unmodified');
+  assert.equal(output.split('\n').length, fixture.split('\n').length, 'Line count must be identical');
+  const expected = fixture
+    .replace("'@playwright/test'", '"../../agt-capture.ts"')
+    .replace("'@playwright/test'", '"../../agt-capture.ts"');
+  assert.equal(output, expected, 'Output must be byte-identical except the specifier');
 
   console.log('✓ rewritePlaywrightImport passed');
 }
@@ -329,7 +372,7 @@ async function testBudgetQuotaExempt() {
   console.log('--- 10. Budget quotaExempt filter ---');
 
   // Verify Prisma client has Job.quotaExempt
-  const testJob = await prisma.job.create({
+  const testJobExempt = await prisma.job.create({
     data: {
       targetUrl: 'http://test-quota-exempt.internal',
       status: 'completed',
@@ -339,11 +382,22 @@ async function testBudgetQuotaExempt() {
     },
   });
 
-  const counts = await countJobsForBudget('visitor-test-exempt', null);
-  assert.equal(counts.visitor, 0, 'quotaExempt jobs must not count towards daily budget');
+  const testJobCounted = await prisma.job.create({
+    data: {
+      targetUrl: 'http://test-quota-exempt.internal',
+      status: 'completed',
+      quotaExempt: false,
+      visitorId: 'visitor-test-exempt',
+      ipHash: 'iphash-test-exempt',
+    },
+  });
 
-  // Clean up test job
-  await prisma.job.delete({ where: { id: testJob.id } });
+  const counts = await countJobsForBudget('visitor-test-exempt', null);
+  assert.equal(counts.visitor, 1, 'quotaExempt: false job must count 1 towards daily budget while quotaExempt: true is ignored');
+
+  // Clean up both test jobs
+  await prisma.job.delete({ where: { id: testJobExempt.id } });
+  await prisma.job.delete({ where: { id: testJobCounted.id } });
 
   console.log('✓ Budget quotaExempt filter passed');
 }
@@ -351,6 +405,7 @@ async function testBudgetQuotaExempt() {
 async function main() {
   console.log('=== Running Quick-Fix Batch Verification Suite ===\n');
   await testNormalizeTargetUrl();
+  await testSchemasValidation();
   await testErrorMapping();
   await testSanitizeError();
   await testSummarizeFailure();
@@ -360,7 +415,7 @@ async function main() {
   await testPipelineErrorMessage();
   await testConfigGuard();
   await testBudgetQuotaExempt();
-  console.log('\n=== ALL 10 QUICK-FIX SUITE TESTS PASSED ===');
+  console.log('\n=== ALL QUICK-FIX SUITE TESTS PASSED ===');
 }
 
 main().catch((err) => {

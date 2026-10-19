@@ -125,6 +125,19 @@ router.get('/pow/challenge', powChallengeLimiter, async (_req, res) => {
 router.post('/crawl', crawlIpLimiter, async (req, res) => {
   const parsed = CrawlRequestSchema.safeParse(req.body);
   if (!parsed.success) {
+    const invalidUrlIssue = parsed.error.issues.find(
+      (issue) => 'params' in issue && (issue.params as { code?: string } | undefined)?.code === 'INVALID_URL',
+    );
+    if (invalidUrlIssue && 'params' in invalidUrlIssue) {
+      const params = (invalidUrlIssue.params as Record<string, unknown>) || {};
+      const { code: _, ...details } = params;
+      res.status(400).json({
+        error: 'INVALID_URL',
+        message: invalidUrlIssue.message,
+        details: { reason: (details.reason as string) || 'invalid_format', ...details },
+      });
+      return;
+    }
     res.status(400).json({
       error: 'INVALID_REQUEST',
       message: 'Request validation failed',
@@ -241,6 +254,19 @@ router.post('/generate', async (req, res) => {
   // 1. Parse body
   const parsed = GenerateRequestSchema.safeParse(req.body);
   if (!parsed.success) {
+    const invalidUrlIssue = parsed.error.issues.find(
+      (issue) => 'params' in issue && (issue.params as { code?: string } | undefined)?.code === 'INVALID_URL',
+    );
+    if (invalidUrlIssue && 'params' in invalidUrlIssue) {
+      const params = (invalidUrlIssue.params as Record<string, unknown>) || {};
+      const { code: _, ...details } = params;
+      res.status(400).json({
+        error: 'INVALID_URL',
+        message: invalidUrlIssue.message,
+        details: { reason: (details.reason as string) || 'invalid_format', ...details },
+      });
+      return;
+    }
     res.status(400).json({
       error: 'INVALID_REQUEST',
       message: 'Request validation failed',

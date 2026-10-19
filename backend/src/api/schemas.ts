@@ -2,12 +2,27 @@ import { z } from 'zod';
 import { MAX_URLS_PER_RUN } from '../agent/run.config.ts';
 import { normalizeTargetUrl } from '../security/targetUrl.ts';
 import { config } from '../config.ts';
+import { CrawlError } from '../crawler/crawlErrors.ts';
 
 const targetUrlSchema = z
   .string()
   .trim()
   .min(1, 'URL is required')
-  .transform((val) => normalizeTargetUrl(val, { localMode: config.LOCAL_AGENT_MODE }));
+  .transform((val, ctx) => {
+    try {
+      return normalizeTargetUrl(val, { localMode: config.LOCAL_AGENT_MODE });
+    } catch (err) {
+      if (err instanceof CrawlError) {
+        ctx.addIssue({
+          code: 'custom',
+          message: err.message,
+          params: { code: err.code, ...(typeof err.details === 'object' && err.details ? (err.details as Record<string, unknown>) : {}) },
+        });
+        return z.NEVER;
+      }
+      throw err;
+    }
+  });
 
 export const CrawlRequestSchema = z.object({
   url: targetUrlSchema,
@@ -32,12 +47,24 @@ export type TestDataEntry = z.infer<typeof TestDataEntrySchema>;
 const testDataByUrlSchema = z
   .record(z.string(), z.array(TestDataEntrySchema).max(30))
   .optional()
-  .transform((record) => {
+  .transform((record, ctx) => {
     if (!record) return undefined;
     const normalizedRecord: Record<string, TestDataEntry[]> = {};
     for (const [key, entries] of Object.entries(record)) {
-      const normKey = normalizeTargetUrl(key, { localMode: config.LOCAL_AGENT_MODE });
-      normalizedRecord[normKey] = entries;
+      try {
+        const normKey = normalizeTargetUrl(key, { localMode: config.LOCAL_AGENT_MODE });
+        normalizedRecord[normKey] = entries;
+      } catch (err) {
+        if (err instanceof CrawlError) {
+          ctx.addIssue({
+            code: 'custom',
+            message: err.message,
+            params: { code: err.code, ...(typeof err.details === 'object' && err.details ? (err.details as Record<string, unknown>) : {}) },
+          });
+          return z.NEVER;
+        }
+        throw err;
+      }
     }
     return normalizedRecord;
   })

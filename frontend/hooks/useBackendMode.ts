@@ -1,5 +1,6 @@
 import useSWR from 'swr';
 import { getDeploymentMode } from '../lib/targetUrl';
+import { resolveUrl } from '../lib/api';
 
 interface HealthResponse {
   ok: boolean;
@@ -8,7 +9,7 @@ interface HealthResponse {
 }
 
 const fetcher = async (url: string): Promise<HealthResponse> => {
-  const res = await fetch(url);
+  const res = await fetch(resolveUrl(url));
   if (!res.ok) {
     throw new Error('Failed to fetch health');
   }

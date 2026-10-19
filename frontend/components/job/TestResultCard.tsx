@@ -212,9 +212,6 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
 
           {tab === 'error' && (
             <div className="error-output">
-              <span>
-                FAILURE CATEGORY · <b>{failureCategory?.toUpperCase() ?? 'FINDING'}</b>
-              </span>
               {fs?.headline && (
                 <div style={{ margin: '8px 0', fontSize: '13px', fontWeight: 600, color: '#b91c1c' }}>
                   {fs.headline}
@@ -236,12 +233,20 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
                   )}
                 </div>
               )}
-              {fs?.line && (
+              {(fs?.codeFrame || fs?.line) && (
                 <div style={{ marginTop: '10px' }}>
                   <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>
-                    Failing line ({fs.line}):
+                    Failing line{fs?.line ? ` (${fs.line})` : ''}:
                   </div>
-                  <CodeViewer code={test.finalCode} filename={test.filename} highlightLine={fs.line} />
+                  {fs?.codeFrame ? (
+                    <pre style={{ margin: 0, padding: '8px 12px', background: '#161c18', color: '#f8fafc', borderRadius: '6px', overflow: 'auto', fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre' }}>
+                      {fs.codeFrame}
+                    </pre>
+                  ) : (
+                    <pre style={{ margin: 0, padding: '8px 12px', background: '#161c18', color: '#f8fafc', borderRadius: '6px', overflow: 'auto', fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre' }}>
+                      {test.finalCode.split('\n')[fs!.line! - 1] ?? ''}
+                    </pre>
+                  )}
                 </div>
               )}
               <details style={{ marginTop: '12px', fontSize: '11px', color: '#6b7280' }}>
@@ -251,11 +256,16 @@ export const TestResultCard = React.memo(function TestResultCard({ test, planned
                 </pre>
               </details>
               <p style={{ marginTop: '10px' }}>
-                {isNeedsReview
-                  ? 'Stale expectation: page navigated before this assertion ran.'
-                  : failureCategory === 'finding'
-                  ? 'Assertion preserved. This appears to be a real application defect and was not auto-corrected.'
-                  : 'Mechanical failure encountered during execution and retry attempts.'}
+                {isNeedsReview ? (
+                  <>
+                    The page moved to <strong>{finalPath}</strong> before this check ran. It looks for{' '}
+                    <strong>{target}</strong> from the previous page, so the expectation is likely wrong, not your site.
+                  </>
+                ) : failureCategory === 'finding' ? (
+                  'This check failed against your site. Review it — it may be a real bug or a wrong expectation.'
+                ) : (
+                  'Mechanical failure encountered during execution and retry attempts.'
+                )}
               </p>
             </div>
           )}
