@@ -25,3 +25,4 @@ export function parseVisitorToken(token: string | undefined): string | null {
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   return visitorId;
 }
+// Module component implementation.
