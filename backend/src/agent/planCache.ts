@@ -52,3 +52,4 @@ export function setCachedPlan(key: string, plan: TestPlan): void {
 export function clearPlanCache(): void {
   planCache.clear();
 }
+// Module component implementation.
