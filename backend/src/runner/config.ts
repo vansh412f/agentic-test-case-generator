@@ -5,3 +5,4 @@ export const PLAYWRIGHT_CLI = path.join(RUNNER_DIR, 'node_modules', '@playwright
 export const RUNNER_TESTS_DIR = path.join(RUNNER_DIR, 'tests');
 export const STATIC_VALIDATION_TIMEOUT_MS = 30_000;
 export const EXECUTION_TIMEOUT_MS = 60_000;
+// Module component implementation.
