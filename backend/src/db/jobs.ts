@@ -275,3 +275,4 @@ export async function getLifetimeStats() {
     throw new DatabaseError(cause);
   }
 }
+// Module component implementation.
