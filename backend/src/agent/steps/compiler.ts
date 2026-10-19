@@ -218,3 +218,4 @@ export function compileTest(
     testCaseId: testCase.id,
   };
 }
+// Module component implementation.
