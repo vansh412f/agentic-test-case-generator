@@ -91,3 +91,4 @@ export async function deliverJobWebhook(target: WebhookTarget, payload: JobWebho
   }
   if (outcome !== 'ok') console.warn(`[Webhook] ${payload.jobId}: delivery to ${url.host} failed (${outcome}).`);
 }
+// Module component implementation.
