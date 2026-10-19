@@ -167,3 +167,4 @@ export async function crawlSite(url: string, options: DeepCrawlOptions): Promise
     await browser.close().catch(() => undefined);
   }
 }
+// Module component implementation.
