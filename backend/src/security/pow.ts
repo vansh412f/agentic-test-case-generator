@@ -68,3 +68,4 @@ class AltchaPowService implements PowService {
 }
 
 export const powService: PowService = new AltchaPowService();
+// Module component implementation.
