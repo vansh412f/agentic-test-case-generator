@@ -56,6 +56,7 @@ export async function countJobsForBudget(
   const baseWhere = {
     createdAt: { gte: startOfUtcDay(now) },
     usedOwnKeys: false,
+    quotaExempt: false,
     NOT: [
       {
         status: 'cancelled' as const,
