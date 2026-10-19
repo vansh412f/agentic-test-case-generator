@@ -120,3 +120,4 @@ export async function handleJobStream(req: Request, res: Response): Promise<void
     if (event.type === 'job_finished') close();
   };
 }
+// Module component implementation.
