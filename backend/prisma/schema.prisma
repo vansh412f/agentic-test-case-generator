@@ -37,6 +37,7 @@ enum TestStatus {
   passed
   failed
   gave_up
+  needs_review
 }
 
 enum FailureClass {
@@ -59,6 +60,7 @@ model Job {
   completedAt    DateTime?
   visitorId      String?
   usedOwnKeys    Boolean         @default(false)
+  quotaExempt    Boolean         @default(false)
   runGroupId     String?         @db.Uuid
   ipHash         String?
   cancelledAt    DateTime?
@@ -117,6 +119,7 @@ model ExecutionResult {
   executionPassed  Boolean?
   executionError   String?
   failureClass     FailureClass?
+  failureContext   Json?
   durationMs       Int?
   corrected        Boolean
   createdAt        DateTime      @default(now())
