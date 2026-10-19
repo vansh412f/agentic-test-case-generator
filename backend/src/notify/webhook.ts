@@ -11,7 +11,7 @@ export interface WebhookTarget { url: string; secret: string; }
 export type JobWebhookPayload = {
   event: 'job.finished'; jobId: string; targetUrl: string; finishedAt: string;
 } & (
-  | { status: 'completed'; tests: { total: number; passed: number; failed: number; gaveUp: number } }
+  | { status: 'completed'; tests: { total: number; passed: number; failed: number; gaveUp: number; needsReview: number } }
   | { status: 'failed'; errorCode: string }
   | { status: 'cancelled'; errorCode: null }
 );
