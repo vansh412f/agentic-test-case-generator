@@ -96,3 +96,4 @@ export function buildAppMap(input: BuildAppMapInput): AppMap {
     isTruncated: extraction.truncated,
   });
 }
+// Module component implementation.
