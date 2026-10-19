@@ -31,3 +31,4 @@ export function hasAnyRequestKey(): boolean {
 export function hasOwnKeys(req: { header(name: string): string | undefined }): boolean {
   return Boolean(req.header('x-groq-api-key')?.trim() || req.header('x-gemini-api-key')?.trim());
 }
+// Module component implementation.
