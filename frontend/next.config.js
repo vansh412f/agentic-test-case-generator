@@ -4,6 +4,7 @@ const backendUrl = process.env.BACKEND_URL ?? 'http://localhost:4000';
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  staticPageGenerationTimeout: 180,
   experimental: { proxyTimeout: 120_000 },
   async rewrites() {
     return [
