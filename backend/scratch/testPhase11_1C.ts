@@ -681,6 +681,127 @@ async function testCostAndEgressWP7() {
   console.log('\n✓ Test 10 passed\n');
 }
 
+async function testFollowups11_1C_2() {
+  console.log('--- Test 11: 11.1C.2 Follow-ups (B21, B22, B23, B24) ---');
+
+  // 1. B21: correct() receives priorErrors that exclude its own errorText
+  const { runRounds } = await import('../src/agent/rounds.ts');
+  const testB21 = createDummyRoundTest('tc-b21', 'const bad = 1;', 'llm');
+  const priorErrorsReceived: string[][] = [];
+
+  let validateAttempt = 0;
+  await runRounds([testB21], {
+    checkSafety: () => [],
+    validateBatch: async () => {
+      validateAttempt++;
+      return {
+        perFile: new Map([['tc-b21.spec.ts', [`Compile error attempt ${validateAttempt}`]]]),
+        batchLatencyMs: 10,
+      };
+    },
+    executeBatch: async () => ({ success: true, results: [] }),
+    correct: async ({ test, errorText, attemptNumber }) => {
+      priorErrorsReceived.push([...test.priorErrors]);
+      assert.ok(
+        !test.priorErrors.includes(errorText),
+        `Attempt ${attemptNumber} correct() must not see its own errorText in priorErrors`,
+      );
+      return { code: `// corrected attempt ${attemptNumber}` };
+    },
+  });
+
+  assert.equal(priorErrorsReceived.length, 2, 'Should have attempted 2 corrections across rounds 1 and 2');
+  assert.deepEqual(priorErrorsReceived[0], [], 'Attempt 1 must receive empty priorErrors');
+  assert.equal(priorErrorsReceived[1].length, 1, 'Attempt 2 must receive attempt 1 error only');
+  assert.ok(priorErrorsReceived[1][0].includes('Compile error attempt'));
+  console.log('✓ B21: corrector never receives current error as a prior error');
+
+  // 2. B22: every job status transition in db/jobs.ts uses updateMany protecting cancelled jobs
+  const { prisma } = await import('../src/db/client.ts');
+  const {
+    markJobStarted,
+    updateJobStatus,
+    setAppMap,
+    setTestPlan,
+    completeJob,
+    failJob,
+  } = await import('../src/db/jobs.ts');
+
+  const b22JobId = crypto.randomUUID();
+  await prisma.job.create({
+    data: {
+      id: b22JobId,
+      targetUrl: 'https://example.com/b22',
+      status: 'cancelled',
+      visitorId: 'v-b22',
+    },
+  });
+
+  const resStarted = await markJobStarted(b22JobId);
+  assert.equal(resStarted.count, 0, 'markJobStarted must not overwrite cancelled job');
+
+  const resStatus = await updateJobStatus(b22JobId, 'generating');
+  assert.equal(resStatus.count, 0, 'updateJobStatus must not overwrite cancelled job');
+
+  const resAppMap = await setAppMap(b22JobId, { url: 'https://example.com/b22', elements: [] });
+  assert.equal(resAppMap.count, 0, 'setAppMap must not overwrite cancelled job');
+
+  const resTestPlan = await setTestPlan(b22JobId, { testCases: [] });
+  assert.equal(resTestPlan.count, 0, 'setTestPlan must not overwrite cancelled job');
+
+  const resComplete = await completeJob(b22JobId);
+  assert.equal(resComplete.count, 0, 'completeJob must return count: 0 on cancelled job');
+
+  const resFail = await failJob(b22JobId, 'SOME_ERR', 'Error msg');
+  assert.equal(resFail.count, 0, 'failJob must return count: 0 on cancelled job');
+
+  const b22Check = await prisma.job.findUnique({ where: { id: b22JobId }, select: { status: true } });
+  assert.equal(b22Check?.status, 'cancelled', 'Job must remain cancelled');
+  await prisma.job.delete({ where: { id: b22JobId } });
+  console.log('✓ B22: all db/jobs status transitions use updateMany protecting cancelled jobs');
+
+  // 3. B23: orderAddressesIpv4First
+  const { orderAddressesIpv4First } = await import('../src/security/egressProxy.ts');
+  const mixedIps = ['2001:db8::1', '93.184.216.34', '2606:2800:220:1::', '198.51.100.1'];
+  const ordered = orderAddressesIpv4First(mixedIps);
+  assert.deepEqual(ordered, ['93.184.216.34', '198.51.100.1', '2001:db8::1', '2606:2800:220:1::']);
+  console.log('✓ B23: orderAddressesIpv4First places IPv4 addresses first');
+
+  // 4. B24: codeSafety restrictions on @playwright/test and proxies
+  const { findUnsafeConstructs } = await import('../src/runner/codeSafety.ts');
+  const safeSpec = `
+    import { test, expect, Page, Locator } from '@playwright/test';
+    test('safe test', async ({ page, request }) => {
+      await page.goto('https://example.com');
+      await expect(page.locator('h1')).toBeVisible();
+      await page.request.get('https://example.com/api');
+    });
+  `;
+  assert.deepEqual(findUnsafeConstructs(safeSpec), [], 'Standard spec must pass codeSafety');
+
+  const bannedImportSpec = `import { test, request, chromium } from '@playwright/test';`;
+  const bannedImportIssues = findUnsafeConstructs(bannedImportSpec);
+  assert.ok(bannedImportIssues.length >= 2, 'Importing request and chromium must trigger safety errors');
+
+  const testUseSpec = `
+    import { test } from '@playwright/test';
+    test.use({ proxy: { server: 'http://evil.com' } });
+  `;
+  const testUseIssues = findUnsafeConstructs(testUseSpec);
+  assert.ok(testUseIssues.some((i) => i.includes('test.use()')), 'test.use must be banned');
+  assert.ok(testUseIssues.some((i) => i.includes('"proxy"')), 'proxy property must be banned');
+
+  const launchOptionsSpec = `
+    const opts = { launchOptions: { args: ['--no-sandbox'] } };
+  `;
+  const launchOptionsIssues = findUnsafeConstructs(launchOptionsSpec);
+  assert.ok(launchOptionsIssues.some((i) => i.includes('"launchOptions"')), 'launchOptions property must be banned');
+
+  console.log('✓ B24: codeSafety forbids test.use, proxy/launchOptions properties, and raw request/chromium imports');
+
+  console.log('\n✓ Test 11 passed\n');
+}
+
 async function main() {
   console.log('====================================================');
   console.log(' Phase 11.1C Regression Tests - WP1 to WP7          ');
@@ -695,10 +816,12 @@ async function main() {
   await testCancelAndBudgetCorrectness();
   await testUiAndDataCorrectnessWP6();
   await testCostAndEgressWP7();
-  console.log('All WP1, WP2, WP3, WP4, WP5, WP6, and WP7 tests passed successfully!');
+  await testFollowups11_1C_2();
+  console.log('All WP1 to WP7 and 11.1C.2 follow-up tests passed successfully!');
 }
 
 main().catch((err) => {
   console.error('Test Failed:', err);
   process.exit(1);
 });
+
