@@ -31,7 +31,7 @@ export type StepType =
 
 export type StepStatus = 'success' | 'failure';
 
-export type TestFinalStatus = 'passed' | 'failed' | 'gave_up';
+export type TestFinalStatus = 'passed' | 'failed' | 'gave_up' | 'needs_review';
 
 export type FailureClass = 'finding' | 'locator' | 'timeout' | 'other';
 
@@ -194,6 +194,16 @@ export interface ExecutionResult {
   executionPassed: boolean | null;
   executionError: string | null;
   failureClass: FailureClass | null;
+  failureContext?: { finalUrl: string; navigations: string[] } | null;
+  failureSummary?: {
+    kind: string;
+    headline: string;
+    expected?: string;
+    received?: string;
+    target?: string;
+    line?: number;
+    codeFrame?: string;
+  } | null;
   durationMs: number | null;
   corrected: boolean;
   createdAt: string;
@@ -210,6 +220,22 @@ export interface PersistedGeneratedTest {
   createdAt: string;
   executionResults: ExecutionResult[];
   confidence: ConfidenceScore;
+  failureSummary?: {
+    kind: string;
+    headline: string;
+    expected?: string;
+    received?: string;
+    target?: string;
+    line?: number;
+    codeFrame?: string;
+  } | null;
+  failureContext?: {
+    finalUrl?: string;
+    canonicalUrl?: string;
+    navigations?: string[];
+    navigatedAway?: boolean;
+    [key: string]: unknown;
+  } | null;
 }
 
 export interface JobDetail {
@@ -246,6 +272,7 @@ export interface JobSummary {
   passedCount: number;
   failedCount: number;
   gaveUpCount: number;
+  needsReviewCount?: number;
   healedCount?: number;
 }
 
