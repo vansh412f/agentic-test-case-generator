@@ -686,7 +686,13 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           <div className="detail-heading">
             <div>
               <p className="eyebrow">GENERATED TESTS</p>
-              <h2>{job.generatedTests.length} test cases</h2>
+              <h2>
+                {job.generatedTests.length === 0 && !terminal
+                  ? job.testPlan?.testCases.length
+                    ? `${job.testPlan.testCases.length} scenarios planned`
+                    : 'Planning scenarios…'
+                  : `${job.generatedTests.length} test cases`}
+              </h2>
             </div>
             <div className="result-pills">
               <span>{passedCount} passed</span>
@@ -708,13 +714,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             </p>
           )}
 
-          {job.generatedTests.length === 0 ? (
-            <p className="mt-6 text-small text-muted-foreground">
-              {job.testPlan?.testCases.length
-                ? `${job.testPlan.testCases.length} scenarios planned · results appear as each finishes`
-                : 'Planning scenarios…'}
-            </p>
-          ) : (
+          {job.generatedTests.length === 0 ? null : (
             (() => {
               const aiTests = job.generatedTests.filter(
                 (t) =>

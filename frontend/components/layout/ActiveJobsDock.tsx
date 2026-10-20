@@ -63,14 +63,19 @@ export function ActiveJobsDock() {
                 router.asPath.startsWith(`/jobs/${entry.id}?`);
 
               if (!isOnPage) {
-                const passed = job.generatedTests.filter((t) => t.finalStatus === 'passed').length;
-                const total = job.generatedTests.length;
-                toast.success(`Run finished · ${passed}/${total} passed`, {
-                  action: {
-                    label: 'View',
-                    onClick: () => void router.push(`/jobs/${entry.id}`),
-                  },
-                });
+                const viewAction = {
+                  label: 'View',
+                  onClick: () => void router.push(`/jobs/${entry.id}`),
+                };
+                if (job.status === 'completed') {
+                  const passed = job.generatedTests.filter((t) => t.finalStatus === 'passed').length;
+                  const total = job.generatedTests.length;
+                  toast.success(`Run finished · ${passed}/${total} passed`, { action: viewAction });
+                } else if (job.status === 'failed') {
+                  toast.error('Run failed', { action: viewAction });
+                } else if (job.status === 'cancelled') {
+                  toast('Run cancelled', { action: viewAction });
+                }
               }
             } else {
               const progress = computePipelineProgress(job);

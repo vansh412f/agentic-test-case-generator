@@ -26,7 +26,6 @@ if (process.env.MEASURE !== '1') {
 // Ensure process-level environment flags for the measurement run
 process.env.LOCAL_AGENT_MODE = 'false';
 process.env.BASELINE_TESTS = 'true';
-process.env.A11Y_SMOKE = 'true';
 process.env.JOB_TOKEN_BUDGET = '40000';
 process.env.GENERATE_DAILY_LIMIT = '1000';
 process.env.FREE_VISITOR_DAILY_LIMIT = '1000';

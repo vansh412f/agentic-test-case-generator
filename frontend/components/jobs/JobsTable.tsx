@@ -79,7 +79,7 @@ export function JobsTable({ jobs }: JobsTableProps) {
 
             <span>
               <b>{ran}</b>
-              <small>{waited ? `queued ${waited}` : 'standard'}</small>
+              <small>{waited ? `waited ${waited}` : ''}</small>
             </span>
 
             <span>

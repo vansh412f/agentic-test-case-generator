@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { summarizeFailure } from '../src/report/failureSummary.ts';
-import { filterInternalLinks, normalizePathTemplate, deriveFallbackLabel } from '../src/crawler/appMapBuilder.ts';
+import { filterInternalLinks } from '../src/crawler/appMapBuilder.ts';
 import { isBotWall } from '../src/crawler/pageCrawler.ts';
+import { planTests } from '../src/agent/steps/planner.ts';
 import { buildBaselineTests } from '../src/agent/baseline.ts';
 import { findUnsafeConstructs } from '../src/runner/codeSafety.ts';
 import type { AppMap } from '../src/crawler/types.ts';
@@ -9,59 +10,60 @@ import type { AppMap } from '../src/crawler/types.ts';
 async function main() {
   console.log('=== Running Batch QF2 Verification Tests ===\n');
 
-  // 1. summarizeFailure toHaveURL fixture (Playwright 1.63 format)
+  // 1. summarizeFailure toHaveURL fixture (EXACT spec text)
   console.log('1. summarizeFailure toHaveURL fixture...');
-  const pw163UrlErr = `Error: Timed out 5000ms waiting for expect(locator).toHaveURL(expected)
+  const fx1 = `Error: expect(page).toHaveURL(expected) failed
 
-Locator: locator(':root')
-Expected pattern: /dashboard/
-Received string: "https://example.com/login"
+Expected pattern: /github\\.com/
+Received string:  "http://localhost:3000/limitations"
+Timeout: 5000ms
+
 Call log:
-  - waiting for locator(':root')
+  - Expect "toHaveURL" with timeout 5000ms
+    9 × unexpected value "http://localhost:3000/limitations"
 
-   >  7 |   await expect(page).toHaveURL(/dashboard/);
-        |                      ^
-      8 | });`;
-  const urlSum = summarizeFailure(pw163UrlErr);
-  assert.equal(urlSum.kind, 'assertion');
-  assert.equal(urlSum.expected, '/dashboard/');
-  assert.equal(urlSum.received, '"https://example.com/login"');
-  assert.equal(urlSum.line, 7);
-  assert.ok(urlSum.codeFrame?.includes('>  7 |'));
-  assert.ok(urlSum.codeFrame?.includes('|                      ^'));
-  assert.ok(urlSum.headline.includes('Expected the page address to include /dashboard/; it was "https://example.com/login"'));
-  console.log('   ✓ toHaveURL Playwright 1.63 matcher format parsed correctly');
+   5 |   await expect(page.getByRole('link', { name: 'GitHub' })).toBeVisible();
+   6 |   await page.getByRole('link', { name: 'GitHub' }).click();
+>  7 |   await expect(page).toHaveURL(/github\\.com/);
+     |                      ^
+   8 |   await expect(page.getByRole('heading', { name: 'Limitations' })).toBeVisible();
+   9 | });`;
 
-  // 2. summarizeFailure toHaveCount fixture
+  const s1 = summarizeFailure(fx1);
+  assert.ok(s1.headline.includes('page address'), 'headline must include "page address"');
+  assert.ok(!/hidden/i.test(s1.headline), 'headline must NOT include "hidden"');
+  assert.equal(s1.line, 7, 'line must be 7');
+  assert.ok(s1.codeFrame?.includes('>  7 |'), 'codeFrame must include ">  7 |"');
+  assert.ok(/^\s*\|\s*\^/m.test(s1.codeFrame ?? ''), 'codeFrame must include caret line matching /^\\s*\\|\\s*\\^/m');
+  assert.ok(s1.received?.includes('localhost:3000/limitations'), 'received must include localhost:3000/limitations');
+  console.log('   ✓ Group 1: toHaveURL spec-verbatim fixture passed');
+
+  // 2. summarizeFailure toHaveCount fixture (EXACT spec text)
   console.log('2. summarizeFailure toHaveCount fixture...');
-  const countErr = `Error: Timed out 5000ms waiting for expect(locator).toHaveCount(expected)
+  const fx2 = `Error: expect(locator).toHaveCount(expected) failed
 
-Locator: getByRole('listitem')
-Expected: 3
-Received: 0
-Call log:
-  - waiting for getByRole('listitem')
+Locator:  getByRole('listitem')
+Expected: 1
+Received: 4
+Timeout:  5000ms
 
-   > 12 |   await expect(page.getByRole('listitem')).toHaveCount(3);
-        |                                            ^`;
-  const countSum = summarizeFailure(countErr);
-  assert.equal(countSum.kind, 'assertion');
-  assert.equal(countSum.expected, '3');
-  assert.equal(countSum.received, '0');
-  assert.equal(countSum.line, 12);
-  assert.ok(countSum.headline.includes('Expected 3'));
-  assert.ok(countSum.headline.includes('found 0'));
-  console.log('   ✓ toHaveCount parsed correctly');
+   4 |   await expect(page.getByRole('textbox')).toBeVisible();
+>  5 |   await expect(page.getByRole('listitem')).toHaveCount(1);
+     |                                            ^`;
 
-  // 3. Old-format visibility (element_missing)
+  const s2 = summarizeFailure(fx2);
+  assert.ok(s2.headline.includes('1'), 'headline must include "1"');
+  assert.ok(s2.headline.includes('4'), 'headline must include "4"');
+  assert.ok(!/hidden/i.test(s2.headline), 'headline must NOT include "hidden"');
+  assert.equal(s2.line, 5, 'line must be 5');
+  console.log('   ✓ Group 2: toHaveCount spec-verbatim fixture passed');
+
+  // 3. Old-format visibility (EXACT spec string)
   console.log('3. Old-format visibility (element_missing)...');
-  const visMissingErr = `expect(locator).toBeVisible()
-Locator: getByText('Welcome')
-Error: element(s) not found`;
-  const visSum = summarizeFailure(visMissingErr);
-  assert.equal(visSum.kind, 'element_missing');
-  assert.ok(visSum.headline.includes('it was not found on the page'));
-  console.log('   ✓ old-format toBeVisible produces element_missing');
+  const fx3 = "Error: Timed out 5000ms waiting for expect(locator).toBeVisible()\n\nLocator: getByText('Saved')\nExpected: visible\nReceived: <element(s) not found>";
+  const s3 = summarizeFailure(fx3);
+  assert.equal(s3.kind, 'element_missing', 'kind must be element_missing');
+  console.log('   ✓ Group 3: old-format toBeVisible produces element_missing');
 
   // 4. .not.toBeVisible (assertion, NOT element_missing)
   console.log('4. .not.toBeVisible fixture...');
@@ -76,121 +78,177 @@ Call log:
   const notVisSum = summarizeFailure(notVisErr);
   assert.equal(notVisSum.kind, 'assertion');
   assert.ok(notVisSum.headline.includes('Expected the "Delete" button to be hidden; it was visible.'));
-  console.log('   ✓ .not.toBeVisible classified as assertion');
+  console.log('   ✓ Group 4: .not.toBeVisible classified as assertion');
 
-  // 5. filterInternalLinks Amazon-like fixture
-  console.log('5. filterInternalLinks Amazon-like fixture...');
-  const amazonLinks = [
-    { href: 'https://amazon.com/dp/B08N5WRWNW?ref=nav_ya_signin&tag=affiliate', text: 'Headphones', inNav: true },
-    { href: 'https://amazon.com/dp/B07XYZ1234?utm_source=email', text: 'Camera', inNav: true },
-    { href: 'https://amazon.com/dp/B09ABC5678?pd_rd_w=123', text: 'Laptop', inNav: false },
-    { href: 'https://amazon.com/b/ref=lp_123456?node=123456', text: 'Electronics', inNav: true },
-    { href: 'https://amazon.com/b/ref=lp_654321?node=654321', text: 'Books', inNav: false },
-    { href: 'https://amazon.com/gp/help/customer/display.html', text: 'Customer Service', inNav: true },
-    { href: 'https://amazon.com/gp/goldbox', text: "Today's Deals", inNav: true },
-    { href: 'https://amazon.com/gp/cart/view.html', text: 'Cart', inNav: true },
-    { href: 'https://amazon.com/gp/registry/wishlist', text: 'Wishlist', inNav: false },
-    { href: 'https://amazon.com/gp/yourstore/home', text: 'Your Store', inNav: false },
-    { href: 'https://amazon.com/ap/signin', text: 'Sign In', inNav: true },
-    { href: 'https://amazon.com/ap/register', text: 'Register', inNav: false },
-    { href: 'https://amazon.com/prime', text: 'Prime', inNav: true },
-    { href: 'https://amazon.com/music', text: 'Music', inNav: false },
-    { href: 'https://amazon.com/video', text: 'Video', inNav: false },
-    { href: 'https://amazon.com/books', text: 'Books Store', inNav: false },
-    { href: 'https://amazon.com/fashion', text: 'Fashion', inNav: false },
-    { href: 'https://amazon.com/grocery', text: 'Grocery', inNav: false },
-    { href: 'https://amazon.com/pharmacy', text: 'Pharmacy', inNav: false },
-    { href: 'https://amazon.com/alexa', text: 'Alexa Devices', inNav: false },
-    { href: 'https://amazon.com/kindle', text: 'Kindle Store', inNav: false },
-    { href: 'https://amazon.com/audible', text: 'Audible', inNav: false },
-    { href: 'https://amazon.com/gift-cards', text: 'Gift Cards', inNav: false },
-    { href: 'https://amazon.com/sell', text: 'Sell on Amazon', inNav: false },
-    { href: 'https://amazon.com/careers', text: 'Careers', inNav: false },
-    { href: 'https://amazon.com/investors', text: 'Investor Relations', inNav: false },
-    { href: 'https://amazon.com/press', text: 'Press Center', inNav: false },
-    { href: 'https://amazon.com/sustainability', text: 'Sustainability', inNav: false },
-    { href: 'https://amazon.com/about', text: 'About Us', inNav: false },
-    { href: 'https://amazon.com/community', text: 'Community', inNav: false },
-    { href: 'https://amazon.com/apps', text: 'Amazon App', inNav: false },
-    { href: 'https://amazon.com/credit', text: 'Amazon Credit Card', inNav: false },
-    { href: 'https://amazon.com/returns', text: 'Returns & Replacements', inNav: false },
-    { href: 'https://amazon.com/orders', text: 'Your Orders', inNav: false },
-    { href: 'https://amazon.com/shipping-rates', text: 'Shipping Rates', inNav: false },
-    { href: 'https://amazon.com/terms', text: 'Conditions of Use', inNav: false },
-    { href: 'https://amazon.com/privacy', text: 'Privacy Notice', inNav: false },
-    { href: 'https://amazon.com/legal', text: 'Legal Policies', inNav: false },
-    { href: 'https://amazon.com/ads', text: 'Amazon Ads', inNav: false },
-    { href: 'https://amazon.com/smile', text: 'Amazon Smile', inNav: false },
-    // Assets, external links, mailto
-    { href: 'https://amazon.com/manual.pdf', text: 'Manual PDF', inNav: false },
-    { href: 'https://amazon.com/logo.png', text: 'Logo', inNav: false },
-    { href: 'https://twitter.com/amazon', text: 'Twitter', inNav: false },
-    { href: 'mailto:support@amazon.com', text: 'Email Us', inNav: false },
-  ];
+  // 5. filterInternalLinks Amazon-like fixture per spec (>=40 entries)
+  console.log('5. filterInternalLinks Amazon-like fixture per spec...');
+  const amazonEntries: Array<{ href: string; text: string; inNav: boolean }> = [];
 
-  const amzResult = filterInternalLinks(amazonLinks, 'https://amazon.com/gp/yourstore/home');
-  assert.equal(amzResult.links.length, 20, 'Links must be capped at MAX_DISCOVERED_LINKS (20)');
-  assert.ok(amzResult.totalUnique >= 30, `Total unique should be >= 30, was ${amzResult.totalUnique}`);
-  // No assets
-  assert.ok(!amzResult.links.some(l => l.endsWith('.pdf') || l.endsWith('.png')), 'No asset URLs');
-  // No external or mailto
-  assert.ok(!amzResult.links.some(l => l.includes('twitter.com') || l.startsWith('mailto:')), 'No cross-origin or mailto');
-  // No tracking params
-  assert.ok(!amzResult.links.some(l => l.includes('ref=') || l.includes('utm_source=') || l.includes('tag=')), 'No tracking params in clean links');
-  // Current page excluded
-  assert.ok(!amzResult.links.some(l => l.includes('/gp/yourstore/home')), 'Current page excluded');
-  // Non-empty labels for all returned links
-  for (const link of amzResult.links) {
-    const label = amzResult.labels[link];
-    assert.ok(label && label.length > 0, `Link ${link} must have non-empty label`);
+  // 20x search links (first 2 inNav: true, text "Today's Deals" on at least one)
+  for (let n = 0; n < 20; n++) {
+    const inNav = n < 2;
+    const text = n === 0 ? "Today's Deals" : `Item Search ${n}`;
+    amazonEntries.push({
+      href: `https://www.amazon.in/s/?k=item${n}&ref=nav_${n}`,
+      text,
+      inNav,
+    });
   }
-  console.log(`   ✓ Amazon fixture: 20 capped links, ${amzResult.totalUnique} unique total, nav sorted first, tracking params stripped`);
 
-  // 6. filterInternalLinks for Wikipedia, GitHub, BBC (collapse IDs, preserve distinct non-IDs)
-  console.log('6. filterInternalLinks template collapsing (Wikipedia, GitHub, BBC)...');
-  const wikiLinks = [
-    { href: 'https://en.wikipedia.org/wiki/Special:Search', text: 'Search' },
-    { href: 'https://en.wikipedia.org/wiki/Portal:Current_events', text: 'Current events' },
-    { href: 'https://en.wikipedia.org/wiki/Help:Contents', text: 'Help' },
-    { href: 'https://en.wikipedia.org/wiki/Barack_Obama', text: 'Barack Obama' },
-    { href: 'https://en.wikipedia.org/wiki/Donald_Trump', text: 'Donald Trump' },
-  ];
-  const wikiRes = filterInternalLinks(wikiLinks, 'https://en.wikipedia.org/wiki/Main_Page');
-  // Non-ID segments preserved
-  assert.ok(wikiRes.links.some(l => l.includes('Special:Search')));
-  assert.ok(wikiRes.links.some(l => l.includes('Portal:Current_events')));
-  assert.ok(wikiRes.links.some(l => l.includes('Help:Contents')));
+  // 6x help links (text "Customer Service", inNav: true)
+  for (let n = 0; n < 6; n++) {
+    amazonEntries.push({
+      href: `https://www.amazon.in/gp/help/customer/display.html?nodeId=${n}`,
+      text: 'Customer Service',
+      inNav: true,
+    });
+  }
 
-  const ghLinks = [
-    { href: 'https://github.com/features', text: 'Features' },
-    { href: 'https://github.com/pricing', text: 'Pricing' },
-    { href: 'https://github.com/explore', text: 'Explore' },
-    { href: 'https://github.com/my-org/12345678', text: 'Repo 12345678' },
-    { href: 'https://github.com/my-org/87654321', text: 'Repo 87654321' },
-  ];
-  const ghRes = filterInternalLinks(ghLinks, 'https://github.com/');
-  assert.ok(ghRes.links.some(l => l.includes('/features')));
-  assert.ok(ghRes.links.some(l => l.includes('/pricing')));
-  assert.ok(ghRes.links.some(l => l.includes('/explore')));
-  // The two numeric repo IDs under my-org collapse into one /my-org/:id template
-  const ghRepoLinks = ghRes.links.filter(l => l.includes('12345678') || l.includes('87654321'));
-  assert.equal(ghRepoLinks.length, 1, 'Two ID-like repo paths collapse into single template');
+  // 5x account edit links
+  for (let n = 0; n < 5; n++) {
+    amazonEntries.push({
+      href: `https://www.amazon.in/gp/your-account/edit/ref=${n}`,
+      text: 'Account Edit',
+      inNav: false,
+    });
+  }
 
-  const bbcLinks = [
-    { href: 'https://www.bbc.com/news', text: 'News' },
-    { href: 'https://www.bbc.com/sport', text: 'Sport' },
-    { href: 'https://www.bbc.com/news/articles/c1234567890', text: 'Article 1' },
-    { href: 'https://www.bbc.com/news/articles/c9876543210', text: 'Article 2' },
-  ];
-  const bbcRes = filterInternalLinks(bbcLinks, 'https://www.bbc.com/');
-  assert.ok(bbcRes.links.some(l => l.includes('/news')));
-  assert.ok(bbcRes.links.some(l => l.includes('/sport')));
+  // 2x signin links (one inNav: true)
+  for (let n = 0; n < 2; n++) {
+    amazonEntries.push({
+      href: `https://www.amazon.in/ap/signin?x=${n}`,
+      text: 'Sign In',
+      inNav: n === 0,
+    });
+  }
+
+  // 4x browse links
+  for (let n = 0; n < 4; n++) {
+    amazonEntries.push({
+      href: `https://www.amazon.in/gp/browse.html?node=${n}&ref_=nav_${n}`,
+      text: 'Browse',
+      inNav: false,
+    });
+  }
+
+  // Home variants
+  amazonEntries.push({ href: 'https://www.amazon.in/ref=nav_logo', text: 'Amazon Logo', inNav: false });
+  amazonEntries.push({ href: 'https://www.amazon.in/', text: 'Home', inNav: false });
+  amazonEntries.push({ href: 'https://www.amazon.in/#top', text: 'Top', inNav: false });
+
+  // 3x dp product links (n = 0, 1, 2)
+  for (let n = 0; n < 3; n++) {
+    amazonEntries.push({
+      href: `https://www.amazon.in/dp/B0ABC1234${n}/`,
+      text: `Product ${n}`,
+      inNav: false,
+    });
+  }
+
+  // Assets, foreign domain, mailto
+  amazonEntries.push({ href: 'mailto:x@y.z', text: 'Mail', inNav: false });
+  amazonEntries.push({ href: 'https://other.com/x', text: 'External', inNav: false });
+  amazonEntries.push({ href: 'https://www.amazon.in/logo.png', text: 'Logo PNG', inNav: false });
+
+  assert.ok(amazonEntries.length >= 40, `Fixture must contain >= 40 entries, has ${amazonEntries.length}`);
+
+  const amzRes = filterInternalLinks(amazonEntries, 'https://www.amazon.in/');
+
+  // Check kept link pathnames
+  const sLinks = amzRes.links.filter(l => new URL(l).pathname.replace(/\/$/, '') === '/s');
+  assert.equal(sLinks.length, 1, 'exactly one kept link with new URL(l).pathname === /s');
+
+  const displayLinks = amzRes.links.filter(l => l.includes('display.html'));
+  assert.equal(displayLinks.length, 1, 'exactly one containing display.html');
+
+  const accountLinks = amzRes.links.filter(l => l.includes('/gp/your-account/edit'));
+  assert.equal(accountLinks.length, 1, 'one containing /gp/your-account/edit');
+
+  const signinLinks = amzRes.links.filter(l => l.includes('/ap/signin'));
+  assert.equal(signinLinks.length, 1, 'one containing /ap/signin');
+
+  const browseLinks = amzRes.links.filter(l => l.includes('browse.html'));
+  assert.equal(browseLinks.length, 1, 'one containing browse.html');
+
+  const dpLinks = amzRes.links.filter(l => l.includes('/dp/'));
+  assert.equal(dpLinks.length, 1, 'one containing /dp/');
+
+  // no kept link is home page or contains ref=nav_logo
+  assert.ok(!amzRes.links.some(l => l === 'https://www.amazon.in/' || l === 'https://www.amazon.in' || l.includes('ref=nav_logo')), 'no kept link is home page or contains ref=nav_logo');
+
+  // no assets, no other.com, no mailto
+  assert.ok(!amzRes.links.some(l => l.endsWith('.png') || l.includes('other.com') || l.startsWith('mailto:')), 'no assets (.png), no other.com, no mailto:');
+
+  // every label in labels is non-empty; none equals "S" or "B"; none starts with "Ref="
+  for (const l of amzRes.links) {
+    const label = amzRes.labels[l];
+    assert.ok(label && label.length > 0, `label for ${l} must be non-empty`);
+    assert.ok(label !== 'S' && label !== 'B', `label for ${l} must not equal S or B, got "${label}"`);
+    assert.ok(!label.toLowerCase().startsWith('ref='), `label for ${l} must not start with Ref=, got "${label}"`);
+  }
+
+  // nav-first: every kept href whose source entry was inNav: true appears at a lower index than every kept href whose source entries were all inNav: false
+  const inNavKept = amzRes.links.filter(l => l.includes('/s') || l.includes('display.html') || l.includes('/ap/signin'));
+  const nonNavKept = amzRes.links.filter(l => l.includes('/gp/your-account/edit') || l.includes('browse.html') || l.includes('/dp/'));
+  const maxInNavIndex = Math.max(...inNavKept.map(l => amzRes.links.indexOf(l)));
+  const minNonNavIndex = Math.min(...nonNavKept.map(l => amzRes.links.indexOf(l)));
+  assert.ok(maxInNavIndex < minNonNavIndex, `all inNav links (${maxInNavIndex}) appear before nonNav links (${minNonNavIndex})`);
+
+  // kept hrefs contain no ref=, ref_=, or utm_ substrings
+  assert.ok(!amzRes.links.some(l => l.includes('ref=') || l.includes('ref_=') || l.includes('utm_')), 'kept hrefs must contain no ref=, ref_=, or utm_ substrings');
+
+  // Separate cap fixture: 30 links item-page-<n>
+  const capEntries = Array.from({ length: 30 }, (_, i) => ({
+    href: `https://www.amazon.in/item-page-${i + 1}`,
+    text: `Item Page ${i + 1}`,
+    inNav: false,
+  }));
+  const capRes = filterInternalLinks(capEntries, 'https://www.amazon.in/');
+  assert.equal(capRes.links.length, 20, 'cap fixture links.length must be exactly 20');
+  assert.equal(capRes.totalUnique, 30, 'cap fixture totalUnique must be exactly 30');
+  console.log('   ✓ Group 5: Amazon-like fixture & separate cap fixture passed');
+
+  // 6. filterInternalLinks Wikipedia / GitHub / BBC per spec
+  console.log('6. filterInternalLinks Wikipedia / GitHub / BBC per spec...');
+  // Wikipedia from https://en.wikipedia.org/wiki/Main_Page: /wiki/A, /wiki/B, /wiki/A#x
+  const wikiRes = filterInternalLinks(
+    ['https://en.wikipedia.org/wiki/A', 'https://en.wikipedia.org/wiki/B', 'https://en.wikipedia.org/wiki/A#x'],
+    'https://en.wikipedia.org/wiki/Main_Page',
+  );
+  assert.equal(wikiRes.totalUnique, 2, 'wiki totalUnique must be 2');
+  assert.ok(wikiRes.links.includes('https://en.wikipedia.org/wiki/A'), 'wiki /wiki/A kept');
+  assert.ok(wikiRes.links.includes('https://en.wikipedia.org/wiki/B'), 'wiki /wiki/B kept');
+
+  // GitHub from https://github.com/: /features, /pricing, /login?return_to=%2Ffoo
+  const ghRes = filterInternalLinks(
+    ['https://github.com/features', 'https://github.com/pricing', 'https://github.com/login?return_to=%2Ffoo'],
+    'https://github.com/',
+  );
+  assert.equal(ghRes.links.length, 3, 'all 3 GitHub links kept');
+  assert.ok(ghRes.links.some(l => l.includes('return_to=%2Ffoo') || l.includes('return_to')), 'return_to param preserved');
+
+  // BBC from https://www.bbc.com/: /news, /news/articles/c123abc456, /news/articles/c987xyz123, /news/world-europe, /news/world-asia
+  const bbcRes = filterInternalLinks(
+    [
+      'https://www.bbc.com/news',
+      'https://www.bbc.com/news/articles/c123abc456',
+      'https://www.bbc.com/news/articles/c987xyz123',
+      'https://www.bbc.com/news/world-europe',
+      'https://www.bbc.com/news/world-asia',
+    ],
+    'https://www.bbc.com/',
+  );
+  assert.ok(bbcRes.links.includes('https://www.bbc.com/news'), '/news kept');
   const bbcArticleLinks = bbcRes.links.filter(l => l.includes('/news/articles/'));
-  assert.equal(bbcArticleLinks.length, 1, 'BBC article IDs collapse into single template');
-  console.log('   ✓ Template collapsing collapses IDs while preserving distinct non-ID pages');
+  assert.equal(bbcArticleLinks.length, 1, 'article IDs collapse to exactly one /news/articles/ entry');
+  assert.ok(bbcRes.links.some(l => l.includes('/news/world-europe')), '/news/world-europe kept');
+  assert.ok(bbcRes.links.some(l => l.includes('/news/world-asia')), '/news/world-asia kept');
+  console.log('   ✓ Group 6: Wikipedia, GitHub, BBC template tests passed');
 
-  // 7. Bot-wall detector (isBotWall)
+  // 7. isBotWall per spec
   console.log('7. Bot-wall detector (isBotWall)...');
+  assert.equal(isBotWall('Amazon.in: Robot Check', { hasChallengeDom: false }), true);
+  assert.equal(isBotWall('Login – The Internet', { hasChallengeDom: false }), false);
   assert.equal(isBotWall('Just a moment...', { hasChallengeDom: false }), true);
   assert.equal(isBotWall('Attention Required! | Cloudflare', { hasChallengeDom: false }), true);
   assert.equal(isBotWall('Access Denied', { hasChallengeDom: false }), true);
@@ -199,22 +257,64 @@ Call log:
   assert.equal(isBotWall('Example Domain', { hasChallengeDom: true }), true);
   assert.equal(isBotWall('Example Domain', { hasChallengeDom: false }), false);
   assert.equal(isBotWall('Welcome to My Website', { hasChallengeDom: false }), false);
-  console.log('   ✓ isBotWall detects bot challenge titles and DOM probes correctly');
+  console.log('   ✓ Group 7: isBotWall passed');
 
-  // 8. Planner call cap & purposes
-  console.log('8. Planner call cap & purposes...');
-  // Verify allowExpansion logic:
-  // allowExpansion is only true when:
-  // - plannerAttempts === 1 (first attempt)
-  // - no repair occurred
-  // - total planner calls <= 2
-  const checkAllowExpansion = (attemptNumber: number, wasRepaired: boolean) => {
-    return attemptNumber === 1 && !wasRepaired;
-  };
-  assert.equal(checkAllowExpansion(1, false), true, 'First attempt without repair allows expansion');
-  assert.equal(checkAllowExpansion(2, true), false, 'Repair attempt does NOT allow expansion');
-  assert.equal(checkAllowExpansion(2, false), false, 'Second attempt does NOT allow expansion');
-  console.log('   ✓ Planner allowExpansion and max 2 calls logic verified');
+  // 8. Planner call cap with a REAL mock
+  console.log('8. Planner call cap with real mock...');
+  function plannerFixtureAppMap(): AppMap {
+    const elements = Array.from({ length: 8 }, (_, i) => ({
+      id: `elem-${i + 1}`, tagName: 'BUTTON', type: 'button' as const, detectedBy: 'native' as const,
+      text: `Button ${i + 1}`, isVisible: true, isEnabled: true, isRequired: false, isReadOnly: false,
+      selectors: { css: `#b${i}` },
+    }));
+    return {
+      url: 'https://example.com/', title: 'Example', crawledAt: new Date().toISOString(),
+      viewport: { width: 1280, height: 800 }, elements, forms: [], discoveredLinks: [],
+      totalElementsFound: 8, isTruncated: false,
+    } as unknown as AppMap;
+  }
+
+  function validPlanJson(n: number): string {
+    return JSON.stringify({
+      testCases: Array.from({ length: n }, (_, i) => ({
+        id: `tc-${i + 1}`, title: `Case ${i + 1}`, description: 'fixture',
+        steps: [
+          { action: 'click', elementId: `elem-${i + 1}`, target: null, value: null, description: 'click it' },
+          { action: 'assert_visible', elementId: `elem-${i + 1}`, target: null, value: null, description: 'still visible' },
+        ],
+      })),
+    });
+  }
+
+  function recordingLlm(responses: string[], purposes: Array<string | undefined>) {
+    let call = 0;
+    return (async (req: { purpose?: string }) => {
+      purposes.push(req.purpose);
+      const content = responses[Math.min(call++, responses.length - 1)];
+      return { content, model: 'mock', provider: 'groq', latencyMs: 1, usage: { promptTokens: 1, completionTokens: 1 } };
+    }) as never;
+  }
+
+  // Case A (repair path)
+  const purposesA: Array<string | undefined> = [];
+  const planA = await planTests(plannerFixtureAppMap(), {
+    fresh: true,
+    callLlmImpl: recordingLlm(['not-json{', validPlanJson(3)], purposesA),
+  });
+  assert.equal(purposesA.length, 2, 'Repair path makes exactly 2 calls');
+  assert.deepEqual(purposesA, ['plan', 'repair'], 'Repair path purposes must be plan, repair');
+  assert.equal(planA.testCases.length, 3, 'Returned plan has 3 test cases');
+
+  // Case B (expand path)
+  const purposesB: Array<string | undefined> = [];
+  const planB = await planTests(plannerFixtureAppMap(), {
+    fresh: true,
+    callLlmImpl: recordingLlm([validPlanJson(3), validPlanJson(6)], purposesB),
+  });
+  assert.equal(purposesB.length, 2, 'Expand path makes exactly 2 calls');
+  assert.deepEqual(purposesB, ['plan', 'expand'], 'Expand path purposes must be plan, expand');
+  assert.equal(planB.testCases.length, 6, 'Returned plan has 6 test cases');
+  console.log('   ✓ Group 8: planner call cap & purposes (repair and expand paths) passed with real mock');
 
   // 9. Baseline tests (no smoke-3, no axe)
   console.log('9. Baseline tests inspection...');
@@ -238,7 +338,7 @@ Call log:
     assert.ok(!b.code.includes('axe'), `Baseline ${b.filename} must not contain axe references`);
     assert.ok(!b.code.includes('@axe-core'), `Baseline ${b.filename} must not contain @axe-core references`);
   }
-  console.log('   ✓ Baseline tests contain smoke-1 and smoke-2 only; zero smoke-3 or axe references');
+  console.log('   ✓ Group 9: baseline tests contain smoke-1 and smoke-2 only; zero smoke-3 or axe references');
 
   // 10. codeSafety rejects @axe-core/playwright
   console.log('10. codeSafety rejects @axe-core/playwright...');
@@ -254,7 +354,7 @@ Call log:
   const axeViolations = findUnsafeConstructs(axeSpec);
   assert.ok(axeViolations.length > 0, 'codeSafety must reject @axe-core/playwright');
   assert.ok(axeViolations.some(v => v.includes('@axe-core/playwright') || v.includes('module')), 'Violation mentions module or axe-core');
-  console.log('   ✓ codeSafety successfully rejects @axe-core/playwright');
+  console.log('   ✓ Group 10: codeSafety successfully rejects @axe-core/playwright');
 
   console.log('\n=== All 10 Batch QF2 Verification Tests Passed! ===');
 }

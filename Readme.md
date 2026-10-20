@@ -132,7 +132,7 @@ stateDiagram-v2
   - Mechanical failure persisted across 3 full execution rounds.
   - Job token budget was exceeded (`JOB_TOKEN_BUDGET`).
   - AST code safety checks rejected the code and correction could not produce safe code.
-  - Test is a baseline check (built-in broken links or accessibility checks are never altered by the model).
+  - Test is a baseline check (built-in checks are never altered by the model).
 - **`open -> open`:** A mechanical failure occurred (`locator`, `timeout`, or generic runner error), the current round is less than 3, and tokens remain. Corrected code is generated and submitted to the static type check for the next round.
 
 ---
@@ -164,7 +164,7 @@ stateDiagram-v2
 - **Context:** LLMs tasked with authoring browser tests from URLs or screenshots routinely hallucinate CSS classes, non-existent button texts, or deprecated IDs.
 - **Decision:** Crawl the real DOM first with headless Chromium before engaging the planner model. Compile locators deterministically using strict preference ordering: `getByTestId` &rarr; `getByRole` &rarr; `getByPlaceholder` &rarr; `getByLabel` &rarr; `getByText` &rarr; CSS selector.
 - **Why:** Deterministic mapping produces Playwright code that adheres to official testing best practices and aligns with actual page elements without model hallucination on the compiled path. When `compileTest` throws `CompileError` (such as unresolvable element references), the pipeline falls back to the LLM generator (`generateTest`, origin `'llm'`) as implemented in [backend/src/agent/pipeline.ts:300-313](backend/src/agent/pipeline.ts#L300-L313).
-- **Trade-off Accepted:** Dynamic elements that appear only after complex multi-step user interactions are not visible during the initial crawl unless deep crawl is enabled.
+- **Trade-off Accepted:** Dynamic elements that appear only after complex multi-step user interactions are not visible during the initial crawl.
 - **Where in Code:** `backend/src/crawler/pageCrawler.ts`, `backend/src/agent/steps/compiler.ts:12`, `backend/src/agent/pipeline.ts:300-313`.
 
 ### Decision 2: Two-Tier Model Separation
@@ -351,7 +351,7 @@ Measurements recorded from a live 12-run verification matrix (`docs/measurements
 
 - **Commit:** `c89620e`
 - **Date:** October 19, 2026
-- **Configuration:** `LOCAL_AGENT_MODE=false`, `BASELINE_TESTS=true`, `A11Y_SMOKE=true`, `JOB_TOKEN_BUDGET=40000`
+- **Configuration:** `LOCAL_AGENT_MODE=false`, `BASELINE_TESTS=true`, `A11Y_SMOKE=true`, `JOB_TOKEN_BUDGET=40000` (`A11Y_SMOKE`/smoke-3 has since been removed; recorded as run at measurement time)
 
 | Metric | Measured Value | Notes |
 |---|---|---|
