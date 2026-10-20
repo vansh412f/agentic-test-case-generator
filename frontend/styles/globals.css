@@ -482,6 +482,11 @@ kbd {
   padding: 30px;
 }
 
+/* On the job detail page the panel sits below the hero, not over it. */
+.detail-page .progress-panel {
+  margin: 22px 0 0;
+}
+
 .state-panel, .quota-panel {
   display: flex;
   gap: 20px;

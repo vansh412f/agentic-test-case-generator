@@ -798,4 +798,4 @@ npx tsx scratch/testQuickFixes.ts       # Validates error mapping and URL transf
 
 ## License
 
-License: not yet specified.
+License: MIT

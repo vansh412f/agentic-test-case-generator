@@ -349,6 +349,42 @@ export function getBudget(): Promise<BudgetResponse> {
   return fetcher<BudgetResponse>('/api/budget', true);
 }
 
+export interface RerunTestBody {
+  code: string;
+  headed?: boolean;
+  secrets?: Record<string, string>;
+}
+
+export interface RerunTestResponse {
+  attemptNumber: number;
+  status: string;
+}
+
+export async function rerunTest(
+  jobId: string,
+  testCaseId: string,
+  body: RerunTestBody,
+): Promise<RerunTestResponse> {
+  const response = await request(
+    `/api/jobs/${jobId}/tests/${encodeURIComponent(testCaseId)}/rerun`,
+    {
+      method: 'POST',
+      headers: buildHeaders({
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify(body),
+    },
+  );
+
+  captureVisitorToken(response);
+
+  if (!response.ok) {
+    throw await readError(response);
+  }
+
+  return (await response.json()) as RerunTestResponse;
+}
+
 export async function cancelJob(
   id: string,
   scope: 'job' | 'group' = 'job',
@@ -368,5 +404,24 @@ export async function cancelJob(
   }
 
   return (await response.json()) as { cancelled: string[] };
+}
+
+export async function getTraceLinks(
+  jobId: string,
+  testCaseId: string,
+  attempt: number,
+): Promise<{ traceId: string; expiresAt: string; downloadPath: string; viewerPath: string }> {
+  const response = await request(`/api/jobs/${jobId}/tests/${encodeURIComponent(testCaseId)}/trace?attempt=${attempt}`);
+
+  if (!response.ok) {
+    throw await readError(response);
+  }
+
+  return (await response.json()) as {
+    traceId: string;
+    expiresAt: string;
+    downloadPath: string;
+    viewerPath: string;
+  };
 }
 

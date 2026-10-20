@@ -17,10 +17,13 @@ interface CodeViewerProps {
   code: string;
   filename: string;
   highlightLine?: number;
+  editable?: boolean;
+  onChange?: (code: string) => void;
 }
 
-export function CodeViewer({ code, filename, highlightLine }: CodeViewerProps) {
+export function CodeViewer({ code, filename, highlightLine, editable, onChange }: CodeViewerProps) {
   const [copied, setCopied] = useState(false);
+  const editing = Boolean(editable && onChange);
 
   async function copyCode(): Promise<void> {
     try {
@@ -52,6 +55,7 @@ export function CodeViewer({ code, filename, highlightLine }: CodeViewerProps) {
         <MonacoEditor
           language="typescript"
           loading={<div className="skeleton-line h-full w-full" />}
+          onChange={(value) => onChange?.(value ?? '')}
           onMount={(editor, monaco) => {
             if (highlightLine && highlightLine > 0) {
               editor.revealLineInCenter(highlightLine);
@@ -76,7 +80,7 @@ export function CodeViewer({ code, filename, highlightLine }: CodeViewerProps) {
             lineNumbersMinChars: 3,
             minimap: { enabled: false },
             padding: { top: 12, bottom: 12 },
-            readOnly: true,
+            readOnly: !editing,
             scrollBeyondLastLine: false,
             wordWrap: 'on',
           }}

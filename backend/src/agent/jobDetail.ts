@@ -7,12 +7,14 @@ import { isTerminal } from '../api/jobStream.ts';
 import { runQueue } from './runQueue.ts';
 import { sanitizeError } from '../runner/sanitizeError.ts';
 import { summarizeFailure, type FailureSummary } from '../report/failureSummary.ts';
+import { traceForAttempt } from '../runner/traceStore.ts';
 
 type PersistedTest = LoadedJob['generatedTests'][number];
 type PersistedAttempt = PersistedTest['executionResults'][number];
 
 export interface JobDetailAttempt extends PersistedAttempt {
   failureSummary?: FailureSummary;
+  traceExpiresAt?: string;
 }
 
 export interface JobDetailTest extends Omit<PersistedTest, 'executionResults'> {
@@ -29,6 +31,7 @@ export interface JobDetail extends Omit<LoadedJob, 'generatedTests' | 'visitorId
   runGroupId: string | null;
   groupRemainingJobs?: number;
   canCancel: boolean;
+  canEdit: boolean;
 }
 
 export interface BuildJobDetailOptions {
@@ -51,12 +54,20 @@ export function buildJobDetail(
       options.viewerVisitorId === visitorId &&
       !terminal,
   );
+  // Editing/re-running only makes sense once the original run has finished.
+  const canEdit = Boolean(
+    options?.viewerVisitorId &&
+      visitorId &&
+      options.viewerVisitorId === visitorId &&
+      terminal,
+  );
 
   return {
     ...rest,
     runGroupId: job.runGroupId ?? null,
     queuePosition: runQueue.positionOf(job.id),
     canCancel,
+    canEdit,
     groupRemainingJobs: options?.groupRemainingJobs,
     usedOwnKeys: Boolean(job.usedOwnKeys),
     tokenUsage: summarizeTokenUsage(job.agentSteps),
@@ -79,6 +90,13 @@ export function buildJobDetail(
 
       const lastAttempt = sortedAttempts[sortedAttempts.length - 1];
       const failureSummary = lastAttempt?.failureSummary;
+
+      // Add traceExpiresAt for the last attempt (owner-only)
+      const viewerVisitorId = options?.viewerVisitorId ?? '';
+      const traceEntry = traceForAttempt(job.id, test.testCaseId, lastAttempt?.attemptNumber ?? 0, viewerVisitorId);
+      if (traceEntry) {
+        lastAttempt.traceExpiresAt = new Date(traceEntry.expiresAt).toISOString();
+      }
 
       return {
         ...test,

@@ -133,6 +133,25 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 
+// Trace viewer static mount (Playwright 1.63 bundled viewer)
+const traceViewerDir = require('path').resolve(
+  import.meta.dirname,
+  '..',
+  '.pnpm',
+  'playwright-core@1.63.0',
+  'node_modules',
+  'playwright-core',
+  'lib',
+  'vite',
+  'traceViewer'
+);
+app.use('/trace-viewer', express.static(traceViewerDir, { index: 'index.html', maxAge: '1h', immutable: false }));
+
+// Initialize trace store (boot clean slate, start sweep interval)
+void initTraceStore().catch((err) => {
+  console.warn('[TraceStore] init failed:', err);
+});
+
 // API Routes
 app.use('/api', apiRouter);
 

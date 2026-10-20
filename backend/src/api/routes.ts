@@ -36,6 +36,8 @@ const router = Router();
 router.use(visitorMiddleware);
 router.use('/jobs', jobsRouter);
 router.use('/admin', adminRouter);
+router.use('/traces', await import('./traceRoutes.ts').then((mod) => mod.default));
+
 
 router.get('/health', (_req, res) => {
   res.json({ ok: true, uptimeSec: Math.floor(process.uptime()), mode: config.LOCAL_AGENT_MODE ? 'local' : 'hosted' });

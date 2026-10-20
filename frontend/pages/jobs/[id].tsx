@@ -34,12 +34,24 @@ const SSR_FETCH_TIMEOUT_MS = 4_000;
 
 export const getServerSideProps: GetServerSideProps<JobPageProps> = async ({
   params,
+  query,
 }) => {
   const rawId = params?.id;
   const jobId = typeof rawId === 'string' ? rawId : '';
 
   if (jobId.length === 0) {
     return { notFound: true };
+  }
+
+  // Only share links are server-rendered so cold visitors (and crawlers) get
+  // first-paint content. Normal navigation paints from the client SWR cache.
+  if (query.share !== '1') {
+    return {
+      props: {
+        initialJob: null,
+        jobId,
+      },
+    };
   }
 
   const backendUrl = process.env.BACKEND_URL ?? 'http://localhost:4000';
@@ -519,9 +531,8 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
             job={job}
             jobId={job.id}
             liveStatus={job.status}
-            startedAt={job.startedAt ? Date.parse(job.startedAt) : null}
+            startedAt={job.startedAt ? Date.parse(job.startedAt) : Date.parse(job.createdAt)}
             submittedUrls={[job.targetUrl]}
-            transport={transport}
           />
         )}
 
@@ -728,7 +739,10 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
               );
               return [...aiTests, ...baselineTests].map((test) => (
                 <TestResultCard
+                  canEdit={Boolean(job.canEdit) && !isShareView}
+                  jobId={job.id}
                   key={test.id}
+                  onRefresh={() => void mutate()}
                   plannedCase={job.testPlan?.testCases.find(
                     (testCase) => testCase.id === test.testCaseId,
                   )}

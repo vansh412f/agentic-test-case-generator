@@ -12,11 +12,28 @@ import { runQueue } from '../agent/runQueue.ts';
 import { cancelJob } from '../agent/cancellation.ts';
 import { publishJobEvent } from '../agent/jobEvents.ts';
 import { prisma } from '../db/client.ts';
+import { startTestRerun, RerunRateLimitError } from '../agent/testRerun.ts';
+import { ipHashFor } from '../security/dailyBudget.ts';
+import { clientIp } from '../security/clientIp.ts';
 import type { JobStatus } from '@prisma/client';
 
 const router = Router();
 const JobIdSchema = z.object({ id: z.string().uuid() });
 const CancelBodySchema = z.object({ scope: z.enum(['job', 'group']) });
+const RerunParamsSchema = z.object({
+  id: z.string().uuid(),
+  testCaseId: z.string().regex(/^[\w-]{1,40}$/),
+});
+const RerunBodySchema = z.strictObject({
+  code: z.string().min(1).max(65_536),
+  headed: z.boolean().optional(),
+  secrets: z
+    .record(z.string().regex(/^__AGT_SECRET_\d+__$/), z.string().max(500))
+    .refine((map) => Object.keys(map).length <= 10, {
+      message: 'At most 10 secret values may be supplied',
+    })
+    .optional(),
+});
 const PaginationSchema = z.object({
   page: z.string().regex(/^[1-9]\d*$/).default('1').transform(Number)
     .pipe(z.number().int().min(1).max(1_000_000)),
@@ -180,6 +197,87 @@ router.post('/:id/cancel', async (req, res) => {
     res.status(202).json({ cancelled: cancelledIds });
   } catch (error) {
     respondWithError(res, error);
+  }
+});
+
+router.post('/:id/tests/:testCaseId/rerun', async (req, res) => {
+  const parsedParams = RerunParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    invalid(res, parsedParams.error.flatten().fieldErrors);
+    return;
+  }
+  const parsedBody = RerunBodySchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    invalid(res, parsedBody.error.flatten().fieldErrors);
+    return;
+  }
+
+  try {
+    const result = await startTestRerun({
+      jobId: parsedParams.data.id,
+      testCaseId: parsedParams.data.testCaseId,
+      code: parsedBody.data.code,
+      headed: parsedBody.data.headed,
+      secrets: parsedBody.data.secrets,
+      visitorId: req.visitorId,
+      ipHash: ipHashFor(clientIp(req)),
+    });
+    res.status(202).json({ attemptNumber: result.attemptNumber, status: 'queued' });
+  } catch (error) {
+    if (error instanceof RerunRateLimitError) {
+      res.status(429).json({
+        error: 'RATE_LIMITED',
+        message: error.message,
+        details: { resetsAt: error.resetsAt },
+      });
+      return;
+    }
+    respondWithError(res, error);
+  }
+});
+
+router.get('/:id/tests/:testCaseId/trace', async (req, res) => {
+  const parsedParams = RerunParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    invalid(res, parsedParams.error.flatten().fieldErrors);
+    return;
+  }
+  const attemptSchema = z.object({ attempt: z.coerce.number().int().positive() });
+  const parsedAttempt = attemptSchema.safeParse(req.query);
+  if (!parsedAttempt.success) {
+    invalid(res, parsedAttempt.error.flatten().fieldErrors);
+    return;
+  }
+
+  try {
+    const job = await prisma.job.findUnique({
+      where: { id: parsedParams.data.id },
+      select: { id: true, visitorId: true, status: true, generatedTests: true },
+    });
+    if (!job) throw new JobError('JOB_NOT_FOUND', 'Job not found.');
+
+    // Check ownership FIRST before checking trace
+    const ownedByViewer = job.visitorId === req.visitorId;
+    const localUnclaimed = job.visitorId === null && config.LOCAL_AGENT_MODE;
+    if (!ownedByViewer && !localUnclaimed) throw new JobError('JOB_NOT_FOUND', 'Job not found.');
+
+    const attemptNum = parsedAttempt.data.attempt;
+    const entry = traceForAttempt(job.id, parsedParams.data.testCaseId, attemptNum, req.visitorId ?? '');
+    if (!entry) throw new JobError('TRACE_NOT_FOUND', 'No trace is available for this test. Traces are kept for one hour after a re-run.');
+
+    const token = signTraceToken(entry.traceId, req.visitorId ?? '');
+    res.json({
+      traceId: entry.traceId,
+      expiresAt: new Date(entry.expiresAt).toISOString(),
+      downloadPath: `/api/traces/${entry.traceId}?t=${token}`,
+      viewerPath: `/trace-viewer/?trace=${encodeURIComponent(`/api/traces/${entry.traceId}?t=${token}`)}`,
+    });
+  } catch (error) {
+    if (error instanceof JobError) {
+      respondWithError(res, error);
+    } else {
+      respondWithError(res, error);
+    }
   }
 });
 

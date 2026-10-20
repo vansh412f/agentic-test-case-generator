@@ -39,6 +39,7 @@ export const configSchema = z.object({
   GENERATE_DAILY_LIMIT: z.coerce.number().int().positive().default(40),
   FREE_VISITOR_DAILY_LIMIT: z.coerce.number().int().positive().default(8),
   FREE_IP_DAILY_LIMIT: z.coerce.number().int().positive().default(20),
+  RERUN_DAILY_LIMIT: z.coerce.number().int().min(1).default(20),
   FREE_MAX_URLS_PER_RUN: z.coerce.number().int().positive().default(3),
   BYOK_MAX_URLS_PER_RUN: z.coerce.number().int().positive().default(5),
   CRAWL_DAILY_LIMIT_PER_IP: z.coerce.number().int().positive().default(40),

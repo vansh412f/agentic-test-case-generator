@@ -3,8 +3,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { CaretDown, CaretUp } from '@phosphor-icons/react';
 import { toast } from 'sonner';
+import { mutate as globalMutate } from 'swr';
 import { readActiveJobs, subscribe, untrackJob, type ActiveJobItem } from '@/lib/activeJobs';
-import { getJob, ApiError } from '@/lib/api';
+import { apiBase, getJob, ApiError } from '@/lib/api';
 import { computePipelineProgress } from '@/lib/pipelineProgress';
 import { isTerminalJobStatus } from '@/lib/utils';
 import type { JobDetail } from '@/types/api';
@@ -55,6 +56,9 @@ export function ActiveJobsDock() {
           try {
             const job = await getJob(entry.id);
             if (cancelled) return;
+
+            // Warm the exact SWR key the job page reads so "View" paints instantly.
+            void globalMutate(`${apiBase()}/api/jobs/${entry.id}`, job, false);
 
             if (isTerminalJobStatus(job.status)) {
               untrackJob(entry.id);
