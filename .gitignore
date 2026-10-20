@@ -53,3 +53,6 @@ powershell.cmd
 **/powershell.cmd
 .freebuff/
 
+
+# Ephemeral rerun traces (1h TTL, may contain typed values)
+**/playwright-runner/.traces/
