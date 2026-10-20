@@ -110,7 +110,7 @@ export function buildBaselineTests(appMap: AppMap): BaselineTest[] {
       `    try {`,
       `      const response = await page.request.get(url, { maxRedirects: 5, timeout: 10_000 });`,
       `      const status = response.status();`,
-      `      if (status >= 400) {`,
+      `      if (status >= 400 && status !== 401 && status !== 403) {`,
       `        broken.push(\`\${status} \${url}\`);`,
       `      }`,
       `    } catch (err) {`,
@@ -134,7 +134,7 @@ export function buildBaselineTests(appMap: AppMap): BaselineTest[] {
       testCase: {
         id: 'smoke-2',
         title: 'Linked pages respond without errors',
-        description: `Baseline check: verifies up to 8 same-origin links return HTTP status < 400.`,
+        description: `Baseline check: verifies up to 8 same-origin links are reachable (broken only on 404/410/5xx/network errors; 401/403 count as reachable).`,
         steps: smoke2Steps,
         origin: 'baseline',
       },

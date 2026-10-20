@@ -29,6 +29,8 @@ export function buildCorrectorUserPrompt(params: {
   error: string;
   elementsInScope: ScopedElement[];
   previousErrors?: string[];
+  failureContext?: { finalUrl?: string; navigations?: string[] } | null;
+  observationsText?: string;
 }): string {
   const previousSection =
     params.previousErrors && params.previousErrors.length > 0
@@ -37,6 +39,16 @@ export function buildCorrectorUserPrompt(params: {
           .join('\n')}\n\n`
       : '';
 
+  let contextSection = '';
+  if (params.failureContext) {
+    const finalUrl = params.failureContext.finalUrl ?? '';
+    const navigations = (params.failureContext.navigations ?? []).join(', ');
+    contextSection += `\n\nFAILURE CONTEXT (browser state when the test failed):\nfinalUrl: ${finalUrl}\nnavigations: ${navigations}`;
+  }
+  if (params.observationsText) {
+    contextSection += `\n\nOBSERVED FACTS (ground truth recorded by driving this page; make the fix consistent with these):\n${params.observationsText}`;
+  }
+
   return `## Failing Test Code
 ${params.code}
 
@@ -44,7 +56,7 @@ ${previousSection}## Error Output
 ${params.error}
 
 ## Available Elements on Page
-${JSON.stringify(params.elementsInScope, null, 2)}
+${JSON.stringify(params.elementsInScope, null, 2)}${contextSection}
 
 Fix the test code. Output only the corrected code in a ${FENCE}typescript fence.`;
 }

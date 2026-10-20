@@ -93,6 +93,13 @@ export function classifyExecutionError(message: string): FailureClass {
   const hasExpect = message.includes('expect(') || message.includes('Expected:');
   const receivedMatch = RECEIVED_LINE_REGEX.exec(message);
   if (hasExpect) {
+    if (
+      /^\s*[-+] (Expected|Received)\b/m.test(message) ||
+      message.includes('serializes to the same string') ||
+      message.includes('deep equality')
+    ) {
+      return 'finding';
+    }
     if (receivedMatch) {
       const receivedVal = receivedMatch[1]?.trim() ?? '';
       if (!receivedVal.includes('<element(s) not found>')) {

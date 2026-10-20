@@ -21,6 +21,7 @@ enum JobStatus {
 
 enum StepType {
   crawl
+  observe
   plan
   generate
   validate

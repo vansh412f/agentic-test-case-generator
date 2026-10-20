@@ -67,6 +67,21 @@ export const FormSchema = z.object({
 });
 export type Form = z.infer<typeof FormSchema>;
 
+export const ObservationSchema = z.object({
+  kind: z.enum(['navigation', 'popup', 'form_empty_submit', 'form_filled_submit', 'count']),
+  elementId: z.string().nullable().optional(),
+  formId: z.string().nullable().optional(),
+  fromUrl: z.string(),
+  finalUrl: z.string().nullable().optional(),
+  title: z.string().nullable().optional(),
+  visibleTexts: z.array(z.string()).default([]),
+  role: z.string().nullable().optional(),
+  pageCount: z.number().int().nullable().optional(),
+  containerCss: z.string().nullable().optional(),
+  containerCount: z.number().int().nullable().optional(),
+});
+export type Observation = z.infer<typeof ObservationSchema>;
+
 // Full structured App Map of a crawled page
 export const AppMapSchema = z.object({
   url: z.string().url().describe('The URL that was crawled'),
@@ -83,6 +98,7 @@ export const AppMapSchema = z.object({
   discoveredLinkTotal: z.number().int().optional().describe('Total unique discovered links before cap'),
   totalElementsFound: z.number().describe('Interactive elements found before the per-page cap was applied'),
   isTruncated: z.boolean().describe('True when the cap dropped some elements from this map'),
+  observations: z.array(ObservationSchema).optional(),
 });
 export type AppMap = z.infer<typeof AppMapSchema>;
 // Module component implementation.

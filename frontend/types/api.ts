@@ -23,6 +23,7 @@ export type JobStatus =
 
 export type StepType =
   | 'crawl'
+  | 'observe'
   | 'plan'
   | 'generate'
   | 'validate'
@@ -119,6 +120,7 @@ export interface AppMap {
   discoveredLinkTotal?: number;
   totalElementsFound: number;
   isTruncated: boolean;
+  observations?: unknown[];
 }
 
 export interface PlanStep {

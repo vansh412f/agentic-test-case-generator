@@ -21,7 +21,11 @@ export async function correctTest(
   error: string,
   elementsInScope: ScopedElement[],
   previousErrors: string[] = [],
-  options?: { signal?: AbortSignal },
+  options?: {
+    signal?: AbortSignal;
+    failureContext?: { finalUrl?: string; navigations?: string[] } | null;
+    observationsText?: string;
+  },
 ): Promise<CorrectionResult> {
   const messages: LlmMessage[] = [
     { role: 'system', content: CORRECTOR_SYSTEM_PROMPT },
@@ -32,6 +36,8 @@ export async function correctTest(
         error,
         elementsInScope,
         previousErrors,
+        failureContext: options?.failureContext,
+        observationsText: options?.observationsText,
       }),
     },
   ];

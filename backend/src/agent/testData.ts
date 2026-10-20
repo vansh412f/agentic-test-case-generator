@@ -82,7 +82,7 @@ export function resolveTestData(
       'TEST DATA TO FILL:',
       ...promptLines,
       '',
-      'Use these exact values for fill/select steps on these elements. Values like __AGT_SECRET_1__ are secret placeholders: copy verbatim, never alter them, never use them in assert steps. Include at least one test case that completes each form containing these fields and verifies the outcome.',
+      'Use these exact values for fill/select steps on these elements. Values like __AGT_SECRET_1__ are secret placeholders: copy verbatim, never alter them, never use them in assert steps. Include a case that completes a form with these values ONLY when OBSERVED FACTS contain a form_filled_submit observation for that form, asserting the observed outcome; otherwise cover the form with negative/validation cases.',
     ].join('\n');
   }
 

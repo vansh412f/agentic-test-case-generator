@@ -11,6 +11,8 @@ import { compileTest, CompileError } from './steps/compiler.ts';
 import { correctTest, correctionPreservesAssertions, correctionPreservesSecrets } from './steps/corrector.ts';
 import { resolveTestData } from './testData.ts';
 import { buildBaselineTests } from './baseline.ts';
+import { observeAppMap } from '../crawler/observe.ts';
+import { MAX_TEST_CASES } from './run.config.ts';
 import type { ElementRef, TestDataEntry } from '../api/schemas.ts';
 import { validateTestCode } from '../runner/validator.ts';
 import { executeTests, type TestCaseResult } from '../runner/executor.ts';
@@ -54,12 +56,13 @@ export interface PipelineResult {
 }
 
 function projectElementScope(elements: InteractiveElement[]): ScopedElement[] {
-  return elements.map(({ id, type, text, selectors }) => ({
+  return elements.map(({ id, type, text, selectors, ariaRole }) => ({
     id,
     type,
     text: text ?? null,
     selectors,
-  }));
+    ariaRole: ariaRole ?? null,
+  })) as ScopedElement[];
 }
 
 function announcePhase(jobId: string, status: JobStatus): void {
@@ -188,8 +191,17 @@ async function runPersistedPipeline(
     await assertPublicTarget(url);
     await safeWrite('markJobStarted', () => markJobStarted(jobId));
     announcePhase(jobId, 'crawling');
-    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, signal, fresh), () => ({ success: true }));
+    let appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, signal, fresh), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
+
+    const observations = appMap.observations?.length
+      ? appMap.observations
+      : await withMeasuredStep({ jobId }, 'observe' as never,
+          () => observeAppMap(appMap, { testData, signal }), () => ({ success: true }));
+    if (observations.length > 0 && observations !== appMap.observations) {
+      appMap = { ...appMap, observations };
+      await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
+    }
 
     signal?.throwIfAborted();
     const resolvedData = testData && testData.length > 0 ? resolveTestData(appMap, testData) : undefined;
@@ -225,7 +237,9 @@ async function runPersistedPipeline(
       trackTokens,
     );
     const baselineTests = buildBaselineTests(appMap);
-    for (const b of baselineTests) {
+    const plannedCount = testPlan.testCases.length;
+    const maxBaseline = Math.min(4, Math.max(0, MAX_TEST_CASES - plannedCount));
+    for (const b of baselineTests.slice(0, maxBaseline)) {
       testPlan.testCases.push(b.testCase);
     }
     await safeWrite('setTestPlan', () => setTestPlan(jobId, testPlan));
@@ -278,7 +292,7 @@ async function runPersistedPipeline(
         initialGen = await withMeasuredStep(
           { jobId, testCaseId: testCase.id },
           'generate',
-          async () => compileTest(testCase, elementsInScope, appMap.url),
+          async () => compileTest(testCase, elementsInScope, appMap.url, appMap.observations),
           () => ({ success: true }),
         );
       } catch (err) {
@@ -378,13 +392,20 @@ async function runPersistedPipeline(
           throw err;
         }
       },
-      correct: async ({ test, errorText, attemptNumber }) => {
+      correct: async ({ test, errorText, attemptNumber, failureContext }) => {
         const context = { jobId, testCaseId: test.testCase.id, attemptNumber };
+        const observationsText = appMap.observations?.length
+          ? JSON.stringify(appMap.observations).slice(0, 2000)
+          : undefined;
         const correction = await withLlmStep(
           context,
           'correct',
           () =>
-            correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, { signal }),
+            correctTest(test.code, errorText, test.elementsInScope, test.priorErrors, {
+              signal,
+              failureContext,
+              observationsText,
+            }),
           trackTokens,
         );
         if (

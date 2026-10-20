@@ -60,6 +60,7 @@ export interface RoundDeps {
     test: RoundTest;
     errorText: string;
     attemptNumber: number;
+    failureContext?: { finalUrl: string; navigations: string[] };
   }) => Promise<{ code: string } | null>;
   recordStep?: (step: {
     testCaseId: string;
@@ -358,6 +359,7 @@ export async function runRounds(
               test,
               errorText,
               attemptNumber: attempt.attemptNumber,
+              failureContext,
             });
             test.priorErrors.push(errorText);
             if (test.priorErrors.length > 2) {

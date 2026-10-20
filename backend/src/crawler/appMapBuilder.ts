@@ -1,6 +1,24 @@
 import type { RawElement, RawForm, RawLink, RawPageExtraction } from './rawTypes.ts';
-import { AppMapSchema, type AppMap, type ElementType, type Form, type FormPurpose } from './types.ts';
+import { AppMapSchema, type AppMap, type ElementType, type Form, type FormPurpose, type InteractiveElement } from './types.ts';
 import { MAX_DISCOVERED_LINKS } from '../agent/run.config.ts';
+
+export function isSkipLink(el: InteractiveElement): boolean {
+  const isLink = el.type === 'link' || (typeof el.tagName === 'string' && el.tagName.toUpperCase() === 'A');
+  if (!isLink) return false;
+  const text = (el.text ?? '').trim();
+  const ariaLabel = (el.ariaLabel ?? '').trim();
+  const href = (el.href ?? '').trim();
+
+  const textOrAriaMatchesContent =
+    /^skip to (main )?content$/i.test(text) || /^skip to (main )?content$/i.test(ariaLabel);
+  if (textOrAriaMatchesContent) return true;
+
+  const hrefMatchesAnchor = /^#(main|content|skip)/i.test(href);
+  const textOrAriaMatchesSkip = /skip/i.test(text) || /skip/i.test(ariaLabel);
+  if (hrefMatchesAnchor && textOrAriaMatchesSkip) return true;
+
+  return false;
+}
 
 export interface BuildAppMapInput {
   // The final URL after redirects (page.url()), not the URL the user typed

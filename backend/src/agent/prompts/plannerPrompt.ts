@@ -316,7 +316,15 @@ page, using an absolute URL found in discoveredLinks.
 instead of elementId. name/withinText follow the TEXT PROVENANCE rule (typically text you typed in a fill step). \
 Example: after filling "Buy milk" and pressing Enter → \
 {"action":"check","elementId":null,"target":{"role":"checkbox","container":"listitem","withinText":"Buy milk"},"value":null,"description":"Check Buy milk"}
-13. assert_count value is a number as a string, e.g. "2".`;
+13. assert_count value is a number as a string, e.g. "2".
+
+GROUNDING IN OBSERVED FACTS: When OBSERVED FACTS are provided:
+- assert_url values must be finalUrl values from OBSERVED FACTS or href values present in the App Map. Never invent paths (e.g. /dashboard) that appear in neither.
+- assert_text / assert_visible text must appear in OBSERVED FACTS visibleTexts or App Map element text.
+- assert_count may only use counts from kind:'count' observations.
+- A test may assert a form's SUCCESS outcome (URL navigates away from the form page, or a success message) ONLY if a kind:'form_filled_submit' observation exists for that form, and the asserted URL/text must match that observation. Otherwise form tests must be negative/validation (empty or invalid submit) and should match kind:'form_empty_submit' observations when present.
+- For kind:'popup' elements, assert the popup's observed finalUrl after clicking.
+When OBSERVED FACTS are absent, be conservative: prefer visibility and navigation assertions over specific text/count claims.`;
 
 export function buildPlannerUserPrompt(appMapJson: string): string {
   return `Here is the App Map JSON of the target application. Analyze it and \

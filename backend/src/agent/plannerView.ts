@@ -1,4 +1,5 @@
 import type { AppMap } from '../crawler/types.ts';
+import { isSkipLink } from '../crawler/appMapBuilder.ts';
 
 export interface PlannerViewOptions {
   keepHiddenIds?: Set<string> | Iterable<string>;
@@ -55,6 +56,9 @@ export function toPlannerView(appMap: AppMap, options?: PlannerViewOptions): Pla
   const emittedIds = new Set<string>();
 
   for (const el of appMap.elements) {
+    if (isSkipLink(el)) {
+      continue;
+    }
     if (el.isVisible === false && (!keepHidden || !keepHidden.has(el.id))) {
       continue;
     }
@@ -85,6 +89,7 @@ export function toPlannerView(appMap: AppMap, options?: PlannerViewOptions): Pla
   for (const el of appMap.elements) {
     if (hiddenAdded >= 25) break;
     if (emittedIds.has(el.id)) continue;
+    if (isSkipLink(el)) continue;
     if (el.isVisible !== false) continue;
 
     const text = clip(el.text);

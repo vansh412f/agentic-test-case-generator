@@ -19,7 +19,7 @@ function assertCrawlableUrl(url: string): void {
   }
 }
 
-async function launchBrowser(): Promise<Browser> {
+export async function launchBrowser(): Promise<Browser> {
   try {
     const proxyUrl = await ensureEgressProxy();
     const proxy = proxyUrl ? { server: proxyUrl } : undefined;

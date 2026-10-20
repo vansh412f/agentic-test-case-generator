@@ -4,7 +4,7 @@ import { LlmError } from '../../llm/types.ts';
 import type { LlmMessage } from '../../llm/types.ts';
 import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt, TestPlanSchema, type PlanStep, type TestCase } from '../prompts/plannerPrompt.ts';
 import type { TestPlan } from '../prompts/plannerPrompt.ts';
-import type { AppMap, InteractiveElement } from '../../crawler/types.ts';
+import type { AppMap, InteractiveElement, Observation } from '../../crawler/types.ts';
 import type { ElementRef, TestDataEntry } from '../../api/schemas.ts';
 import { toPlannerView } from '../plannerView.ts';
 import { buildPlanCacheKey, getCachedPlan, setCachedPlan } from '../planCache.ts';
@@ -22,10 +22,29 @@ export type ValidationResult =
   | { ok: false; kind: 'syntax' | 'schema'; detail: string }
   | { ok: false; kind: 'references'; detail: string; plan: TestPlan; badCaseIndexes: Set<number> };
 
+function serializeObservations(observations?: Observation[]): string | undefined {
+  if (!observations || observations.length === 0) return undefined;
+  const obsList = observations.map((o) => ({
+    ...o,
+    visibleTexts: o.visibleTexts ? o.visibleTexts.map((t) => (t.length > 100 ? t.slice(0, 100) : t)) : [],
+  }));
+
+  let json = JSON.stringify(obsList);
+  while (json.length > 6000 && obsList.length > 1) {
+    obsList.pop();
+    json = JSON.stringify(obsList);
+  }
+  if (json.length > 6000) {
+    return json.slice(0, 6000);
+  }
+  return json;
+}
+
 export function validateAndNormalizePlan(
   content: string,
   knownIds: Set<string>,
   appMapUrl: string,
+  options?: { cap?: boolean },
 ): ValidationResult {
   // 1. Parse JSON
   let parsed: unknown;
@@ -107,7 +126,9 @@ export function validateAndNormalizePlan(
     return { ok: false, kind: 'references', detail, plan: result.data, badCaseIndexes };
   }
 
-  capAndRenumberTestPlan(result.data);
+  if (options?.cap !== false) {
+    capAndRenumberTestPlan(result.data);
+  }
   return { ok: true, plan: result.data };
 }
 
@@ -211,11 +232,14 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     effectiveKeepHidden = new Set(appMap.elements.map((e) => e.id));
   }
 
+  const serializedObservations = serializeObservations(appMap.observations);
+
   const plannerView = toPlannerView(appMap, { keepHiddenIds: effectiveKeepHidden });
   const cacheKey = buildPlanCacheKey({
     view: plannerView,
     data: resolvedData ? Object.fromEntries(resolvedData.fills.entries()) : undefined,
     focus: resolvedFocus.length > 0 ? resolvedFocus.map((f) => f.id) : undefined,
+    observations: serializedObservations,
   });
 
   if (!options?.fresh) {
@@ -229,6 +253,9 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   const appMapJson = JSON.stringify(plannerView);
   const knownIds = new Set(appMap.elements.map((e) => e.id));
   let userPrompt = buildPlannerUserPrompt(appMapJson);
+  if (serializedObservations) {
+    userPrompt += `\n\nOBSERVED FACTS (recorded by actually driving this page — assertions must not contradict these):\n${serializedObservations}`;
+  }
   if (resolvedData?.promptBlock) {
     userPrompt += `\n\n${resolvedData.promptBlock}`;
   }
@@ -248,7 +275,25 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   const userChars = userPrompt.length;
   const sysChars = PLANNER_SYSTEM_PROMPT.length;
   const totalChars = userChars + sysChars;
-  const est = Math.ceil(totalChars / 3.5 + 3500);
+
+  const isDual = resolvedFocus.length === 0 && appMap.observations !== undefined;
+  const dualEst = Math.ceil((totalChars * 2) / 3.5 + 5500);
+  const singleEst = Math.ceil(totalChars / 3.5 + 3500);
+
+  const budgetExceededForDual = Boolean(
+    isDual &&
+      options?.tokenBudget &&
+      options.tokenBudget > 0 &&
+      options?.consumedTokens &&
+      options.consumedTokens() + dualEst > options.tokenBudget,
+  );
+
+  const useDualCall = isDual && !budgetExceededForDual;
+  if (isDual && budgetExceededForDual) {
+    console.log('[Planner] budget: single-call');
+  }
+
+  const est = useDualCall ? dualEst : singleEst;
   if (process.env.NODE_ENV !== 'production') {
     console.log(`[Planner] est=${est}`);
   }
@@ -337,7 +382,120 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     return plan;
   };
 
-  // First attempt
+  if (useDualCall) {
+    const promptA = `${userPrompt}\n\nASSIGNMENT: plan up to 5 core cases — primary happy paths end-to-end, key navigation, main content visibility. Prefer cases grounded in OBSERVED FACTS.`;
+    const promptB = `${userPrompt}\n\nASSIGNMENT: plan up to 4 negative / validation / edge cases — empty submits, invalid input, counts, visibility of secondary elements. Prefer cases grounded in OBSERVED FACTS.`;
+
+    const [settledA, settledB] = await Promise.allSettled([
+      doCallLlm({
+        messages: [
+          { role: 'system', content: PLANNER_SYSTEM_PROMPT },
+          { role: 'user', content: promptA },
+        ],
+        jsonMode: true,
+        maxTokens: 3000,
+        tier: 'reasoning',
+        purpose: 'plan',
+        signal: options?.signal,
+      }),
+      doCallLlm({
+        messages: [
+          { role: 'system', content: PLANNER_SYSTEM_PROMPT },
+          { role: 'user', content: promptB },
+        ],
+        jsonMode: true,
+        maxTokens: 2500,
+        tier: 'fast',
+        purpose: 'plan',
+        signal: options?.signal,
+      }),
+    ]);
+
+    function extractCases(
+      settled: PromiseSettledResult<{ content: string }>,
+      side: string,
+    ): {
+      cases: TestCase[];
+      salvaged: boolean;
+      content?: string;
+      res?: ValidationResult;
+    } {
+      if (settled.status === 'rejected') {
+        console.warn(`[Planner] Dual-call ${side} rejected:`, settled.reason);
+        return { cases: [], salvaged: false };
+      }
+      const res = validateAndNormalizePlan(settled.value.content, knownIds, appMap.url, { cap: false });
+      if (res.ok) return { cases: res.plan.testCases, salvaged: false, content: settled.value.content, res };
+      if (res.kind === 'references') {
+        const validCases = res.plan.testCases.filter((_, idx) => !res.badCaseIndexes.has(idx));
+        console.warn(`[Planner] Dual-call ${side} references error; salvaged ${validCases.length} cases`);
+        return { cases: validCases, salvaged: true, content: settled.value.content, res };
+      }
+      console.warn(`[Planner] Dual-call ${side} failed (${res.kind}): ${res.detail.slice(0, 300)}`);
+      return { cases: [], salvaged: false, content: settled.value.content, res };
+    }
+
+    let { cases: casesA, salvaged: salvagedA, content: contentA, res: resA } = extractCases(settledA, 'A');
+    const { cases: casesB, salvaged: salvagedB } = extractCases(settledB, 'B');
+
+    if (casesA.length === 0 && casesB.length === 0) {
+      if (contentA && resA && !resA.ok) {
+        console.warn(`[Planner] Both sides empty. Attempting self-repair on reasoning side A (${resA.kind})...`);
+        const repairMessages: LlmMessage[] = [
+          { role: 'system', content: PLANNER_SYSTEM_PROMPT },
+          { role: 'user', content: promptA },
+          { role: 'assistant', content: contentA },
+          {
+            role: 'user',
+            content: `Your previous response failed validation.\n\nErrors (${resA.kind}):\n${resA.detail}\n\nReturn ONLY the corrected JSON object. No prose, no markdown, no code fences.`,
+          },
+        ];
+        try {
+          const repairResponse = await doCallLlm({
+            messages: repairMessages,
+            jsonMode: true,
+            maxTokens: 3000,
+            tier: 'reasoning',
+            purpose: 'repair',
+            signal: options?.signal,
+          });
+          const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, { cap: false });
+          if (repairResult.ok) {
+            casesA = repairResult.plan.testCases;
+          } else if (repairResult.kind === 'references') {
+            casesA = repairResult.plan.testCases.filter((_, idx) => !repairResult.badCaseIndexes.has(idx));
+            salvagedA = true;
+          }
+        } catch (repairErr) {
+          console.warn('[Planner] Self-repair failed:', repairErr);
+        }
+      }
+    }
+
+    if (casesA.length === 0 && casesB.length === 0) {
+      const errorA = settledA.status === 'rejected' ? settledA.reason : resA && !resA.ok ? resA.detail : 'Validation failed for A';
+      const errorB = settledB.status === 'rejected' ? settledB.reason : 'Validation failed for B';
+      throw new LlmError('BAD_RESPONSE', 'Planner dual-call produced no valid test cases', {
+        errorA: String(errorA),
+        errorB: String(errorB),
+      });
+    }
+
+    const seenTitles = new Set<string>();
+    const mergedCases: TestCase[] = [];
+    for (const tc of [...casesA, ...casesB]) {
+      const norm = tc.title.trim().toLowerCase();
+      if (!seenTitles.has(norm)) {
+        seenTitles.add(norm);
+        mergedCases.push(tc);
+      }
+    }
+
+    const isAnySalvaged = salvagedA || salvagedB;
+    return finalizePlan({ testCases: mergedCases }, isAnySalvaged, JSON.stringify({ testCases: mergedCases }), true);
+  }
+
+  // Single-call attempt (focus mode or fallback)
   const response = await doCallLlm({
     messages,
     jsonMode: true,

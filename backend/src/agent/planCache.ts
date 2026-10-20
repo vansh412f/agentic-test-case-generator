@@ -15,12 +15,14 @@ export function buildPlanCacheKey(params: {
   view: unknown;
   data?: unknown;
   focus?: unknown;
+  observations?: unknown;
 }): string {
   const payload = JSON.stringify({
-    v: 2,
+    v: 3,
     view: params.view,
     data: params.data ?? null,
     focus: params.focus ?? null,
+    observations: params.observations ?? null,
   });
   return crypto.createHash('sha256').update(payload).digest('hex');
 }

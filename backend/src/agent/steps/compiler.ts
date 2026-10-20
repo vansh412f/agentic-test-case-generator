@@ -1,6 +1,7 @@
 import type { TestCase, PlanStep, PlanStepTarget } from '../prompts/plannerPrompt.ts';
 import type { ScopedElement } from '../types.ts';
 import type { GeneratedTest } from './generator.ts';
+import type { Observation } from '../../crawler/types.ts';
 
 export class CompileError extends Error {
   constructor(message: string) {
@@ -12,14 +13,14 @@ export class CompileError extends Error {
 const PRIORITY = ['getByTestId', 'getByRole', 'getByPlaceholder', 'getByLabel', 'getByText'] as const;
 const SAFE = /^getBy(TestId|Role|Placeholder|Label|Text)\(/;
 
-export function locatorFor(el: ScopedElement): string {
+export function locatorFor(el: ScopedElement, pageVar = 'page'): string {
   for (const key of PRIORITY) {
     const expr = el.selectors[key];
     if (expr && SAFE.test(expr)) {
-      return `page.${expr}`;
+      return `${pageVar}.${expr}`;
     }
   }
-  return `page.locator(${JSON.stringify(el.selectors.css)})`;
+  return `${pageVar}.locator(${JSON.stringify(el.selectors.css)})`;
 }
 
 const q = (v: string): string => JSON.stringify(v);
@@ -28,28 +29,53 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function locatorForTarget(target: PlanStepTarget): string {
+export function urlAssertPattern(value: string): string {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      const hashPart = parsed.hash && parsed.hash.startsWith('#/') ? parsed.hash : '';
+      let pathPart = parsed.pathname;
+      if (pathPart === '/' && !hashPart) {
+        pathPart = '';
+      }
+      let base = `${parsed.origin}${pathPart}${hashPart}`;
+      if (base.endsWith('/')) {
+        base = base.slice(0, -1);
+      }
+      return '^' + escapeRegex(base) + '/?(?:[?#].*)?$';
+    }
+  } catch {
+    // not an absolute URL
+  }
+  return escapeRegex(value);
+}
+
+function locatorForTarget(target: PlanStepTarget, pageVar = 'page'): string {
   const roleArg = q(target.role);
   const nameArg = target.name !== undefined ? `, { name: ${q(target.name)} }` : '';
   const roleCall = `getByRole(${roleArg}${nameArg})`;
 
   if (target.container && target.withinText) {
-    return `page.getByRole(${q(target.container)}).filter({ hasText: ${q(target.withinText)} }).${roleCall}`;
+    return `${pageVar}.getByRole(${q(target.container)}).filter({ hasText: ${q(target.withinText)} }).${roleCall}`;
   }
   if (target.withinText) {
-    return `page.${roleCall}.filter({ hasText: ${q(target.withinText)} })`;
+    return `${pageVar}.${roleCall}.filter({ hasText: ${q(target.withinText)} })`;
   }
-  return `page.${roleCall}`;
+  return `${pageVar}.${roleCall}`;
 }
 
 export function compileTest(
   testCase: TestCase,
   elementsInScope: ScopedElement[],
   targetUrl: string,
+  observations?: Observation[],
 ): GeneratedTest {
   const elementsMap = new Map<string, ScopedElement>(
     elementsInScope.map((e) => [e.id, e]),
   );
+
+  let pageVar = 'page';
+  let popupHandled = false;
 
   const getLocator = (elementId: string | null): string => {
     if (!elementId) {
@@ -59,12 +85,12 @@ export function compileTest(
     if (!el) {
       throw new CompileError(`Unknown elementId "${elementId}" in test case "${testCase.id}"`);
     }
-    return locatorFor(el);
+    return locatorFor(el, pageVar);
   };
 
   const resolveLocator = (step: PlanStep): string => {
     if (step.target) {
-      return locatorForTarget(step.target);
+      return locatorForTarget(step.target, pageVar);
     }
     if (step.elementId) {
       return getLocator(step.elementId);
@@ -82,22 +108,37 @@ export function compileTest(
   for (const step of testCase.steps) {
     switch (step.action) {
       case 'click': {
+        const isPopupTrigger =
+          !popupHandled &&
+          Boolean(step.elementId) &&
+          Boolean(observations?.some((o) => o.kind === 'popup' && o.elementId === step.elementId));
+
         const L = (!step.elementId && !step.target && step.value)
-          ? `page.getByText(${q(step.value)}, { exact: true })`
+          ? `${pageVar}.getByText(${q(step.value)}, { exact: true })`
           : resolveLocator(step);
-        lines.push(`  await ${L}.click();`);
+
+        if (isPopupTrigger) {
+          lines.push(`  const popupPromise = page.context().waitForEvent('page');`);
+          lines.push(`  await ${L}.click();`);
+          lines.push(`  const popup = await popupPromise;`);
+          lines.push(`  await popup.waitForLoadState('domcontentloaded');`);
+          pageVar = 'popup';
+          popupHandled = true;
+        } else {
+          lines.push(`  await ${L}.click();`);
+        }
         break;
       }
       case 'dblclick': {
         const L = (!step.elementId && !step.target && step.value)
-          ? `page.getByText(${q(step.value)}, { exact: true })`
+          ? `${pageVar}.getByText(${q(step.value)}, { exact: true })`
           : resolveLocator(step);
         lines.push(`  await ${L}.dblclick();`);
         break;
       }
       case 'hover': {
         const L = (!step.elementId && !step.target && step.value)
-          ? `page.getByText(${q(step.value)}, { exact: true })`
+          ? `${pageVar}.getByText(${q(step.value)}, { exact: true })`
           : resolveLocator(step);
         lines.push(`  await ${L}.hover();`);
         break;
@@ -113,11 +154,11 @@ export function compileTest(
         break;
       }
       case 'reload': {
-        lines.push(`  await page.reload();`);
+        lines.push(`  await ${pageVar}.reload();`);
         break;
       }
       case 'go_back': {
-        lines.push(`  await page.goBack();`);
+        lines.push(`  await ${pageVar}.goBack();`);
         break;
       }
       case 'fill': {
@@ -136,7 +177,7 @@ export function compileTest(
         break;
       }
       case 'navigate': {
-        lines.push(`  await page.goto(${q(step.value ?? '')});`);
+        lines.push(`  await ${pageVar}.goto(${q(step.value ?? '')});`);
         break;
       }
       case 'assert_visible': {
@@ -144,7 +185,7 @@ export function compileTest(
           const L = resolveLocator(step);
           lines.push(`  await expect(${L}).toBeVisible();`);
         } else {
-          lines.push(`  await expect(page.getByText(${q(step.value ?? '')})).toBeVisible();`);
+          lines.push(`  await expect(${pageVar}.getByText(${q(step.value ?? '')})).toBeVisible();`);
         }
         break;
       }
@@ -153,7 +194,7 @@ export function compileTest(
           const L = resolveLocator(step);
           lines.push(`  await expect(${L}).toBeHidden();`);
         } else {
-          lines.push(`  await expect(page.getByText(${q(step.value ?? '')})).toHaveCount(0);`);
+          lines.push(`  await expect(${pageVar}.getByText(${q(step.value ?? '')})).toHaveCount(0);`);
         }
         break;
       }
@@ -188,17 +229,40 @@ export function compileTest(
         break;
       }
       case 'assert_url': {
-        lines.push(`  await expect(page).toHaveURL(url => url.href.includes(${q(step.value ?? '')}));`);
+        const pattern = urlAssertPattern(step.value ?? '');
+        const escapedForLiteral = pattern.replace(/\//g, '\\/');
+        lines.push(`  await expect(${pageVar}).toHaveURL(/${escapedForLiteral}/);`);
         break;
       }
       case 'assert_title': {
-        lines.push(`  await expect(page).toHaveTitle(new RegExp(${q(escapeRegex(step.value ?? ''))}));`);
+        lines.push(`  await expect(${pageVar}).toHaveTitle(new RegExp(${q(escapeRegex(step.value ?? ''))}));`);
         break;
       }
       case 'assert_count': {
-        const L = resolveLocator(step);
         const count = parseInt(step.value ?? '0', 10);
-        lines.push(`  await expect(${L}).toHaveCount(${count});`);
+        let countObs: Observation | undefined;
+        if (observations && observations.length > 0 && step.elementId) {
+          countObs = observations.find(
+            (o) => o.kind === 'count' && o.elementId === step.elementId && o.containerCss && o.role,
+          );
+          if (!countObs) {
+            const stepEl = elementsMap.get(step.elementId) as { ariaRole?: string | null } | undefined;
+            if (stepEl?.ariaRole) {
+              countObs = observations.find(
+                (o) => o.kind === 'count' && o.role === stepEl.ariaRole && o.containerCss && o.role,
+              );
+            }
+          }
+        }
+
+        if (countObs && countObs.containerCss && countObs.role) {
+          lines.push(
+            `  await expect(${pageVar}.locator(${q(countObs.containerCss)}).getByRole(${q(countObs.role)})).toHaveCount(${count});`,
+          );
+        } else {
+          const L = resolveLocator(step);
+          lines.push(`  await expect(${L}).toHaveCount(${count});`);
+        }
         break;
       }
       default: {
@@ -218,4 +282,3 @@ export function compileTest(
     testCaseId: testCase.id,
   };
 }
-// Module component implementation.
