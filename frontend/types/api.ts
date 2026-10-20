@@ -208,6 +208,7 @@ export interface ExecutionResult {
   durationMs: number | null;
   corrected: boolean;
   createdAt: string;
+  traceExpiresAt?: string;
 }
 
 export interface PersistedGeneratedTest {

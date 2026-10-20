@@ -5,7 +5,7 @@ import { CodeViewer } from '@/components/code/CodeViewer';
 import { DiffViewer } from '@/components/code/DiffViewer';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { useBackendMode } from '@/hooks/useBackendMode';
-import { ApiError, rerunTest } from '@/lib/api';
+import { ApiError, apiBase, getTraceLinks, rerunTest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { PersistedGeneratedTest, PlannedTestCase } from '@/types/api';
 
@@ -104,6 +104,8 @@ export const TestResultCard = React.memo(function TestResultCard({
         toast.error('Daily re-run limit reached. It resets at midnight UTC.');
       } else if (error instanceof ApiError && error.status === 404) {
         toast.error("This job can't be edited from this browser.");
+      } else if (error instanceof ApiError && error.code === 'TEST_DATA_REQUIRED') {
+        toast.error('Test data needed — enter values for the protected fields to run this test.');
       } else {
         toast.error('Could not start the re-run. Try again.');
       }
@@ -138,6 +140,10 @@ export const TestResultCard = React.memo(function TestResultCard({
     () => Array.from(new Set(draft.match(/__AGT_SECRET_\d+__/g) ?? [])),
     [draft],
   );
+  const missingSecretTokens = secretTokens.filter(
+    (token) => !(secretValues[token]?.length),
+  );
+  const testDataMissing = editing && missingSecretTokens.length > 0;
 
   // Stop polling as soon as the refreshed job shows the new attempt.
   useEffect(() => {
@@ -357,7 +363,7 @@ export const TestResultCard = React.memo(function TestResultCard({
                     <>
                       <button
                         className="primary-button"
-                        disabled={rerunning}
+                        disabled={rerunning || testDataMissing}
                         onClick={() => void handleRerun()}
                         type="button"
                       >
@@ -440,6 +446,11 @@ export const TestResultCard = React.memo(function TestResultCard({
                       />
                     </label>
                   ))}
+                  {testDataMissing && (
+                    <p role="note" style={{ margin: 0, fontSize: '11px', color: '#92400e' }}>
+                      Test data needed — enter values for the protected fields to run this test.
+                    </p>
+                  )}
                 </div>
               ) : null}
 
@@ -565,9 +576,8 @@ export const TestResultCard = React.memo(function TestResultCard({
           {lastAttempt?.traceExpiresAt && Date.parse(lastAttempt.traceExpiresAt) > Date.now() && (
             <div style={{ marginTop: '12px', padding: '8px 0', borderTop: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb' }}>
               <p style={{ margin: '4px 0', fontSize: '11px', color: '#6b7280' }}>
-                Trace includes page snapshots and everything typed during the test. Available for one hour. Expires{
-                  {new Date(lastAttempt.traceExpiresAt).toLocaleTimeString()}
-                }</p>
+                Trace includes page snapshots and everything typed during the test. Available for one hour. Expires {new Date(lastAttempt.traceExpiresAt).toLocaleTimeString()}.
+              </p>
               <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                 <button
                   className="secondary-button"

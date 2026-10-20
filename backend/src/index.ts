@@ -10,11 +10,14 @@ import { closeAllJobStreams } from './api/jobStream.ts';
 import { reconcileOrphanedJobs } from './maintenance/reconcileJobs.ts';
 import { runRetention } from './maintenance/expireOldJobs.ts';
 import { recordServerEvent } from './observability/serverEvents.ts';
-import { CrawlError } from './crawler/crawlErrors.ts';
 import { toHttpError } from './api/errors.ts';
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import { RUNNER_DIR } from './runner/config.ts';
+import { initTraceStore } from './runner/traceStore.ts';
 import { selfCheck } from './runner/isolation.ts';
 
 const bootedAt = new Date();
@@ -133,19 +136,26 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 
-// Trace viewer static mount (Playwright 1.63 bundled viewer)
-const traceViewerDir = require('path').resolve(
-  import.meta.dirname,
-  '..',
-  '.pnpm',
-  'playwright-core@1.63.0',
-  'node_modules',
-  'playwright-core',
-  'lib',
-  'vite',
-  'traceViewer'
-);
-app.use('/trace-viewer', express.static(traceViewerDir, { index: 'index.html', maxAge: '1h', immutable: false }));
+// Trace viewer static mount (Playwright 1.63 bundled viewer; public shell,
+// trace data itself only loads via signed URLs).
+let traceViewerDir: string | null = null;
+try {
+  const runnerRequire = createRequire(path.join(RUNNER_DIR, 'package.json'));
+  const testPkgPath = runnerRequire.resolve('@playwright/test/package.json');
+  const corePkgPath = createRequire(testPkgPath).resolve('playwright-core/package.json');
+  const candidate = path.join(path.dirname(corePkgPath), 'lib', 'vite', 'traceViewer');
+  if (fs.existsSync(path.join(candidate, 'index.html'))) {
+    traceViewerDir = candidate;
+  }
+} catch {
+  // Viewer is optional; signed download still works without it.
+}
+if (traceViewerDir) {
+  app.use('/trace-viewer', express.static(traceViewerDir, { index: 'index.html', maxAge: '1h', immutable: false }));
+  console.log(`[TraceViewer] serving /trace-viewer from ${traceViewerDir}`);
+} else {
+  console.warn('[TraceViewer] bundled viewer not found; /trace-viewer disabled');
+}
 
 // Initialize trace store (boot clean slate, start sweep interval)
 void initTraceStore().catch((err) => {
@@ -169,17 +179,15 @@ app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, r
     next(err);
     return;
   }
-  if (err instanceof CrawlError) {
-    const httpErr = toHttpError(err);
-    if (httpErr) {
-      if (httpErr.headers) {
-        for (const [key, value] of Object.entries(httpErr.headers)) {
-          res.setHeader(key, value);
-        }
+  const httpErr = toHttpError(err);
+  if (httpErr) {
+    if (httpErr.headers) {
+      for (const [key, value] of Object.entries(httpErr.headers)) {
+        res.setHeader(key, value);
       }
-      res.status(httpErr.status).json(httpErr.body);
-      return;
     }
+    res.status(httpErr.status).json(httpErr.body);
+    return;
   }
 
   const status = typeof err?.status === 'number' ? err.status : (typeof err?.statusCode === 'number' ? err.statusCode : 500);

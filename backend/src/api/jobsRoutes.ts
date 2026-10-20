@@ -15,6 +15,8 @@ import { prisma } from '../db/client.ts';
 import { startTestRerun, RerunRateLimitError } from '../agent/testRerun.ts';
 import { ipHashFor } from '../security/dailyBudget.ts';
 import { clientIp } from '../security/clientIp.ts';
+import { config } from '../config.ts';
+import { signTraceToken, traceForAttempt } from '../runner/traceStore.ts';
 import type { JobStatus } from '@prisma/client';
 
 const router = Router();
@@ -252,7 +254,7 @@ router.get('/:id/tests/:testCaseId/trace', async (req, res) => {
   try {
     const job = await prisma.job.findUnique({
       where: { id: parsedParams.data.id },
-      select: { id: true, visitorId: true, status: true, generatedTests: true },
+      select: { id: true, visitorId: true, status: true },
     });
     if (!job) throw new JobError('JOB_NOT_FOUND', 'Job not found.');
 
@@ -273,11 +275,7 @@ router.get('/:id/tests/:testCaseId/trace', async (req, res) => {
       viewerPath: `/trace-viewer/?trace=${encodeURIComponent(`/api/traces/${entry.traceId}?t=${token}`)}`,
     });
   } catch (error) {
-    if (error instanceof JobError) {
-      respondWithError(res, error);
-    } else {
-      respondWithError(res, error);
-    }
+    respondWithError(res, error);
   }
 });
 

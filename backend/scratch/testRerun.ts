@@ -402,6 +402,122 @@ async function main(): Promise<void> {
       pass('R8 secrets passed transiently, stored as tokens only');
     });
 
+    // R10 — code containing __AGT_SECRET_1__ and __AGT_SECRET_2__, called with NO secrets
+    await run('R10 missing all secrets -> TEST_DATA_REQUIRED', async () => {
+      const fixture = await createFixture();
+      const codeWithTwoSecrets = [
+        "import { test } from '@playwright/test';",
+        "test('two secrets', async ({ page }) => {",
+        "  await page.fill('#user', '__AGT_SECRET_1__');",
+        "  await page.fill('#pass', '__AGT_SECRET_2__');",
+        "});",
+      ].join('\n');
+
+      const throwingDeps: RerunDeps = {
+        validate: async () => {
+          throw new Error('validate must not be called');
+        },
+        execute: async () => {
+          throw new Error('execute must not be called');
+        },
+      };
+
+      await assert.rejects(
+        () => startTestRerun(rerunInput(fixture, { code: codeWithTwoSecrets }), throwingDeps),
+        hasCode('TEST_DATA_REQUIRED'),
+      );
+
+      assert.equal(await attemptCount(fixture.generatedTestId), 0);
+      const test = await prisma.generatedTest.findUniqueOrThrow({
+        where: { id: fixture.generatedTestId },
+      });
+      assert.equal(test.finalCode, ORIGINAL_CODE);
+      assert.equal(test.finalStatus, 'passed');
+      pass('R10 missing all secrets rejected with TEST_DATA_REQUIRED');
+    });
+
+    // R10b — only __AGT_SECRET_1__ provided
+    await run('R10b partial secrets -> TEST_DATA_REQUIRED', async () => {
+      const fixture = await createFixture();
+      const codeWithTwoSecrets = [
+        "import { test } from '@playwright/test';",
+        "test('two secrets', async ({ page }) => {",
+        "  await page.fill('#user', '__AGT_SECRET_1__');",
+        "  await page.fill('#pass', '__AGT_SECRET_2__');",
+        "});",
+      ].join('\n');
+
+      const throwingDeps: RerunDeps = {
+        validate: async () => {
+          throw new Error('validate must not be called');
+        },
+        execute: async () => {
+          throw new Error('execute must not be called');
+        },
+      };
+
+      await assert.rejects(
+        () =>
+          startTestRerun(
+            rerunInput(fixture, {
+              code: codeWithTwoSecrets,
+              secrets: { __AGT_SECRET_1__: 'user-value' },
+            }),
+            throwingDeps,
+          ),
+        hasCode('TEST_DATA_REQUIRED'),
+      );
+
+      assert.equal(await attemptCount(fixture.generatedTestId), 0);
+      const test = await prisma.generatedTest.findUniqueOrThrow({
+        where: { id: fixture.generatedTestId },
+      });
+      assert.equal(test.finalCode, ORIGINAL_CODE);
+      assert.equal(test.finalStatus, 'passed');
+      pass('R10b partial secrets rejected with TEST_DATA_REQUIRED');
+    });
+
+    // R10c — both keys present but __AGT_SECRET_2__ is '' (empty string)
+    await run('R10c empty-string secret -> TEST_DATA_REQUIRED', async () => {
+      const fixture = await createFixture();
+      const codeWithTwoSecrets = [
+        "import { test } from '@playwright/test';",
+        "test('two secrets', async ({ page }) => {",
+        "  await page.fill('#user', '__AGT_SECRET_1__');",
+        "  await page.fill('#pass', '__AGT_SECRET_2__');",
+        "});",
+      ].join('\n');
+
+      const throwingDeps: RerunDeps = {
+        validate: async () => {
+          throw new Error('validate must not be called');
+        },
+        execute: async () => {
+          throw new Error('execute must not be called');
+        },
+      };
+
+      await assert.rejects(
+        () =>
+          startTestRerun(
+            rerunInput(fixture, {
+              code: codeWithTwoSecrets,
+              secrets: { __AGT_SECRET_1__: 'user-value', __AGT_SECRET_2__: '' },
+            }),
+            throwingDeps,
+          ),
+        hasCode('TEST_DATA_REQUIRED'),
+      );
+
+      assert.equal(await attemptCount(fixture.generatedTestId), 0);
+      const test = await prisma.generatedTest.findUniqueOrThrow({
+        where: { id: fixture.generatedTestId },
+      });
+      assert.equal(test.finalCode, ORIGINAL_CODE);
+      assert.equal(test.finalStatus, 'passed');
+      pass('R10c empty-string secret rejected with TEST_DATA_REQUIRED');
+    });
+
     // R9 — end-to-end through the real validator + isolated runner (opt-in).
     if (process.env.RERUN_LIVE !== '1') {
       console.log('[SKIP] R9 live Playwright rerun (set RERUN_LIVE=1 to run)');

@@ -1,1 +1,35 @@
-import { Router } from 'express';\nimport { z } from 'zord';\nimport { getTrace, verifyTraceToken, signTraceToken, TraceEntry } from '../runner/traceStore.ts';\nimport { jobError } from './jobErrors.ts';\nimport { toHttpError } from './errors.ts';\nimport { createReadStream } from 'node:fs';\nimport path from 'node:path';\n\nconst router = Router();\n\nconst TraceIdSchema = z.object({ traceId: z.string().uuid() });\n\nrouter.get('/:traceId', async (req, res, next) => {\n  const parsed = TraceIdSchema.safeParse(req.params);\n  if (!parsed.success) {\n    return next(jobError('TRACE_NOT_FOUND', 'Trace not found.'));\n  }\n\n  const traceId = parsed.data.traceId;\n  const tQuery = req.query.t as string | undefined;\n\n  if (!tQuery) {\n    return next(jobError('TRACE_NOT_FOUND', 'Missing trace token.'));\n  }\n\n  // Verify token - we don't distinguish bad-token from missing to avoid oracle\n  if (!verifyTraceToken(traceId, tQuery)) {\n    return next(jobError('TRACE_NOT_FOUND', 'Trace not found.'));\n  }\n\n  const entry = getTrace(traceId);\n  if (!entry) {\n    return next(jobError('TRACE_NOT_FOUND', 'Trace not found.'));\n  }\n\n  try {\n    res.setHeader('Content-Type', 'application/zip');\n    res.setHeader('Content-Disposition', `attachment; filename="trace-${entry.entry.testCaseId}-attempt-${entry.entry.attemptNumber}.zip"`);\n    res.setHeader('Cache-Control', 'private, no-store');\n    res.setHeader('Content-Length', entry.entry.sizeBytes);\n\n    const traceFile = path.join(TRACE_DIR, `${traceId}.zip`);\n    const stream = createReadStream(traceFile);\n\n    stream.on('error', (err) => {\n      if (!res.headersSent) {\n        next(err);\n      } else {\n        res.destroy();\n      }\n    });\n\n    stream.pipe(res);\n  } catch (err) {\n    if (!res.headersSent) {\n      next(err);\n    } else {\n      res.destroy();\n    }\n  }\n});\n\nexport default router;
+import { Router } from 'express';
+import { createReadStream } from 'node:fs';
+import { z } from 'zod';
+import { getTrace, verifyTraceToken } from '../runner/traceStore.ts';
+import { jobError } from './jobErrors.ts';
+
+const router = Router();
+const TraceIdSchema = z.object({ traceId: z.string().uuid() });
+
+router.get('/:traceId', (req, res, next) => {
+  const parsed = TraceIdSchema.safeParse(req.params);
+  const token = typeof req.query.t === 'string' ? req.query.t : undefined;
+  if (!parsed.success || !token) return next(jobError('TRACE_NOT_FOUND'));
+
+  const { traceId } = parsed.data;
+  if (!verifyTraceToken(traceId, token)) return next(jobError('TRACE_NOT_FOUND'));
+
+  const found = getTrace(traceId);
+  if (!found) return next(jobError('TRACE_NOT_FOUND'));
+
+  const safeTestId = found.entry.testCaseId.replace(/[^\w-]/g, '');
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="trace-${safeTestId}-attempt-${found.entry.attemptNumber}.zip"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Content-Length', found.entry.sizeBytes);
+
+  const stream = createReadStream(found.filePath);
+  stream.on('error', (err) => {
+    if (!res.headersSent) next(err);
+    else res.destroy();
+  });
+  stream.pipe(res);
+});
+
+export default router;

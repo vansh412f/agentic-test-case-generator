@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import jobsRouter from './jobsRoutes.ts';
 import adminRouter from './adminRoutes.ts';
+import traceRouter from './traceRoutes.ts';
 import { CrawlRequestSchema, GenerateRequestSchema } from './schemas.ts';
 import { crawlPage } from '../crawler/pageCrawler.ts';
 import type { QueuedJob } from '../agent/jobRunner.ts';
@@ -36,7 +37,7 @@ const router = Router();
 router.use(visitorMiddleware);
 router.use('/jobs', jobsRouter);
 router.use('/admin', adminRouter);
-router.use('/traces', await import('./traceRoutes.ts').then((mod) => mod.default));
+router.use('/traces', traceRouter);
 
 
 router.get('/health', (_req, res) => {

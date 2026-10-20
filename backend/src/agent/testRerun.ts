@@ -11,6 +11,7 @@ import { nextUtcMidnight } from '../security/dailyBudget.ts';
 import { jobError } from '../api/jobErrors.ts';
 import { isTerminal } from '../api/jobStream.ts';
 import { recordServerEvent } from '../observability/serverEvents.ts';
+import { registerTrace } from '../runner/traceStore.ts';
 
 export interface RerunInput {
   jobId: string;
@@ -151,6 +152,7 @@ interface PerformRerunParams {
   code: string;
   attemptNumber: number;
   headed: boolean;
+  visitorId: string;
   secrets?: Record<string, string>;
   validate: typeof validateTestCode;
   execute: typeof executeTests;
@@ -210,7 +212,11 @@ async function performRerun(params: PerformRerunParams): Promise<void> {
       secrets: secretMap.size > 0 ? secretMap : undefined,
       ...(params.headed ? { headless: false } : {}),
       trace: true,
-      onTraceZip: async (zipPath) => { await registerTrace(zipPath, { jobId, testCaseId, attemptNumber, visitorId: input.visitorId }); }
+      onTraceZip: async (zipPath: string) => {
+        await registerTrace(zipPath, {
+          jobId, testCaseId, attemptNumber, visitorId: params.visitorId,
+        });
+      },
     });
 
     const result = outcome.results[0];
@@ -303,6 +309,12 @@ export async function startTestRerun(
     throw jobError('BASELINE_NOT_EDITABLE');
   }
 
+  const requiredTokens = new Set(input.code.match(/__AGT_SECRET_\d+__/g) ?? []);
+  const missingTokens = [...requiredTokens].filter((token) => !input.secrets?.[token]);
+  if (missingTokens.length > 0) {
+    throw jobError('TEST_DATA_REQUIRED');
+  }
+
   const key = `${job.id}:${input.testCaseId}`;
   if (inFlight.has(key)) throw jobError('RERUN_IN_PROGRESS');
 
@@ -322,6 +334,7 @@ export async function startTestRerun(
     code: input.code,
     attemptNumber,
     headed,
+    visitorId: input.visitorId,
     secrets: input.secrets,
     validate,
     execute,
