@@ -36,7 +36,6 @@ async function main() {
   await runPipeline({
     id: todoJobId,
     url: 'https://demo.playwright.dev/todomvc',
-    deepCrawl: false,
     fresh: true,
   });
 

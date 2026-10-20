@@ -23,6 +23,7 @@ import { handleGenerationError } from '@/lib/generationErrors';
 import { presentError } from '@/lib/errorPresentation';
 import { loadRememberedTestData } from '@/lib/rememberedTestData';
 import { isTerminalJobStatus } from '@/lib/utils';
+import { trackJobs } from '@/lib/activeJobs';
 import type { AppMap, JobDetail, JobsListResponse } from '@/types/api';
 
 interface ContinueTestingProps {
@@ -84,8 +85,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
 
     const excludedUrls = new Set([
       normalizeUrl(job.targetUrl),
-      ...(appMap.pages?.map((p) => normalizeUrl(p.url)) ?? []),
-      ...(appMap.pages?.map((p) => normalizeUrl(p.requestedUrl)) ?? []),
+      normalizeUrl(appMap.url),
     ]);
 
     const uniqueLinks = Array.from(new Set(appMap.discoveredLinks ?? []));
@@ -94,7 +94,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
       .slice(0, 20);
 
     const tabs = (appMap.elements ?? [])
-      .filter((el) => el.ariaRole === 'tab' && (!el.page || el.page === 1) && el.selectors?.css)
+      .filter((el) => el.ariaRole === 'tab' && el.selectors?.css)
       .slice(0, 12);
 
     return { eligiblePages: pages, eligibleTabs: tabs };
@@ -207,6 +207,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
       });
       setSubmittedUrls(selectedPages);
       setCreatedJobIds(jobIds);
+      trackJobs(jobIds, selectedPages);
       toast.success(`${jobIds.length} ${jobIds.length === 1 ? 'job' : 'jobs'} queued.`);
     } catch (err) {
       let msg = handleGenerationError(err, {
@@ -251,6 +252,7 @@ export function ContinueTesting({ job }: ContinueTestingProps) {
       const { jobIds } = await startGeneration(urls, payloadToUse, { focus: focusElements });
       setSubmittedUrls(urls);
       setCreatedJobIds(jobIds);
+      trackJobs(jobIds, urls);
       toast.success('Focused test generation queued.');
     } catch (err) {
       let msg = handleGenerationError(err, {

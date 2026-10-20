@@ -1,6 +1,6 @@
 import ts from 'typescript';
 
-const ALLOWED_MODULES = new Set(['@playwright/test', '@axe-core/playwright']);
+const ALLOWED_MODULES = new Set(['@playwright/test']);
 
 const FORBIDDEN_NAMES = new Set([
   'constructor',

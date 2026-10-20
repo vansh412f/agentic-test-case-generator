@@ -106,7 +106,7 @@ function testCodeSafetyBypasses() {
       `,
     },
     {
-      name: 'smoke-3: page and context fixtures',
+      name: 'page and context fixtures',
       code: `
         import { test, expect } from '@playwright/test';
         test('context test', async ({ page, context }) => {

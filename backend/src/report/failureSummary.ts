@@ -7,7 +7,6 @@ export type FailureKind =
   | 'action_timeout'
   | 'test_timeout'
   | 'navigation'
-  | 'accessibility'
   | 'other';
 
 export interface FailureSummary {
@@ -116,61 +115,67 @@ function extractTargetFromError(sanitized: string): string | undefined {
   return undefined;
 }
 
+function getErrorHeader(sanitized: string): string {
+  const codeFrameIndex = sanitized.search(/^\s*>?\s*\d+\s*\|/m);
+  const callLogIndex = sanitized.indexOf('Call log:');
+
+  let cutIndex = sanitized.length;
+  if (codeFrameIndex !== -1) cutIndex = Math.min(cutIndex, codeFrameIndex);
+  if (callLogIndex !== -1) cutIndex = Math.min(cutIndex, callLogIndex);
+
+  return sanitized.slice(0, cutIndex);
+}
+
 export function summarizeFailure(rawError: string | null | undefined, _code?: string): FailureSummary {
   const sanitized = sanitizeError(rawError);
   if (!sanitized) {
     return { kind: 'other', headline: 'Unknown error occurred during test execution.' };
   }
 
-  // Extract line and codeFrame
-  let line: number | undefined;
-  let codeFrame: string | undefined;
+  // Header is text before first code-frame line or before "Call log:", whichever comes first
+  const header = getErrorHeader(sanitized);
 
-  const lineMatch = sanitized.match(/>\s*(\d+)\s*\|/);
+  // Extract line and codeFrame (BUG B fix)
+  let line: number | undefined;
+  const lineMatch = sanitized.match(/^\s*>\s*(\d+)\s*\|/m);
   if (lineMatch) {
     line = parseInt(lineMatch[1], 10);
   }
 
-  const frameLines = sanitized.split(/\r?\n/).filter((l) => /^\s*(\d+|\>)\s*\|/.test(l));
-  if (frameLines.length > 0) {
-    codeFrame = frameLines.join('\n');
+  const lines = sanitized.split(/\r?\n/);
+  const frameLines: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*>?\s*\d+\s*\|/.test(l)) {
+      frameLines.push(l);
+      if (/^\s*>\s*\d+\s*\|/.test(l)) {
+        if (i + 1 < lines.length && /^\s*\|\s*\^/.test(lines[i + 1])) {
+          frameLines.push(lines[i + 1]);
+          i++;
+        }
+      }
+    }
+  }
+  const codeFrame = frameLines.length > 0 ? frameLines.join('\n') : undefined;
+
+  // Extract target: look in header first
+  let target: string | undefined;
+  const headerLocatorMatch = header.match(/^\s*Locator:\s+(.*)$/m);
+  if (headerLocatorMatch) {
+    target = humanizeLocator(headerLocatorMatch[1]);
+  } else {
+    target = extractTargetFromError(sanitized);
   }
 
-  // Extract target locator
-  const target = extractTargetFromError(sanitized);
-
-  // Extract expected & received if present
+  // Expected & Received parsing accepting Playwright 1.63 labels
   let expected: string | undefined;
   let received: string | undefined;
-  const expMatch = sanitized.match(/Expected:\s*(.*?)(\r?\n|$)/);
+  const expMatch = sanitized.match(/^\s*Expected(?: string| pattern| substring| value)?:\s*(.*)$/m);
   if (expMatch) expected = expMatch[1].trim();
-  const recMatch = sanitized.match(/Received:\s*(.*?)(\r?\n|$)/);
+  const recMatch = sanitized.match(/^\s*Received(?: string| value)?:\s*(.*)$/m);
   if (recMatch) received = recMatch[1].trim();
 
-  // 1. Accessibility (Axe toEqual diff)
-  if (
-    sanitized.includes('toEqual') &&
-    (sanitized.includes('axe') ||
-      sanitized.includes('violations') ||
-      sanitized.includes('accessibility') ||
-      sanitized.includes('color-contrast'))
-  ) {
-    const ruleMatches = [...sanitized.matchAll(/"id":\s*["']([^"']+)["']/g)].map((m) => m[1]);
-    const uniqueRules = [...new Set(ruleMatches)];
-    const count = uniqueRules.length;
-    const ruleList = count > 0 ? ` (${uniqueRules.join(', ')})` : '';
-    return {
-      kind: 'accessibility',
-      headline: `${count} accessibility issue${count === 1 ? '' : 's'}${ruleList}`,
-      expected,
-      received,
-      target,
-      line,
-      codeFrame,
-    };
-  }
-
-  // 2. Strict mode violation
+  // 1. Strict mode violation (kept first)
   const strictMatch = sanitized.match(/strict mode violation:\s*(.*?)\s+resolved to (\d+) elements/i);
   if (strictMatch) {
     const loc = humanizeLocator(strictMatch[1]);
@@ -185,7 +190,257 @@ export function summarizeFailure(rawError: string | null | undefined, _code?: st
     };
   }
 
-  // 3. Action timeout (click / fill / press / etc.)
+  // Compute failedMatcher and isNot from the error header only
+  const matcherMatch = header.match(/expect\((?:locator|page|received)\)\.(not\.)?(\w+)\(/);
+  let failedMatcher: string | undefined;
+  let isNot = false;
+  if (matcherMatch) {
+    isNot = Boolean(matcherMatch[1]);
+    failedMatcher = matcherMatch[2];
+  }
+
+  // 2. Matcher-specific branches routed by failedMatcher
+  if (failedMatcher === 'toBeVisible') {
+    const t = target ?? 'the element';
+    if (isNot) {
+      return {
+        kind: 'assertion',
+        headline: `Expected ${t} to be hidden; it was visible.`,
+        expected,
+        received,
+        target: t,
+        line,
+        codeFrame,
+      };
+    }
+    if (
+      sanitized.includes('not found') ||
+      sanitized.includes('element(s) not found') ||
+      received?.includes('not found')
+    ) {
+      return {
+        kind: 'element_missing',
+        headline: `Expected ${t} to be visible; it was not found on the page.`,
+        expected,
+        received,
+        target: t,
+        line,
+        codeFrame,
+      };
+    }
+    return {
+      kind: 'assertion',
+      headline: `Expected ${t} to be visible; it exists but is hidden.`,
+      expected,
+      received,
+      target: t,
+      line,
+      codeFrame,
+    };
+  }
+
+  if (failedMatcher === 'toBeHidden') {
+    const t = target ?? 'the element';
+    if (isNot) {
+      return {
+        kind: 'assertion',
+        headline: `Expected ${t} to be visible; it was hidden.`,
+        expected,
+        received,
+        target: t,
+        line,
+        codeFrame,
+      };
+    }
+    return {
+      kind: 'assertion',
+      headline: `Expected ${t} to be hidden; it was visible.`,
+      expected,
+      received,
+      target: t,
+      line,
+      codeFrame,
+    };
+  }
+
+  if (
+    failedMatcher === 'toHaveText' ||
+    failedMatcher === 'toContainText' ||
+    failedMatcher === 'toHaveValue'
+  ) {
+    const t = target ?? 'the element';
+    const matcher = failedMatcher;
+    const verb = matcher === 'toHaveValue' ? 'to have value' : 'to contain';
+    if (isNot) {
+      return {
+        kind: 'assertion',
+        headline: `Expected ${t} not ${verb} ${expected ?? 'the expected text'}; it did.`,
+        expected,
+        received,
+        target: t,
+        line,
+        codeFrame,
+      };
+    }
+    let recDesc = 'it was empty';
+    if (received && received !== '""' && received !== "''") {
+      recDesc = `it ${matcher === 'toHaveValue' ? 'had value' : 'contained'} ${received}`;
+    }
+    return {
+      kind: 'assertion',
+      headline: `Expected ${t} ${verb} ${expected ?? 'the expected text'}; ${recDesc}.`,
+      expected,
+      received,
+      target: t,
+      line,
+      codeFrame,
+    };
+  }
+
+  if (failedMatcher === 'toHaveURL') {
+    if (isNot) {
+      return {
+        kind: 'assertion',
+        headline: `Expected the page address not to be ${expected ?? 'the address'}; it was.`,
+        expected,
+        received,
+        line,
+        codeFrame,
+      };
+    }
+    let recDesc = received ? `; it was ${received}` : '';
+    let expDesc = expected ?? 'the expected address';
+    if (expDesc.includes('[Function') || expDesc.includes('predicate')) {
+      expDesc = 'the expected address';
+    }
+    return {
+      kind: 'assertion',
+      headline: `Expected the page address to include ${expDesc}${recDesc}.`,
+      expected,
+      received,
+      line,
+      codeFrame,
+    };
+  }
+
+  if (failedMatcher === 'toHaveCount') {
+    const t = target ?? 'the element';
+    let pluralT = `${t}s`;
+    if (t.startsWith('the element matching')) {
+      pluralT = t.replace('the element matching', 'elements matching');
+    }
+    if (isNot) {
+      return {
+        kind: 'assertion',
+        headline: `Expected not to find ${expected ?? 'N'} ${pluralT}; found ${received ?? '0'}.`,
+        expected,
+        received,
+        target: t,
+        line,
+        codeFrame,
+      };
+    }
+    return {
+      kind: 'assertion',
+      headline: `Expected ${expected ?? 'N'} ${pluralT}; found ${received ?? '0'}.`,
+      expected,
+      received,
+      target: t,
+      line,
+      codeFrame,
+    };
+  }
+
+  if (failedMatcher === 'toHaveTitle') {
+    if (isNot) {
+      return {
+        kind: 'assertion',
+        headline: `Expected the page title not to be ${expected ?? ''}; it was.`,
+        expected,
+        received,
+        line,
+        codeFrame,
+      };
+    }
+    return {
+      kind: 'assertion',
+      headline: `Expected the page title to be ${expected ?? ''}; it was ${received ?? ''}.`,
+      expected,
+      received,
+      line,
+      codeFrame,
+    };
+  }
+
+  if (failedMatcher === 'toBeChecked') {
+    const t = target ?? 'the element';
+    return {
+      kind: 'assertion',
+      headline: isNot
+        ? `Expected ${t} to be unchecked; it was checked.`
+        : `Expected ${t} to be checked; it was unchecked.`,
+      target: t,
+      line,
+      codeFrame,
+    };
+  }
+
+  if (failedMatcher === 'toBeEnabled') {
+    const t = target ?? 'the element';
+    return {
+      kind: 'assertion',
+      headline: isNot
+        ? `Expected ${t} to be disabled; it was enabled.`
+        : `Expected ${t} to be enabled; it was disabled.`,
+      target: t,
+      line,
+      codeFrame,
+    };
+  }
+
+  if (failedMatcher === 'toBeDisabled') {
+    const t = target ?? 'the element';
+    return {
+      kind: 'assertion',
+      headline: isNot
+        ? `Expected ${t} to be enabled; it was disabled.`
+        : `Expected ${t} to be disabled; it was enabled.`,
+      target: t,
+      line,
+      codeFrame,
+    };
+  }
+
+  if (
+    failedMatcher === 'toHaveAttribute' ||
+    failedMatcher === 'toHaveClass' ||
+    failedMatcher === 'toHaveId'
+  ) {
+    const t = target ?? 'the element';
+    return {
+      kind: 'assertion',
+      headline: `Expected ${t} to have ${failedMatcher.replace(/^toHave/, '').toLowerCase()} ${expected ?? ''}; received ${received ?? ''}.`,
+      expected,
+      received,
+      target: t,
+      line,
+      codeFrame,
+    };
+  }
+
+  if (failedMatcher === 'toBe' || failedMatcher === 'toEqual') {
+    return {
+      kind: 'assertion',
+      headline: `Expected ${expected ?? 'the expected value'}; received ${received ?? 'different value'}.`,
+      expected,
+      received,
+      target,
+      line,
+      codeFrame,
+    };
+  }
+
+  // 3. Action timeout (click / fill / press / etc.) when no expect header is present
   const actionTimeoutMatch = sanitized.match(
     /(?:TimeoutError:\s*)?(?:locator|page)\.([a-zA-Z]+):\s*Timeout\s*(\d+)ms\s*exceeded/i,
   );
@@ -214,146 +469,7 @@ export function summarizeFailure(rawError: string | null | undefined, _code?: st
     };
   }
 
-  // 5. toBeVisible
-  if (sanitized.includes('toBeVisible()')) {
-    const t = target ?? 'the element';
-    if (sanitized.includes('not found') || sanitized.includes('element(s) not found')) {
-      return {
-        kind: 'element_missing',
-        headline: `Expected ${t} to be visible; it was not found on the page.`,
-        expected,
-        received,
-        target: t,
-        line,
-        codeFrame,
-      };
-    }
-    return {
-      kind: 'assertion',
-      headline: `Expected ${t} to be visible; it exists but is hidden.`,
-      expected,
-      received,
-      target: t,
-      line,
-      codeFrame,
-    };
-  }
-
-  // 6. toBeHidden
-  if (sanitized.includes('toBeHidden()')) {
-    const t = target ?? 'the element';
-    return {
-      kind: 'assertion',
-      headline: `Expected ${t} to be hidden; it was visible.`,
-      expected,
-      received,
-      target: t,
-      line,
-      codeFrame,
-    };
-  }
-
-  // 7. toHaveText / toContainText / toHaveValue
-  const textMatch = sanitized.match(/expect\(.*?\)\.(toHaveText|toContainText|toHaveValue)/);
-  if (textMatch) {
-    const t = target ?? 'the element';
-    const matcher = textMatch[1];
-    const verb = matcher === 'toHaveValue' ? 'to have value' : 'to contain';
-    let recDesc = 'it was empty';
-    if (received && received !== '""' && received !== "''") {
-      recDesc = `it ${matcher === 'toHaveValue' ? 'had value' : 'contained'} ${received}`;
-    }
-    return {
-      kind: 'assertion',
-      headline: `Expected ${t} ${verb} ${expected ?? 'the expected text'}; ${recDesc}.`,
-      expected,
-      received,
-      target: t,
-      line,
-      codeFrame,
-    };
-  }
-
-  // 8. toHaveURL
-  if (sanitized.includes('toHaveURL')) {
-    let recDesc = received ? `; it was ${received}` : '';
-    let expDesc = expected ?? 'the expected address';
-    if (expDesc.includes('[Function') || expDesc.includes('predicate')) {
-      expDesc = 'the expected address';
-    }
-    return {
-      kind: 'assertion',
-      headline: `Expected the page address to include ${expDesc}${recDesc}.`,
-      expected,
-      received,
-      line,
-      codeFrame,
-    };
-  }
-
-  // 9. toHaveCount
-  if (sanitized.includes('toHaveCount')) {
-    const t = target ?? 'the element';
-    let pluralT = `${t}s`;
-    if (t.startsWith('the element matching')) {
-      pluralT = t.replace('the element matching', 'elements matching');
-    }
-    return {
-      kind: 'assertion',
-      headline: `Expected ${expected ?? 'N'} ${pluralT}; found ${received ?? '0'}.`,
-      expected,
-      received,
-      target: t,
-      line,
-      codeFrame,
-    };
-  }
-
-  // 10. toHaveTitle
-  if (sanitized.includes('toHaveTitle')) {
-    return {
-      kind: 'assertion',
-      headline: `Expected the page title to be ${expected ?? ''}; it was ${received ?? ''}.`,
-      expected,
-      received,
-      line,
-      codeFrame,
-    };
-  }
-
-  // 11. toBeChecked / toBeEnabled / toBeDisabled
-  if (sanitized.includes('toBeChecked')) {
-    const t = target ?? 'the element';
-    return {
-      kind: 'assertion',
-      headline: `Expected ${t} to be checked; it was unchecked.`,
-      target: t,
-      line,
-      codeFrame,
-    };
-  }
-  if (sanitized.includes('toBeEnabled')) {
-    const t = target ?? 'the element';
-    return {
-      kind: 'assertion',
-      headline: `Expected ${t} to be enabled; it was disabled.`,
-      target: t,
-      line,
-      codeFrame,
-    };
-  }
-  if (sanitized.includes('toBeDisabled')) {
-    const t = target ?? 'the element';
-    return {
-      kind: 'assertion',
-      headline: `Expected ${t} to be disabled; it was enabled.`,
-      target: t,
-      line,
-      codeFrame,
-    };
-  }
-
-  // 12. Navigation errors (net::ERR_*)
+  // 5. Navigation errors (net::ERR_*)
   if (sanitized.includes('net::ERR_')) {
     const errCode = sanitized.match(/net::(ERR_[A-Z0-9_]+)/)?.[1];
     return {

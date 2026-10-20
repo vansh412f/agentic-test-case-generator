@@ -21,7 +21,8 @@ import { useJobStream } from '@/hooks/useJobStream';
 import { useApiBase } from '@/hooks/useApiBase';
 import { ApiError, cancelJob } from '@/lib/api';
 import { toast } from 'sonner';
-import { formatJobDuration, isTerminalJobStatus } from '@/lib/utils';
+import { formatRunTiming, isTerminalJobStatus } from '@/lib/utils';
+import { PipelineProgress } from '@/components/home/PipelineProgress';
 import type { JobDetail } from '@/types/api';
 
 interface JobPageProps {
@@ -235,15 +236,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
 
   const terminal = isTerminal;
 
-  const durationStr = formatJobDuration(
-    job.startedAt ?? job.createdAt,
-    job.completedAt,
-  );
-  const queueWaitMs =
-    job.startedAt && job.createdAt
-      ? new Date(job.startedAt).getTime() - new Date(job.createdAt).getTime()
-      : 0;
-  const queuedStr = queueWaitMs > 2000 ? `queued ${Math.round(queueWaitMs / 1000)}s` : null;
+  const { ran, waited } = formatRunTiming(job);
 
   const passedCount = job.generatedTests.filter(
     (t) => t.finalStatus === 'passed',
@@ -254,8 +247,8 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
   const exportableCount = job.generatedTests.filter(
     (t) => t.finalStatus !== 'gave_up',
   ).length;
-  const correctedCount = job.generatedTests.filter((t) =>
-    t.executionResults.some((r) => r.corrected),
+  const correctedCount = job.generatedTests.filter(
+    (t) => t.finalStatus === 'passed' && t.executionResults.some((r) => r.corrected),
   ).length;
   const needsReviewCount = job.generatedTests.filter(
     (t) => t.finalStatus === 'needs_review',
@@ -289,7 +282,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           <div className="share-cta">
             <p>
               <strong>Shared test run.</strong> These Playwright tests were
-              generated, executed and self-corrected by an AI agent from a single URL.
+              generated, executed and self-corrected from a single URL.
             </p>
             <Link className="primary-button" href="/">
               Generate tests for your app
@@ -521,6 +514,17 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           </div>
         )}
 
+        {!terminal && (
+          <PipelineProgress
+            job={job}
+            jobId={job.id}
+            liveStatus={job.status}
+            startedAt={job.startedAt ? Date.parse(job.startedAt) : null}
+            submittedUrls={[job.targetUrl]}
+            transport={transport}
+          />
+        )}
+
         <div className="summary-grid">
           <div>
             <strong>{passRate}</strong>
@@ -528,14 +532,14 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           </div>
           <div>
             <strong>
-              {durationStr}
-              {queuedStr && (
+              {ran}
+              {waited && (
                 <small style={{ display: 'block', fontSize: '11px', fontWeight: 'normal', color: 'var(--ink-subtle)' }}>
-                  ({queuedStr})
+                  waited {waited} in queue
                 </small>
               )}
             </strong>
-            <span>DURATION</span>
+            <span>RUN TIME</span>
           </div>
           <div>
             <strong>{tokensStr}</strong>
@@ -551,55 +555,129 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
                 <h2>Execution timeline</h2>
               </div>
               <span>
-                {job.agentSteps.length} steps · {durationStr} total{queuedStr ? ` (${queuedStr})` : ''}
+                {job.agentSteps.length} steps · ran {ran}{waited ? ` · waited ${waited} in queue` : ''}
               </span>
             </div>
 
             <div className="timeline" onScroll={handleTimelineScroll} ref={timelineRef}>
-              {job.agentSteps.map((step, i) => {
-                const isFailed = (step as { success?: boolean }).success === false || step.status === 'failure';
-                const isCorrected = step.stepType === 'correct';
-                const duration = formatStepDuration(step.latencyMs);
-                const tokens = (
-                  (step.promptTokens ?? 0) + (step.completionTokens ?? 0)
-                ).toLocaleString();
-                const hasLlm = Boolean(step.llmModel);
-                const testTitle = step.testCaseId
-                  ? job.testPlan?.testCases.find((tc) => tc.id === step.testCaseId)?.title
-                  : undefined;
-                const tooltipParts = [
-                  step.testCaseId,
-                  testTitle,
-                  step.llmModel,
-                ].filter(Boolean);
-                const tooltip = tooltipParts.length > 0 ? tooltipParts.join(' · ') : undefined;
+              {(() => {
+                type TimelineNode =
+                  | {
+                      kind: 'folded_generate';
+                      key: string;
+                      count: number;
+                      latencyMs: number;
+                      testCaseIds: string[];
+                    }
+                  | {
+                      kind: 'single';
+                      key: string;
+                      step: (typeof job.agentSteps)[number];
+                    };
 
-                return (
-                  <div key={step.id || i} title={tooltip}>
-                    <span className={isFailed ? 'failed' : isCorrected ? 'corrected' : ''}>
-                      {isFailed ? (
-                        <X aria-hidden="true" className="h-3 w-3" />
-                      ) : isCorrected ? (
-                        <ArrowCounterClockwise aria-hidden="true" className="h-3 w-3" />
-                      ) : (
-                        <Check aria-hidden="true" className="h-3 w-3" />
-                      )}
-                    </span>
-                    <strong>
-                      {step.stepType.charAt(0).toUpperCase() + step.stepType.slice(1)}
-                    </strong>
-                    <small>
-                      {duration}
-                      {hasLlm && (
-                        <>
-                          <br />
-                          {tokens} tokens
-                        </>
-                      )}
-                    </small>
-                  </div>
-                );
-              })}
+                const nodes: TimelineNode[] = [];
+                for (let i = 0; i < job.agentSteps.length; i++) {
+                  const step = job.agentSteps[i];
+                  const isFoldableGenerate =
+                    step.stepType === 'generate' && !step.llmModel && step.status !== 'failure';
+
+                  if (isFoldableGenerate) {
+                    const last = nodes[nodes.length - 1];
+                    if (last && last.kind === 'folded_generate') {
+                      last.count += 1;
+                      last.latencyMs += step.latencyMs ?? 0;
+                      if (step.testCaseId) last.testCaseIds.push(step.testCaseId);
+                    } else {
+                      nodes.push({
+                        kind: 'folded_generate',
+                        key: step.id || `gen-${i}`,
+                        count: 1,
+                        latencyMs: step.latencyMs ?? 0,
+                        testCaseIds: step.testCaseId ? [step.testCaseId] : [],
+                      });
+                    }
+                  } else {
+                    nodes.push({
+                      kind: 'single',
+                      key: step.id || `step-${i}`,
+                      step,
+                    });
+                  }
+                }
+
+                return nodes.map((node) => {
+                  if (node.kind === 'folded_generate') {
+                    const duration = formatStepDuration(node.latencyMs);
+                    const tooltip = node.testCaseIds.length > 0 ? node.testCaseIds.join(', ') : undefined;
+                    return (
+                      <div key={node.key} title={tooltip}>
+                        <span>
+                          <Check aria-hidden="true" className="h-3 w-3" />
+                        </span>
+                        <strong>
+                          {node.count > 1 ? `Generate ×${node.count}` : 'Generate'}
+                        </strong>
+                        <small>{duration}</small>
+                      </div>
+                    );
+                  }
+
+                  const step = node.step;
+                  const isFailed =
+                    (step as { success?: boolean }).success === false || step.status === 'failure';
+                  const isCorrected = step.stepType === 'correct';
+                  const duration = formatStepDuration(step.latencyMs);
+                  const tokens = (
+                    (step.promptTokens ?? 0) + (step.completionTokens ?? 0)
+                  ).toLocaleString();
+                  const hasLlm = Boolean(step.llmModel);
+                  const testTitle = step.testCaseId
+                    ? job.testPlan?.testCases.find((tc) => tc.id === step.testCaseId)?.title
+                    : undefined;
+                  const tooltipParts = [
+                    step.testCaseId,
+                    testTitle,
+                    step.llmModel,
+                  ].filter(Boolean);
+                  const tooltip = tooltipParts.length > 0 ? tooltipParts.join(' · ') : undefined;
+
+                  let label =
+                    step.stepType.charAt(0).toUpperCase() + step.stepType.slice(1);
+                  if (step.stepType === 'plan') {
+                    if (step.attemptNumber === 2) {
+                      label = 'Plan · repair';
+                    } else if (step.attemptNumber === 3) {
+                      label = 'Plan · expand';
+                    } else {
+                      label = 'Plan';
+                    }
+                  }
+
+                  return (
+                    <div key={node.key} title={tooltip}>
+                      <span className={isFailed ? 'failed' : isCorrected ? 'corrected' : ''}>
+                        {isFailed ? (
+                          <X aria-hidden="true" className="h-3 w-3" />
+                        ) : isCorrected ? (
+                          <ArrowCounterClockwise aria-hidden="true" className="h-3 w-3" />
+                        ) : (
+                          <Check aria-hidden="true" className="h-3 w-3" />
+                        )}
+                      </span>
+                      <strong>{label}</strong>
+                      <small>
+                        {duration}
+                        {hasLlm && (
+                          <>
+                            <br />
+                            {tokens} tokens
+                          </>
+                        )}
+                      </small>
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </section>
         ) : null}
@@ -618,7 +696,9 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
               {needsReviewCount > 0 && (
                 <span>{needsReviewCount} needs review</span>
               )}
-              <span>{correctedCount} corrected</span>
+              {correctedCount > 0 && (
+                <span>{correctedCount} fixed after correction</span>
+              )}
             </div>
           </div>
 
@@ -630,7 +710,9 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
 
           {job.generatedTests.length === 0 ? (
             <p className="mt-6 text-small text-muted-foreground">
-              Tests will appear here as each test case completes generation and execution.
+              {job.testPlan?.testCases.length
+                ? `${job.testPlan.testCases.length} scenarios planned · results appear as each finishes`
+                : 'Planning scenarios…'}
             </p>
           ) : (
             (() => {

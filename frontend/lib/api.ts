@@ -293,7 +293,6 @@ export function startGeneration(
   urls: string[],
   altcha?: string,
   options: {
-    deepCrawl?: boolean;
     testData?: TestDataParam[];
     testDataByUrl?: Record<string, TestDataParam[]>;
     focus?: FocusParam[];
@@ -311,7 +310,6 @@ export function startGeneration(
     urls.length === 1
       ? {
           url: urls[0] ?? '',
-          ...(options.deepCrawl ? { deepCrawl: true } : {}),
           ...base,
         }
       : {

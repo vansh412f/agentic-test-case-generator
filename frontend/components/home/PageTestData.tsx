@@ -39,7 +39,7 @@ export function PageTestData({
   onUpdateField,
   disabled = false,
 }: PageTestDataProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [rememberOnBrowser, setRememberOnBrowser] = useState(true);
 
   // Determine if ANY selected page has eligible fields
@@ -77,42 +77,42 @@ export function PageTestData({
   };
 
   return (
-    <div className="mt-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 overflow-hidden shadow-sm">
+    <div className="mt-5 rounded-xl border border-[#e0e5de] bg-white overflow-hidden shadow-sm">
       <button
         type="button"
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 dark:bg-slate-950/50 hover:bg-slate-100/80 dark:hover:bg-slate-900 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-colors border-b border-slate-200 dark:border-slate-800"
+        className="w-full flex items-center justify-between px-4 py-3 bg-[#fafbfa] hover:bg-[#f3f6f2] text-xs font-semibold text-[#243027] transition-colors border-b border-[#e0e5de]"
       >
         <span className="flex items-center gap-2">
           <span>Test data</span>
-          <span className="text-slate-400 dark:text-slate-500 font-normal">
+          <span className="text-[#7a857e] font-normal">
             · {totalFields} field{totalFields === 1 ? '' : 's'} across {pages.length} page{pages.length === 1 ? '' : 's'} · optional
           </span>
         </span>
-        <span className="text-[11px] text-slate-500">
+        <span className="text-[11px] text-[#7a857e]">
           {isExpanded ? '▲ Collapse' : '▼ Expand'}
         </span>
       </button>
 
       {isExpanded && (
         <div className="p-4 space-y-6">
-          <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 p-3 text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+          <div className="rounded-lg bg-[#fffbeb] border border-[#fef3c7] p-3 text-xs text-[#92400e] leading-relaxed">
             Provide test credentials or form data for your scenarios. Secret values are used only during test execution, never stored, and redacted from report outputs.
           </div>
 
           {pagesWithFields.map(({ page, fields }) => (
             <div key={page.url} className="space-y-3">
-              <div className="border-b border-slate-100 dark:border-slate-800 pb-1.5 flex items-center justify-between">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+              <div className="border-b border-[#e0e5de] pb-1.5 flex items-center justify-between">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#4b5563]">
                   {getPageHeader(page)}
                 </h4>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-[#7a857e]">
                   {fields.length} field{fields.length === 1 ? '' : 's'}
                 </span>
               </div>
 
               {fields.length === 0 ? (
-                <p className="text-xs text-slate-400 italic py-1">
+                <p className="text-xs text-[#7a857e] italic py-1">
                   No input fields found on this page.
                 </p>
               ) : (
@@ -137,7 +137,7 @@ export function PageTestData({
                       >
                         <label
                           htmlFor={`td-${page.url}-${field.id}`}
-                          className="text-xs text-slate-700 dark:text-slate-300 truncate"
+                          className="text-xs text-[#374151] truncate"
                           title={label}
                         >
                           {label}
@@ -159,7 +159,7 @@ export function PageTestData({
                               saveRememberedTestData(page.url, updated, page.elements);
                             }
                           }}
-                          className="px-2.5 py-1.5 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          className="px-2.5 py-1.5 text-xs rounded-md border border-[#d1d5db] bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                         />
                         <button
                           type="button"
@@ -182,8 +182,8 @@ export function PageTestData({
                           }
                           className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded-md border transition-colors ${
                             entry.sensitive
-                              ? 'border-rose-500/50 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300'
-                              : 'border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400'
+                              ? 'border-rose-400 bg-rose-50 text-rose-700'
+                              : 'border-[#d1d5db] bg-[#fafbfa] text-[#4b5563]'
                           }`}
                         >
                           {entry.sensitive ? (
@@ -204,13 +204,13 @@ export function PageTestData({
             </div>
           ))}
 
-          <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500">
+          <div className="pt-3 border-t border-[#e0e5de] flex items-center justify-between text-xs text-[#7a857e]">
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={rememberOnBrowser}
                 onChange={(e) => handleRememberChange(e.target.checked)}
-                className="rounded text-emerald-600 focus:ring-emerald-500 border-slate-300"
+                className="rounded text-emerald-600 focus:ring-emerald-500 border-[#d1d5db]"
               />
               <span>Remember test data (stored in this browser only)</span>
             </label>

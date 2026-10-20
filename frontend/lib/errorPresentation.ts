@@ -92,6 +92,14 @@ export function presentError(
 
   // 2. High-level error codes
   switch (code) {
+    case 'TARGET_BLOCKED':
+      return {
+        title: 'Site blocked automated browsing',
+        body: "This site showed a bot check to our headless browser, so it can't be crawled.",
+        hint: 'Try a page without bot protection, or your own app through a tunnel.',
+        raw,
+      };
+
     case 'TARGET_UNREACHABLE':
       return {
         title: 'Target unreachable',

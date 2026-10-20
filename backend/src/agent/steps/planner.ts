@@ -6,7 +6,6 @@ import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt, TestPlanSchema, type Pla
 import type { TestPlan } from '../prompts/plannerPrompt.ts';
 import type { AppMap, InteractiveElement } from '../../crawler/types.ts';
 import type { ElementRef, TestDataEntry } from '../../api/schemas.ts';
-import { canonicalPageUrl } from '../../crawler/mergeAppMaps.ts';
 import { toPlannerView } from '../plannerView.ts';
 import { buildPlanCacheKey, getCachedPlan, setCachedPlan } from '../planCache.ts';
 import { MAX_AI_TEST_CASES } from '../run.config.ts';
@@ -18,28 +17,6 @@ function formatZodErrors(error: z.ZodError): string {
     .join('\n');
 }
 
-export interface PageScope {
-  pageOf: Map<string, string>;
-  aliases: Map<string, string>;
-}
-
-export function buildPageScope(appMap: AppMap): PageScope | null {
-  if (!appMap.pages || appMap.pages.length < 2) return null;
-  const pageUrls = appMap.pages.map((p) => canonicalPageUrl(p.url));
-  const aliases = new Map<string, string>();
-  appMap.pages.forEach((p, i) => {
-    const target = pageUrls[i];
-    aliases.set(canonicalPageUrl(p.requestedUrl), target);
-    aliases.set(pageUrls[i], target);
-  });
-  const pageOf = new Map<string, string>();
-  for (const element of appMap.elements) {
-    const pageIndex = (element.page ?? 1) - 1;
-    pageOf.set(element.id, pageUrls[pageIndex] ?? pageUrls[0]);
-  }
-  return { pageOf, aliases };
-}
-
 export type ValidationResult =
   | { ok: true; plan: TestPlan }
   | { ok: false; kind: 'syntax' | 'schema'; detail: string }
@@ -49,7 +26,6 @@ export function validateAndNormalizePlan(
   content: string,
   knownIds: Set<string>,
   appMapUrl: string,
-  pageScope: PageScope | null = null,
 ): ValidationResult {
   // 1. Parse JSON
   let parsed: unknown;
@@ -76,7 +52,6 @@ export function validateAndNormalizePlan(
     llmId: string;
     title: string;
     badIds: string[];
-    offPage: string[];
   }> = [];
 
   result.data.testCases.forEach((tc, idx) => {
@@ -109,56 +84,25 @@ export function validateAndNormalizePlan(
       }
     }
 
-    const offPage: string[] = [];
-    if (pageScope) {
-      const resolve = (u: string) => {
-        const k = canonicalPageUrl(u, appMapUrl);
-        return pageScope.aliases.get(k) ?? k;
-      };
-      let current = resolve(appMapUrl);
-      for (const step of tc.steps) {
-        if (step.action === 'navigate' && step.value) {
-          current = resolve(step.value);
-          continue;
-        }
-        const home = step.elementId ? pageScope.pageOf.get(step.elementId) : undefined;
-        if (step.elementId && home && home !== current) {
-          offPage.push(`${step.elementId} (on ${home})`);
-        }
-      }
-    }
-
     const badIds = tc.steps
       .map((s) => s.elementId)
       .filter((id): id is string => id !== null && !knownIds.has(id));
-    if (badIds.length > 0 || offPage.length > 0) {
+    if (badIds.length > 0) {
       badCaseIndexes.add(idx);
       invalidRefs.push({
         position: idx + 1,
         llmId,
         title,
         badIds: [...new Set(badIds)],
-        offPage,
       });
     }
   });
 
   if (invalidRefs.length > 0) {
     const detail = invalidRefs
-      .flatMap((r) => {
-        const msgs: string[] = [];
-        if (r.badIds.length > 0) {
-          msgs.push(
-            `Test case #${r.position} "${r.title}" (your id: "${r.llmId}") references element IDs that do not exist in the App Map: ${r.badIds.join(', ')}. Use only IDs present in the App Map, or set elementId to null for text/URL assertions.`,
-          );
-        }
-        if (r.offPage.length > 0) {
-          msgs.push(
-            `Test case #${r.position} "${r.title}" (your id: "${r.llmId}") uses elements from another page without navigating there first: ${r.offPage.join(', ')}. Add a navigate step to that page URL before using them.`,
-          );
-        }
-        return msgs;
-      })
+      .map((r) =>
+        `Test case #${r.position} "${r.title}" (your id: "${r.llmId}") references element IDs that do not exist in the App Map: ${r.badIds.join(', ')}. Use only IDs present in the App Map, or set elementId to null for text/URL assertions.`
+      )
       .join('\n');
     return { ok: false, kind: 'references', detail, plan: result.data, badCaseIndexes };
   }
@@ -247,9 +191,12 @@ export interface PlanTestsOptions {
   fresh?: boolean;
   tokenBudget?: number;
   consumedTokens?: () => number;
+  callLlmImpl?: typeof callLlm;
 }
 
 export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Promise<TestPlan> {
+  const doCallLlm = options?.callLlmImpl ?? callLlm;
+
   let resolvedData: ResolvedTestData | undefined;
   if (options?.testData && options.testData.length > 0) {
     resolvedData = resolveTestData(appMap, options.testData);
@@ -281,8 +228,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
 
   const appMapJson = JSON.stringify(plannerView);
   const knownIds = new Set(appMap.elements.map((e) => e.id));
-  const pageScope = buildPageScope(appMap);
-  let userPrompt = buildPlannerUserPrompt(appMapJson, { multiPage: pageScope !== null });
+  let userPrompt = buildPlannerUserPrompt(appMapJson);
   if (resolvedData?.promptBlock) {
     userPrompt += `\n\n${resolvedData.promptBlock}`;
   }
@@ -327,20 +273,25 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     return null;
   };
 
-  const finalizePlan = async (rawPlan: TestPlan, isSalvaged: boolean, assistantResponseContent?: string): Promise<TestPlan> => {
+  const finalizePlan = async (
+    rawPlan: TestPlan,
+    isSalvaged: boolean,
+    assistantResponseContent?: string,
+    allowExpansion = false,
+  ): Promise<TestPlan> => {
     let plan = rawPlan;
     // 1. Deterministic pass: keep only the first navigation-only test
     plan.testCases = filterNavigationOnlyTests(plan.testCases, appMap);
     capAndRenumberTestPlan(plan);
 
-    // 2. Expansion call if < 5 cases AND >= 6 visible interactive elements AND meter <= 50%
+    // 2. Expansion call if allowExpansion && < 5 cases AND >= 6 visible interactive elements AND meter <= 50%
     const budgetExceeded = Boolean(
       options?.tokenBudget &&
         options.tokenBudget > 0 &&
         options?.consumedTokens &&
         options.consumedTokens() > options.tokenBudget * 0.5,
     );
-    if (!isSalvaged && plan.testCases.length < 5 && visibleCount >= 6 && assistantResponseContent && !budgetExceeded) {
+    if (allowExpansion && !isSalvaged && plan.testCases.length < 5 && visibleCount >= 6 && assistantResponseContent && !budgetExceeded) {
       try {
         const expansionMessages: LlmMessage[] = [
           ...messages,
@@ -350,18 +301,18 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
             content: `The plan has ${plan.testCases.length} test cases. Add up to ${MAX_AI_TEST_CASES - plan.testCases.length} more that cover categories not yet covered. Return the COMPLETE JSON plan.`,
           },
         ];
-        const expansionResponse = await callLlm({
+        const expansionResponse = await doCallLlm({
           messages: expansionMessages,
           jsonMode: true,
           maxTokens: 3500,
           tier: 'reasoning',
+          purpose: 'expand',
           signal: options?.signal,
         });
         const expansionResult = validateAndNormalizePlan(
           expansionResponse.content,
           knownIds,
           appMap.url,
-          pageScope,
         );
         if (expansionResult.ok && expansionResult.plan.testCases.length > plan.testCases.length) {
           plan = expansionResult.plan;
@@ -387,20 +338,21 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   };
 
   // First attempt
-  const response = await callLlm({
+  const response = await doCallLlm({
     messages,
     jsonMode: true,
     maxTokens: 3500,
     tier: 'reasoning',
+    purpose: 'plan',
     signal: options?.signal,
   });
-  const firstResult = validateAndNormalizePlan(response.content, knownIds, appMap.url, pageScope);
+  const firstResult = validateAndNormalizePlan(response.content, knownIds, appMap.url);
   if (firstResult.ok) {
-    return finalizePlan(firstResult.plan, false, response.content);
+    return finalizePlan(firstResult.plan, false, response.content, true);
   }
 
   // Self-repair (one attempt)
-  console.warn(`[Planner] Attempt 1 failed (${firstResult.kind}):`, JSON.stringify(firstResult, null, 2));
+  console.warn(`[Planner] Attempt 1 failed (${firstResult.kind}): ${firstResult.detail.slice(0, 300)}`);
 
   const repairMessages: LlmMessage[] = [
     ...messages,
@@ -411,23 +363,24 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     },
   ];
 
-  const repairResponse = await callLlm({
+  const repairResponse = await doCallLlm({
     messages: repairMessages,
     jsonMode: true,
     maxTokens: 3500,
     tier: 'reasoning',
+    purpose: 'repair',
     signal: options?.signal,
   });
-  const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, pageScope);
+  const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url);
   if (repairResult.ok) {
-    return finalizePlan(repairResult.plan, false, repairResponse.content);
+    return finalizePlan(repairResult.plan, false, repairResponse.content, false);
   }
 
   // Graceful degradation for reference-only errors after repair
   if (repairResult.kind === 'references') {
     const salvaged = salvagePlan(repairResult);
     if (salvaged) {
-      return finalizePlan(salvaged, true);
+      return finalizePlan(salvaged, true, undefined, false);
     }
   }
 
@@ -435,7 +388,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   if (firstResult.kind === 'references') {
     const salvaged = salvagePlan(firstResult);
     if (salvaged) {
-      return finalizePlan(salvaged, true);
+      return finalizePlan(salvaged, true, undefined, false);
     }
   }
 

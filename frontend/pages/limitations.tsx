@@ -5,7 +5,7 @@ const sections = [
   {
     title: 'What the crawler sees',
     body: [
-      'The crawler captures a first-load snapshot of up to 200 interactive elements per page. In deep crawl mode, it maps up to 2 additional linked pages within the same site.',
+      'The crawler captures a first-load snapshot of up to 200 interactive elements per page.',
       'Post-interaction UI elements (such as modals, toasts, dropdown menus, and dynamically inserted rows) are not mapped into the initial App Map — tests may assert on their text once triggered, but cannot target them as pre-mapped elements. Iframes and canvas-based UI are not detected.',
     ],
   },

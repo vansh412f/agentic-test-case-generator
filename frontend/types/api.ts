@@ -115,9 +115,10 @@ export interface AppMap {
   elements: InteractiveElement[];
   forms: AppForm[];
   discoveredLinks: string[];
+  discoveredLinkLabels?: Record<string, string>;
+  discoveredLinkTotal?: number;
   totalElementsFound: number;
   isTruncated: boolean;
-  pages?: Array<{ url: string; requestedUrl: string; title: string }>;
 }
 
 export interface PlanStep {
@@ -274,6 +275,7 @@ export interface JobSummary {
   gaveUpCount: number;
   needsReviewCount?: number;
   healedCount?: number;
+  tokensUsed?: number;
 }
 
 export interface JobsListResponse {

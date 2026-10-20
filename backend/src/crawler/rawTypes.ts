@@ -45,13 +45,19 @@ export interface RawForm {
   ariaRole: string | null;
 }
 
+export interface RawLink {
+  href: string;
+  text: string;
+  inNav: boolean;
+}
+
 // Everything one browser-side extraction pass returns for a page
 export interface RawPageExtraction {
   title: string;
   elements: RawElement[];
   forms: RawForm[];
-  // Absolute hrefs of every anchor on the page; filtering to internal links happens in Node
-  links: string[];
+  // Discovered links with metadata
+  links: RawLink[];
   // How many interactive elements were found before the per-page cap was applied
   totalFound: number;
   // True when the cap dropped some elements

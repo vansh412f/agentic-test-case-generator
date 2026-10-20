@@ -35,7 +35,7 @@ Generates typed Playwright end-to-end test suites from live web applications usi
 
 - **Discovers interactive state directly from the DOM:** Navigates the target URL using headless Chromium, cataloging visible buttons, inputs, links, forms, and semantic accessibility roles into a structured AppMap.
 - **Plans targeted test scenarios:** Submits the discovered element tree to an LLM reasoning model to design user journeys across validation, navigation, state changes, and negative edge cases.
-- **Includes built-in baseline checks:** Automatically injects deterministic checks alongside AI scenarios: `smoke-1` (no uncaught JavaScript errors on load), `smoke-2` (linked pages respond), and `smoke-3` (axe scan for serious/critical WCAG 2 A/AA violations under `A11Y_SMOKE`).
+- **Includes built-in baseline checks:** Automatically injects deterministic checks alongside AI scenarios: `smoke-1` (no uncaught JavaScript errors on load) and `smoke-2` (linked pages respond).
 - **Compiles Playwright TypeScript deterministically:** Synthesizes typed test files using strict locator priority rules without model hallucination on the compiled path (falling back to generative LLM synthesis only when compilation throws `CompileError`).
 - **Enforces a static compilation gate:** Pre-validates every emitted test via `tsc --noEmit` in a child process before executing any browser code.
 - **Runs tests in isolated Chromium processes:** Executes generated tests in Chromium (Chromium-only execution) inside a sandboxed runner sandbox.
@@ -146,7 +146,7 @@ stateDiagram-v2
 | [Plan caching](#decision-3-plan-caching) | Cuts token consumption by over 50% when re-testing stable URLs. | Cache hits reuse prior test structures until cache expiration or target changes. |
 | [Static type-check gate](#decision-4-static-type-check-gate) | Blocks syntax and type errors from consuming browser execution time. | Adds 1–2 seconds of `tsc` overhead per validation round. |
 | [Guarded round execution](#decision-5-guarded-round-execution) | Prevents the model from weakening assertions to artificially pass broken tests. | Tests that fail valid assertions cannot be auto-repaired and remain marked as failures. |
-| [Built-in baseline checks](#decision-6-built-in-baseline-checks) | Injects smoke-1 (no uncaught JS errors), smoke-2 (linked pages respond), and smoke-3 (a11y scan) without LLM calls. | A failing check classified as a finding stays failed; mechanical failures become gave_up; checks are never sent to corrector. |
+| [Built-in baseline checks](#decision-6-built-in-baseline-checks) | Injects smoke-1 (no uncaught JS errors) and smoke-2 (linked pages respond) without LLM calls. | A failing check classified as a finding stays failed; mechanical failures become gave_up; checks are never sent to corrector. |
 | [Secret token substitution](#decision-7-secret-token-substitution) | Shields passwords and credentials from LLMs, databases, and logs. | Complex multi-stage credentials require manual mapping via the preview interface. |
 | [In-process run queue](#decision-8-in-process-run-queue) | Eliminates Redis operational complexity for single-instance container hosting. | In-flight queue state does not persist across container restarts or horizontal scaling. |
 | [Server-Sent Events](#decision-9-server-sent-events) | Delivers lightweight, unidirectional live job progress over standard HTTP. | Client cannot push data backward over the same stream (uses discrete REST endpoints). |
@@ -201,8 +201,8 @@ stateDiagram-v2
 
 ### Decision 6: Built-in Baseline Checks
 
-- **Context:** Web applications share foundational quality requirements (clean runtime page execution, working links, accessibility standards) that do not require generative planning.
-- **Decision:** Inject deterministic baseline tests alongside AI-generated scenarios: `smoke-1` (no uncaught JavaScript errors on load), `smoke-2` (linked pages respond), and `smoke-3` (axe scan for serious/critical WCAG 2 A/AA violations when `A11Y_SMOKE` is enabled). Label them distinctly in the UI as **Built-in check** versus **Generated scenario**.
+- **Context:** Web applications share foundational quality requirements (clean runtime page execution and working links) that do not require generative planning.
+- **Decision:** Inject deterministic baseline tests alongside AI-generated scenarios: `smoke-1` (no uncaught JavaScript errors on load) and `smoke-2` (linked pages respond). Label them distinctly in the UI as **Built-in check** versus **Generated scenario**.
 - **Why:** Guarantees baseline regression coverage on every run even if LLM rate limits or token budgets are reached.
 - **Trade-off Accepted:** A failing built-in check classified as a finding stays failed; mechanical failures become `gave_up`; built-in checks are never sent to the corrector.
 - **Where in Code:** `backend/src/agent/baseline.ts:31-77`, `backend/src/agent/rounds.ts:330-348`, `frontend/components/job/TestResultCard.tsx:122,136`.
@@ -357,7 +357,7 @@ Measurements recorded from a live 12-run verification matrix (`docs/measurements
 |---|---|---|
 | Total Runs Executed | 12 | Tested across TodoMVC, the-internet, saucedemo, practicetestautomation |
 | AI Scenarios Planned | 56 | Synthesized by planner reasoning model |
-| Baseline Checks Injected | 28 | Built-in smoke tests (smoke-1: no uncaught JavaScript errors on load; smoke-2: linked pages respond; smoke-3: axe scan for serious/critical WCAG 2 A/AA violations under A11Y_SMOKE) |
+| Baseline Checks Injected | 28 | Built-in smoke tests (smoke-1: no uncaught JavaScript errors on load; smoke-2: linked pages respond) |
 | Total Tests Evaluated | 84 | Combined test suite execution |
 | Tests Passing | 56 (66.7%) | Tests completing without failure |
 | Reported Findings | 20 (23.8%) | Potential defects flagged to user |
@@ -496,7 +496,6 @@ cd frontend && pnpm dev
 | `PIPELINE_CONCURRENCY` | `1` | No | Maximum concurrent test execution pipelines (1–4) |
 | `QUEUE_MAX_WAITING_GROUPS` | `5` | No | Maximum pending run groups allowed in memory queue |
 | `BASELINE_TESTS` | `true` | No | When true, injects smoke-1 (no uncaught JavaScript errors on load) and smoke-2 (linked pages respond) |
-| `A11Y_SMOKE` | `true` | No | When true, injects smoke-3 (axe scan for serious/critical WCAG 2 A/AA violations) |
 | `WAKING_HOST_SUFFIXES` | `onrender.com,...` | No | Comma-separated host suffixes subject to cold start detection |
 | `LOCAL_AGENT_MODE` | `false` | Fatal if true in prod | Disables quotas, admission checks, and private IP blocks |
 | `TRUST_PROXY_HOPS` | `1` | No | Number of upstream reverse proxy hops to trust for IP extraction |
@@ -686,7 +685,7 @@ erDiagram
 │   ├── playwright-runner/          # Sandboxed runner package executed by Playwright CLI
 │   │   ├── agt-capture.ts          # Playwright test fixture capturing page navigations
 │   │   ├── netGuard.mjs            # In-process monkeypatch restricting child TCP egress
-│   │   └── package.json            # Dedicated runner dependencies (@axe-core/playwright)
+│   │   └── package.json            # Dedicated runner dependencies
 │   ├── prisma/                     # Database schema definition & migration history
 │   │   ├── migrations/             # Timestamped SQL migrations
 │   │   └── schema.prisma           # Prisma schema definition
@@ -694,7 +693,7 @@ erDiagram
 │   └── src/
 │       ├── agent/                  # Core pipeline coordination and round execution
 │       │   ├── assertionGuard.ts   # AST assertion-preservation validator
-│       │   ├── baseline.ts         # Deterministic broken-link and a11y baseline tests
+│       │   ├── baseline.ts         # Deterministic broken-link baseline tests
 │       │   ├── pipeline.ts         # End-to-end job orchestration loop
 │       │   ├── rounds.ts           # Execution round coordinator and failure classifier
 │       │   ├── runQueue.ts         # In-process FIFO queue with concurrency gates

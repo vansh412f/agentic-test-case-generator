@@ -13,25 +13,7 @@ interface PipelineProgressProps {
   transport?: JobTransport;
 }
 
-const steps = ['Crawl', 'Plan', 'Generate', 'Validate', 'Execute', 'Correct'];
-
-function getActiveStepIndex(job: JobDetail | undefined, liveStatus?: JobStatus | null): number {
-  const status = liveStatus ?? job?.status;
-  if (!status || status === 'pending' || status === 'crawling') return 0;
-  if (status === 'planning') return 1;
-  if (status === 'executing') return 4;
-  if (status === 'completed') return 6;
-
-  if (status === 'generating') {
-    const latest = job?.agentSteps[job.agentSteps.length - 1];
-    if (latest?.stepType === 'correct') return 5;
-    if (latest?.stepType === 'validate') return 3;
-    if (latest?.stepType === 'execute') return 4;
-    return 2;
-  }
-
-  return 2;
-}
+import { computePipelineProgress, PIPELINE_STEPS } from '@/lib/pipelineProgress';
 
 export function PipelineProgress({
   job,
@@ -48,39 +30,25 @@ export function PipelineProgress({
   }, []);
 
   const elapsed = startedAt === null ? 0 : Math.max(0, now - startedAt);
-  const active = getActiveStepIndex(job, liveStatus);
-
-  const stepTitles = [
-    'Mapping interactive elements',
-    'Planning user journeys',
-    'Writing Playwright tests',
-    'Validating assertions with TypeScript',
-    'Executing in Chromium',
-    'Self-correcting mechanical failures',
-    'Suite generation complete',
-  ];
-
-  const isQueued =
-    (job?.status === 'pending' || liveStatus === 'pending') &&
-    typeof job?.queuePosition === 'number' &&
-    job.queuePosition > 0;
-
-  const currentAction = isQueued
-    ? `Waiting in line · #${job.queuePosition}`
-    : (stepTitles[Math.min(active, 6)] ?? 'Processing');
+  const { activeIndex: active, percent, isQueued, queuePosition, actionTitle: currentAction } =
+    computePipelineProgress(job, liveStatus);
 
   const subcopy =
     submittedUrls.length === 1
       ? submittedUrls[0]
       : `${submittedUrls.length} pages running as separate jobs`;
 
-  const percent = isQueued ? 0 : Math.min(100, Math.round(((Math.min(active, 5) + 1) / steps.length) * 100));
-
   return (
     <section aria-labelledby="pipeline-progress-title" className="progress-panel">
       <div className="progress-top">
         <div>
-          <p className="eyebrow">{isQueued ? `Waiting in line · #${job.queuePosition}` : 'Agent working'}</p>
+          <p className="eyebrow">
+            {isQueued
+              ? queuePosition
+                ? `Waiting in line · #${queuePosition}`
+                : 'Waiting in line'
+              : 'Agent working'}
+          </p>
           <h2 id="pipeline-progress-title">Building your test suite</h2>
         </div>
         <span className="time-est">
@@ -96,7 +64,7 @@ export function PipelineProgress({
       </div>
 
       <div className="pipeline">
-        {steps.map((step, i) => (
+        {PIPELINE_STEPS.map((step, i) => (
           <div
             className={`pipe-step ${i < active ? 'done' : i === active ? 'current' : ''}`}
             key={step}
@@ -109,7 +77,7 @@ export function PipelineProgress({
               )}
             </span>
             <strong>{step}</strong>
-            {i < steps.length - 1 && <i />}
+            {i < PIPELINE_STEPS.length - 1 && <i />}
           </div>
         ))}
       </div>

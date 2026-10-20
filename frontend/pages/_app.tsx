@@ -7,6 +7,7 @@ import { MotionConfig } from 'framer-motion';
 import { Toaster } from 'sonner';
 import { Layout } from '@/components/layout/Layout';
 import { RouteFocusManager } from '@/components/layout/RouteFocusManager';
+import { ActiveJobsDock } from '@/components/layout/ActiveJobsDock';
 import { fetcher, resolveUrl } from '@/lib/api';
 import '@/styles/globals.css';
 
@@ -123,6 +124,7 @@ export default function App({ Component, pageProps }: AppProps) {
           <Layout>
             <RouteFocusManager />
             <Component {...pageProps} />
+            <ActiveJobsDock />
           </Layout>
           <Toaster
             position="bottom-right"

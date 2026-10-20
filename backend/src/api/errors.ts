@@ -32,6 +32,7 @@ const CRAWL_ERROR_STATUS: Record<CrawlErrorCode, number> = {
   TUNNEL_HOST_BLOCKED: 422,
   TARGET_NOT_ALLOWED: 400,
   TARGET_UNREACHABLE: 422,
+  TARGET_BLOCKED: 422,
 };
 
 const LLM_ERROR_STATUS: Record<LlmErrorCode, number> = {

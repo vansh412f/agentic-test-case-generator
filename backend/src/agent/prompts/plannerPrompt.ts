@@ -318,20 +318,11 @@ Example: after filling "Buy milk" and pressing Enter → \
 {"action":"check","elementId":null,"target":{"role":"checkbox","container":"listitem","withinText":"Buy milk"},"value":null,"description":"Check Buy milk"}
 13. assert_count value is a number as a string, e.g. "2".`;
 
-const MULTI_PAGE_RULE = `
-MULTI-PAGE APP MAP: This App Map covers several pages, listed in "pages" \
-(pages[0] is the start page). An element with a "page" field lives on \
-pages[page - 1]; an element without it lives on the start page. Before the \
-first step that uses an element from a page other than the one the test is \
-currently on, add a navigate step whose value is that page's exact "url". \
-Only navigate steps change the current page.
-`;
-
-export function buildPlannerUserPrompt(appMapJson: string, options: { multiPage?: boolean } = {}): string {
+export function buildPlannerUserPrompt(appMapJson: string): string {
   return `Here is the App Map JSON of the target application. Analyze it and \
 generate a complete structured Test Plan of high-value test cases:
 
-${appMapJson}${options.multiPage ? MULTI_PAGE_RULE : ''}
+${appMapJson}
 
 Remember to output exactly a JSON object conforming to the schema:
 {

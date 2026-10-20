@@ -38,7 +38,6 @@ interface MatrixRunDef {
   label: string;
   siteName: string;
   url: string;
-  deepCrawl?: boolean;
   fresh?: boolean;
   testData?: TestDataEntry[];
   tokenBudget?: number;
@@ -103,16 +102,15 @@ const MATRIX_RUNS: MatrixRunDef[] = [
     ],
     note: 'the-internet login run 2 with valid credentials',
   },
-  // 3. the-internet root × 1 deepCrawl=true
+  // 3. the-internet root × 1
   {
     index: 6,
     matrixItem: 3,
-    label: 'the-internet-root-deep',
+    label: 'the-internet-root',
     siteName: 'the-internet root',
     url: 'https://the-internet.herokuapp.com/',
-    deepCrawl: true,
     fresh: true,
-    note: 'the-internet root with deepCrawl=true',
+    note: 'the-internet root run',
   },
   // 4. saucedemo × 2 with test data
   {
@@ -212,7 +210,6 @@ export interface DetailedRunResult {
   url: string;
   jobId: string;
   fresh: boolean;
-  deepCrawl: boolean;
   tokenBudget: number;
   note: string;
 
@@ -341,7 +338,6 @@ function analyzeAssertions(code: string): { count: number; strongest: string } {
 
 function inferCategory(testCaseId: string, title?: string): string {
   if (testCaseId.startsWith('smoke-')) {
-    if (testCaseId.includes('a11y')) return 'a11y';
     return 'smoke';
   }
   const text = (title ?? testCaseId).toLowerCase();
@@ -393,7 +389,7 @@ async function runMeasurement() {
     console.log(`\n----------------------------------------------------`);
     console.log(`[Run ${runDef.index}/12] Starting: ${runDef.siteName} (${runDef.label})`);
     console.log(`  URL: ${runDef.url}`);
-    console.log(`  Deep crawl: ${Boolean(runDef.deepCrawl)} | Fresh: ${runDef.fresh !== false}`);
+    console.log(`  Fresh: ${runDef.fresh !== false}`);
     if (runDef.tokenBudget) console.log(`  Token budget override: ${runDef.tokenBudget}`);
     console.log(`----------------------------------------------------`);
 
@@ -422,7 +418,6 @@ async function runMeasurement() {
           {
             id: jobId,
             url: runDef.url,
-            deepCrawl: runDef.deepCrawl,
             fresh: runDef.fresh,
             testData: runDef.testData,
           },
@@ -622,7 +617,6 @@ async function runMeasurement() {
       url: runDef.url,
       jobId,
       fresh: runDef.fresh !== false,
-      deepCrawl: Boolean(runDef.deepCrawl),
       tokenBudget: runDef.tokenBudget ?? 40000,
       note: runDef.note,
 

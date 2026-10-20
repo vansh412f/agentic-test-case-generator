@@ -8,6 +8,7 @@ export interface LlmCallEvent {
   success: boolean;
   latencyMs: number;
   usage?: { promptTokens: number; completionTokens: number };
+  purpose?: 'plan' | 'repair' | 'expand';
   errorCode?: string;
   errorMessage?: string;
 }

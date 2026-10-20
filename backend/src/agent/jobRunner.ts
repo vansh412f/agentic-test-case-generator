@@ -10,7 +10,6 @@ import type { ElementRef, TestDataEntry } from '../api/schemas.ts';
 export interface QueuedJob {
   id: string;
   url: string;
-  deepCrawl?: boolean;
   fresh?: boolean;
   testData?: TestDataEntry[];
   focus?: ElementRef[];

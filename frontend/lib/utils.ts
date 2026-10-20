@@ -50,6 +50,28 @@ export function formatJobDuration(
   );
 }
 
+export function formatRunTiming(job: {
+  createdAt: string | Date;
+  startedAt?: string | Date | null;
+  completedAt?: string | Date | null;
+}): { ran: string; waited: string | null } {
+  const started = job.startedAt ? String(job.startedAt) : null;
+  const created = String(job.createdAt);
+  const completed = job.completedAt ? String(job.completedAt) : null;
+
+  const ran = formatJobDuration(started ?? created, completed);
+
+  let waited: string | null = null;
+  if (job.startedAt) {
+    const diff = new Date(job.startedAt).getTime() - new Date(job.createdAt).getTime();
+    if (diff > 2000) {
+      waited = formatDurationMs(diff);
+    }
+  }
+
+  return { ran, waited };
+}
+
 export function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
 

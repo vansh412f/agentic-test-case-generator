@@ -321,6 +321,8 @@ async function testEgressGuardAndSsrf() {
   const { crawlPage } = await import('../src/crawler/pageCrawler.ts');
   const { config } = await import('../src/config.ts');
   const { chromium } = await import('playwright');
+  const originalLocalMode = (config as any).LOCAL_AGENT_MODE;
+  (config as any).LOCAL_AGENT_MODE = false;
 
   // A. Public-looking hostname resolving to 127.0.0.1 -> TARGET_NOT_ALLOWED
   let targetErr: any;
@@ -465,6 +467,7 @@ test('ssrf attempt via request fixture', async ({ request }) => {
   console.log('✓ codeSafety rejects fetch and WebSocket');
 
   await stopEgressProxy();
+  (config as any).LOCAL_AGENT_MODE = originalLocalMode;
   console.log('\n✓ Test 7 passed\n');
 }
 

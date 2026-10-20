@@ -83,8 +83,8 @@ export function isStaleExpectation(params: StaleExpectationCheckParams): boolean
 
   const normLocator = normalizeSelectorString(rawLocator);
 
-  // Check against all elements on the start page (page undefined or 1)
-  const startElements = params.appMap.elements.filter((el) => !el.page || el.page === 1);
+  // Check against all elements on the start page
+  const startElements = params.appMap.elements;
   for (const el of startElements) {
     const selectors = el.selectors;
     const candidates = [

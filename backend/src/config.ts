@@ -47,7 +47,6 @@ export const configSchema = z.object({
   PIPELINE_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
   QUEUE_MAX_WAITING_GROUPS: z.coerce.number().int().min(1).default(5),
   BASELINE_TESTS: z.string().default('true').transform((v) => v.toLowerCase() === 'true'),
-  A11Y_SMOKE: z.string().default('true').transform((v) => v.toLowerCase() === 'true'),
   WAKING_HOST_SUFFIXES: z
     .string()
     .default('onrender.com,koyeb.app,up.railway.app,fly.dev,hf.space,glitch.me,replit.app'),

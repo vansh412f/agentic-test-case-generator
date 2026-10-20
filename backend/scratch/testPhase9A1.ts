@@ -88,7 +88,7 @@ function testCodeSafety() {
       `,
     },
     {
-      name: '1.1b smoke-3: page and context fixtures',
+      name: '1.1b page and context fixtures',
       code: `
         import { test, expect } from '@playwright/test';
         test('context test', async ({ page, context }) => {
@@ -555,6 +555,7 @@ async function testConfigGuard() {
         '-e',
         `
           process.env.NODE_ENV = 'production';
+          process.env.LOCAL_AGENT_MODE = 'false';
           process.env.RUNNER_ISOLATION = 'none';
           process.env.DATABASE_URL = 'postgresql://localhost:5432/db';
           process.env.DIRECT_URL = 'postgresql://localhost:5432/db';

@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { formatJobDuration } from '@/lib/utils';
+import { formatRunTiming } from '@/lib/utils';
 import type { JobSummary } from '@/types/api';
 
 interface JobsTableProps {
@@ -25,6 +25,7 @@ export function JobsTable({ jobs }: JobsTableProps) {
         <span>RESULTS</span>
         <span>CORRECTIONS</span>
         <span>DURATION</span>
+        <span>TOKENS</span>
         <span>CREATED</span>
       </div>
 
@@ -32,6 +33,7 @@ export function JobsTable({ jobs }: JobsTableProps) {
         const dateObj = new Date(job.createdAt);
         const dateStr = dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' });
         const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const { ran, waited } = formatRunTiming(job);
 
         return (
           <Link
@@ -42,6 +44,9 @@ export function JobsTable({ jobs }: JobsTableProps) {
             <span className="job-target">
               <b>#{job.id.slice(0, 8)}</b>
               <strong>{cleanDomain(job.targetUrl)}</strong>
+              {job.tokensUsed ? (
+                <small className="mobile-tokens">{job.tokensUsed.toLocaleString()} tokens</small>
+              ) : null}
             </span>
 
             <span>
@@ -73,12 +78,13 @@ export function JobsTable({ jobs }: JobsTableProps) {
             </span>
 
             <span>
-              <b>{formatJobDuration(job.startedAt ?? job.createdAt, job.completedAt)}</b>
-              <small>
-                {job.startedAt && new Date(job.startedAt).getTime() - new Date(job.createdAt).getTime() > 2000
-                  ? `queued ${Math.round((new Date(job.startedAt).getTime() - new Date(job.createdAt).getTime()) / 1000)}s`
-                  : 'standard'}
-              </small>
+              <b>{ran}</b>
+              <small>{waited ? `queued ${waited}` : 'standard'}</small>
+            </span>
+
+            <span>
+              <b>{job.tokensUsed ? job.tokensUsed.toLocaleString() : '—'}</b>
+              <small>tokens</small>
             </span>
 
             <span>

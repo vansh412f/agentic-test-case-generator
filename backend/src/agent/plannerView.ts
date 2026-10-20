@@ -20,7 +20,6 @@ export interface PlannerElementView {
   disabled?: true;
   readOnly?: true;
   hidden?: true;
-  page?: number;
 }
 
 export interface PlannerFormView {
@@ -33,7 +32,6 @@ export interface PlannerFormView {
 export interface PlannerView {
   url: string;
   title: string;
-  pages?: Array<{ url: string; title: string }>;
   elements: PlannerElementView[];
   forms: PlannerFormView[];
   discoveredLinks: string[];
@@ -77,7 +75,6 @@ export function toPlannerView(appMap: AppMap, options?: PlannerViewOptions): Pla
       disabled: !el.isEnabled ? true : undefined,
       readOnly: el.isReadOnly ? true : undefined,
       hidden: el.isVisible === false ? true : undefined,
-      page: el.page,
     };
 
     elements.push(item);
@@ -112,7 +109,6 @@ export function toPlannerView(appMap: AppMap, options?: PlannerViewOptions): Pla
       disabled: !el.isEnabled ? true : undefined,
       readOnly: el.isReadOnly ? true : undefined,
       hidden: true,
-      page: el.page,
     };
 
     elements.push(item);
@@ -138,9 +134,6 @@ export function toPlannerView(appMap: AppMap, options?: PlannerViewOptions): Pla
   return {
     url: appMap.url,
     title: appMap.title,
-    ...(appMap.pages && appMap.pages.length > 0
-      ? { pages: appMap.pages.map((p) => ({ url: p.url, title: p.title })) }
-      : {}),
     elements,
     forms,
     discoveredLinks: (appMap.discoveredLinks ?? []).slice(0, 25),

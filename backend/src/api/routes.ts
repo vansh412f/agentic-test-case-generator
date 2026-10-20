@@ -289,7 +289,6 @@ router.post('/generate', async (req, res) => {
       throw err;
     }
   }
-  const deepCrawl = 'url' in parsed.data && parsed.data.deepCrawl === true;
   const requested = urls.length;
 
   const webhookProblem = parsed.data.webhookUrl ? webhookUrlProblem(parsed.data.webhookUrl) : null;
@@ -415,7 +414,6 @@ router.post('/generate', async (req, res) => {
       return {
         id: randomUUID(),
         url,
-        deepCrawl,
         fresh,
         testData: jobTestData,
         ...(idx === 0 ? { focus: parsed.data.focus } : {}),

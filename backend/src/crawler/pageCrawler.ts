@@ -5,7 +5,6 @@ import { mapGotoError } from './gotoErrors.ts';
 import { extractElements } from './browser/extractElements.ts';
 import { extractForms } from './browser/extractForms.ts';
 import { buildAppMap } from './appMapBuilder.ts';
-import { mergeAppMaps, pickDeepCrawlLinks, type CrawledPage } from './mergeAppMaps.ts';
 import type { AppMap } from './types.ts';
 
 import { assertPublicTarget } from '../security/netPolicy.ts';
@@ -49,6 +48,15 @@ async function launchBrowser(): Promise<Browser> {
 
 import { classifyLanding } from './wakeDetect.ts';
 
+const BOT_WALL_TITLE_REGEX =
+  /robot check|captcha|are you a human|verify you are human|access denied|just a moment|attention required/i;
+
+export function isBotWall(title: string, htmlProbe: { hasChallengeDom: boolean }): boolean {
+  if (BOT_WALL_TITLE_REGEX.test(title)) return true;
+  if (htmlProbe.hasChallengeDom) return true;
+  return false;
+}
+
 async function crawlInBrowser(browser: Browser, url: string, maxElements: number): Promise<AppMap> {
   const context = await browser.newContext({ viewport: VIEWPORT });
   try {
@@ -60,6 +68,24 @@ async function crawlInBrowser(browser: Browser, url: string, maxElements: number
       resp = await page.goto(url, { waitUntil: 'load', timeout: config.NAVIGATION_TIMEOUT_MS });
     } catch (err) {
       throw mapGotoError(err, url);
+    }
+
+    const pageTitle = await page.title().catch(() => '');
+    const hasChallengeDom = await page
+      .evaluate(() => {
+        return Boolean(
+          document.querySelector(
+            '#challenge-form, #cf-challenge-running, form[action*="validateCaptcha"], iframe[src*="captcha"]',
+          ),
+        );
+      })
+      .catch(() => false);
+
+    if (isBotWall(pageTitle, { hasChallengeDom })) {
+      throw new CrawlError(
+        'TARGET_BLOCKED',
+        "This site showed a bot check to our headless browser, so it can't be crawled.",
+      );
     }
 
     const status = resp?.status();
@@ -125,44 +151,6 @@ export async function crawlPage(
   try {
     options?.signal?.throwIfAborted();
     return await crawlInBrowser(browser, url, config.MAX_ELEMENTS_PER_PAGE);
-  } finally {
-    options?.signal?.removeEventListener('abort', onAbort);
-    await browser.close().catch(() => undefined);
-  }
-}
-
-export interface DeepCrawlOptions {
-  maxPages: number;
-  startPageElementCap: number;
-  extraPageElementCap: number;
-  signal?: AbortSignal;
-}
-
-// Start page is mandatory; extra pages that fail are skipped. One browser, sequential contexts.
-export async function crawlSite(url: string, options: DeepCrawlOptions): Promise<AppMap> {
-  assertCrawlableUrl(url);
-  await assertPublicTarget(url);
-  options?.signal?.throwIfAborted();
-  const browser = await launchBrowser();
-  const onAbort = () => {
-    void browser.close().catch(() => undefined);
-  };
-  options?.signal?.addEventListener('abort', onAbort, { once: true });
-  try {
-    options?.signal?.throwIfAborted();
-    const start = await crawlInBrowser(browser, url, options.startPageElementCap);
-    const extras: CrawledPage[] = [];
-    for (const link of pickDeepCrawlLinks(start, options.maxPages - 1)) {
-      options?.signal?.throwIfAborted();
-      try {
-        await assertPublicTarget(link);
-        extras.push({ requestedUrl: link, map: await crawlInBrowser(browser, link, options.extraPageElementCap) });
-      } catch (err) {
-        if (options?.signal?.aborted) throw err;
-        console.warn(`[Crawler] Deep crawl skipped ${link}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    return mergeAppMaps(start, extras);
   } finally {
     options?.signal?.removeEventListener('abort', onAbort);
     await browser.close().catch(() => undefined);

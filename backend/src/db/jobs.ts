@@ -224,25 +224,33 @@ export async function listJobs(page: number, limit: number, visitorId?: string |
       }),
       prisma.job.count({ where }),
     ]);
-    const [counts, healedCounts] = rows.length === 0 ? [[], []] : await Promise.all([
+    const ids = rows.map((job) => job.id);
+    const [counts, healedCounts, tokenSums] = rows.length === 0 ? [[], [], []] : await Promise.all([
       prisma.generatedTest.groupBy({
         by: ['jobId', 'finalStatus'],
-        where: { jobId: { in: rows.map((job) => job.id) } },
+        where: { jobId: { in: ids } },
         _count: { _all: true },
       }),
       prisma.generatedTest.groupBy({
         by: ['jobId'],
         where: {
-          jobId: { in: rows.map((job) => job.id) },
+          jobId: { in: ids },
           finalStatus: 'passed',
           totalAttempts: { gt: 1 },
         },
         _count: { _all: true },
       }),
+      prisma.agentStep.groupBy({
+        by: ['jobId'],
+        where: { jobId: { in: ids } },
+        _sum: { promptTokens: true, completionTokens: true },
+      }),
     ]);
     const jobs = rows.map(({ _count, ...job }) => {
       const count = (status: string) => counts.find((c) => c.jobId === job.id && c.finalStatus === status)?._count._all ?? 0;
       const healedCount = healedCounts.find((h) => h.jobId === job.id)?._count._all ?? 0;
+      const tokenEntry = tokenSums.find((t) => t.jobId === job.id);
+      const tokensUsed = (tokenEntry?._sum.promptTokens ?? 0) + (tokenEntry?._sum.completionTokens ?? 0);
       return {
         ...job,
         testCount: _count.generatedTests,
@@ -251,6 +259,7 @@ export async function listJobs(page: number, limit: number, visitorId?: string |
         gaveUpCount: count('gave_up'),
         needsReviewCount: count('needs_review'),
         healedCount,
+        tokensUsed,
       };
     });
     return { jobs, total, page, totalPages: Math.ceil(total / limit) };

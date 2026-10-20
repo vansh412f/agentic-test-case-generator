@@ -296,11 +296,28 @@ export function extractElements(options: ExtractElementsOptions): ElementsExtrac
   ];
   const forms = Array.from(document.forms);
 
+  const extractLinkText = (a: HTMLAnchorElement): string => {
+    const aria = a.getAttribute('aria-label');
+    if (aria && aria.trim()) return aria.replace(/\s+/g, ' ').trim().slice(0, 60);
+    const tc = a.textContent;
+    if (tc && tc.trim()) return tc.replace(/\s+/g, ' ').trim().slice(0, 60);
+    const title = a.getAttribute('title');
+    if (title && title.trim()) return title.replace(/\s+/g, ' ').trim().slice(0, 60);
+    const imgChild = a.querySelector('img[alt]');
+    const alt = imgChild?.getAttribute('alt');
+    if (alt && alt.trim()) return alt.replace(/\s+/g, ' ').trim().slice(0, 60);
+    return '';
+  };
+
   return {
     elements: visibleFirst
       .slice(0, options.maxElements)
       .map((candidate) => buildRawElement(candidate, forms)),
-    links: Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]')).map((a) => a.href),
+    links: Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]')).map((a) => ({
+      href: a.href,
+      text: extractLinkText(a),
+      inNav: Boolean(a.closest('nav, header, [role="navigation"], [role="banner"]')),
+    })),
     totalFound: candidates.length,
     truncated: candidates.length > options.maxElements,
   };

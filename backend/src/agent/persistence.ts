@@ -45,8 +45,12 @@ export function withLlmStep<T>(
     const model = event.model === 'unknown'
       ? PROVIDER_MODELS[event.provider]
       : event.model;
+    const attemptNumber = stepType === 'plan'
+      ? (event.purpose === 'plan' ? 1 : event.purpose === 'repair' ? 2 : event.purpose === 'expand' ? 3 : context.attemptNumber)
+      : context.attemptNumber;
     await recordStep({
       ...context,
+      attemptNumber,
       stepType,
       status: event.success ? 'success' : 'failure',
       llmProvider: event.provider,

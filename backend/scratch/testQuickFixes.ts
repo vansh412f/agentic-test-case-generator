@@ -180,18 +180,6 @@ Received: "https://example.com/checkout"`;
   assert.equal(urlSum.kind, 'assertion');
   assert.ok(urlSum.headline.includes('Expected the page address to include the expected address; it was "https://example.com/checkout".'));
 
-  // 7. axe toEqual diff (new fixture)
-  const axeErr = `Error: expect(violations).toEqual(expected)
-axe violations:
-[
-  {
-    "id": "color-contrast",
-    "impact": "serious"
-  }
-]`;
-  const axeSum = summarizeFailure(axeErr);
-  assert.equal(axeSum.kind, 'accessibility');
-  assert.ok(axeSum.headline.includes('1 accessibility issue (color-contrast)'));
 
   console.log('✓ summarizeFailure passed');
 }

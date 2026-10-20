@@ -23,6 +23,7 @@ import { classifyTarget, isTunnelUrl, getDeploymentMode } from '@/lib/targetUrl'
 import { SITE_URL } from '@/lib/site';
 import { handleGenerationError } from '@/lib/generationErrors';
 import { presentError } from '@/lib/errorPresentation';
+import { trackJobs } from '@/lib/activeJobs';
 
 import {
   apiBase,
@@ -56,7 +57,6 @@ interface HomeState {
   jobIds: string[];
   error: string | null;
   startedAt: number | null;
-  deepCrawl: boolean;
   testData: Record<string, { value: string; sensitive: boolean }>;
 }
 
@@ -68,7 +68,6 @@ type HomeAction =
       prefillTestData?: Record<string, { value: string; sensitive: boolean }>;
     }
   | { type: 'TOGGLE_URL'; url: string }
-  | { type: 'SET_DEEP_CRAWL'; enabled: boolean }
   | { type: 'SET_TEST_DATA'; elementId: string; value: string; sensitive: boolean }
   | { type: 'GENERATION_STARTED'; urls: string[] }
   | { type: 'JOBS_ACCEPTED'; jobIds: string[] }
@@ -83,7 +82,6 @@ const initialState: HomeState = {
   jobIds: [],
   error: null,
   startedAt: null,
-  deepCrawl: false,
   testData: {},
 };
 
@@ -101,7 +99,6 @@ function reducer(state: HomeState, action: HomeAction): HomeState {
         phase: 'selecting',
         appMap: action.appMap,
         selectedUrls: [action.appMap.url],
-        deepCrawl: false,
         testData: action.prefillTestData ?? {},
         error: null,
       };
@@ -111,7 +108,6 @@ function reducer(state: HomeState, action: HomeAction): HomeState {
         return {
           ...state,
           selectedUrls: state.selectedUrls.filter((url) => url !== action.url),
-          deepCrawl: false,
         };
       }
 
@@ -120,15 +116,6 @@ function reducer(state: HomeState, action: HomeAction): HomeState {
       return {
         ...state,
         selectedUrls: [...state.selectedUrls, action.url],
-        deepCrawl: false,
-      };
-    }
-
-    case 'SET_DEEP_CRAWL': {
-      if (state.selectedUrls.length > 1) return state;
-      return {
-        ...state,
-        deepCrawl: action.enabled,
       };
     }
 
@@ -456,12 +443,12 @@ export default function HomePage() {
 
     try {
       const { jobIds } = await startGeneration(urls, payloadToUse, {
-        deepCrawl: state.deepCrawl,
         testData: testDataEntries.length > 0 ? testDataEntries : undefined,
         testDataByUrl: testDataByUrlParam,
         fresh: isFresh,
       });
       dispatch({ type: 'JOBS_ACCEPTED', jobIds });
+      trackJobs(jobIds, urls);
       void mutateBudget();
       if (jobIds.length > 1) {
         toast.success(`${jobIds.length} jobs queued. They run one after another.`);
@@ -638,7 +625,6 @@ export default function HomePage() {
           key={`${state.appMap.url}|${state.appMap.crawledAt ?? state.appMap.elements.length}`}
           appMap={state.appMap}
           budget={budget}
-          deepCrawl={state.deepCrawl}
           disabled={!isLocal && !hasCustomKeys && !altchaPayload}
           generating={false}
           onGenerate={(testDataByUrl) => void handleGenerate(testDataByUrl)}
@@ -646,7 +632,6 @@ export default function HomePage() {
             setAltchaPayload(null);
             dispatch({ type: 'RESET' });
           }}
-          onToggleDeepCrawl={(v) => dispatch({ type: 'SET_DEEP_CRAWL', enabled: v })}
           onToggleUrl={(url) => dispatch({ type: 'TOGGLE_URL', url })}
           onUpdateTestData={(elementId, value, sensitive) =>
             dispatch({ type: 'SET_TEST_DATA', elementId, value, sensitive })

@@ -1,14 +1,9 @@
 import path from 'node:path';
 import { rm } from 'node:fs/promises';
-import { crawlPage, crawlSite } from '../crawler/pageCrawler.ts';
+import { crawlPage } from '../crawler/pageCrawler.ts';
 import { assertPublicTarget } from '../security/netPolicy.ts';
 import { config } from '../config.ts';
 import { takeFreshCrawl } from '../crawler/crawlCache.ts';
-import {
-  DEEP_CRAWL_MAX_PAGES,
-  DEEP_CRAWL_START_PAGE_ELEMENT_CAP,
-  DEEP_CRAWL_EXTRA_PAGE_ELEMENT_CAP,
-} from './run.config.ts';
 import { planTests } from './steps/planner.ts';
 import { generateTest } from './steps/generator.ts';
 import type { GeneratedTest } from './steps/generator.ts';
@@ -132,21 +127,12 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 async function crawlForJob(
   jobId: string,
   url: string,
-  deepCrawl: boolean,
   signal?: AbortSignal,
   fresh?: boolean,
 ): Promise<AppMap> {
   let attempt = 0;
   while (true) {
     try {
-      if (deepCrawl) {
-        return await crawlSite(url, {
-          maxPages: DEEP_CRAWL_MAX_PAGES,
-          startPageElementCap: DEEP_CRAWL_START_PAGE_ELEMENT_CAP,
-          extraPageElementCap: DEEP_CRAWL_EXTRA_PAGE_ELEMENT_CAP,
-          signal,
-        });
-      }
       const maxAgeMs = fresh ? 60_000 : 10 * 60_000;
       const cached = takeFreshCrawl(url, maxAgeMs);
       if (cached) {
@@ -174,7 +160,6 @@ export function runPipeline(
   job: {
     id: string;
     url: string;
-    deepCrawl?: boolean;
     fresh?: boolean;
     testData?: TestDataEntry[];
     focus?: ElementRef[];
@@ -182,14 +167,13 @@ export function runPipeline(
   signal?: AbortSignal,
 ): Promise<PipelineResult> {
   return withPersistence(() =>
-    runPersistedPipeline(job.id, job.url, job.deepCrawl ?? false, job.testData, job.focus, signal, job.fresh),
+    runPersistedPipeline(job.id, job.url, job.testData, job.focus, signal, job.fresh),
   );
 }
 
 async function runPersistedPipeline(
   jobId: string,
   url: string,
-  deepCrawl: boolean,
   testData?: TestDataEntry[],
   focus?: ElementRef[],
   signal?: AbortSignal,
@@ -204,7 +188,7 @@ async function runPersistedPipeline(
     await assertPublicTarget(url);
     await safeWrite('markJobStarted', () => markJobStarted(jobId));
     announcePhase(jobId, 'crawling');
-    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, deepCrawl, signal, fresh), () => ({ success: true }));
+    const appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, signal, fresh), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
 
     signal?.throwIfAborted();

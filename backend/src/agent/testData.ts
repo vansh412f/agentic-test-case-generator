@@ -11,9 +11,9 @@ export function resolveElementRef(
   );
   if (exact) return exact;
 
-  // 2. Unique element with that css on page 1
+  // 2. Unique element with that css on page
   const page1Matches = appMap.elements.filter(
-    (e) => (e.page === undefined || e.page === 1) && e.selectors.css === ref.css,
+    (e) => e.selectors.css === ref.css,
   );
   if (page1Matches.length === 1) {
     return page1Matches[0];

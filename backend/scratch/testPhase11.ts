@@ -3,9 +3,8 @@ import http from 'node:http';
 import { createHmac } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 
-import { pickDeepCrawlLinks, mergeAppMaps } from '../src/crawler/mergeAppMaps.ts';
 import type { AppMap, InteractiveElement, AppForm } from '../src/crawler/types.ts';
-import { buildPageScope, validateAndNormalizePlan } from '../src/agent/steps/planner.ts';
+import { validateAndNormalizePlan } from '../src/agent/steps/planner.ts';
 import { rememberCrawl, takeFreshCrawl, clearCrawlCache } from '../src/crawler/crawlCache.ts';
 import { findUnsafeConstructs } from '../src/runner/codeSafety.ts';
 import { playwrightRunnerEnv } from '../src/runner/childEnv.ts';
@@ -42,145 +41,23 @@ function createDummyAppMap(url: string, elements: InteractiveElement[] = [], for
 }
 
 async function runTests() {
-  console.log('--- 1. pickDeepCrawlLinks ---');
+  console.log('--- 1. validateAndNormalizePlan ---');
   {
-    const startMap = createDummyAppMap('https://example.com/');
-    startMap.discoveredLinks = [
-      'https://example.com/logout',
-      'https://example.com/manual.pdf',
-      'https://example.com/dashboard#section1',
-      'https://example.com/dashboard#section2',
-      'https://example.com/settings',
-      'https://example.com/about',
-    ];
-    const picked = pickDeepCrawlLinks(startMap, 2);
-    assert.deepEqual(picked, [
-      'https://example.com/dashboard#section1',
-      'https://example.com/settings',
-    ]);
-  }
-
-  console.log('--- 2. mergeAppMaps ---');
-  {
-    const startPage = createDummyAppMap('https://example.com/', [
-      createDummyElement('elem-1'),
-      createDummyElement('elem-2'),
-    ], [
-      { id: 'form-1', purpose: 'login', fieldIds: ['elem-1'], submitButtonId: 'elem-2' },
-    ]);
-    startPage.discoveredLinks = [
-      'https://example.com/page2',
-      'https://example.com/page3',
-      'https://example.com/uncrawled',
-    ];
-
-    // merge with empty list returns start
-    assert.strictEqual(mergeAppMaps(startPage, []), startPage);
-
-    const extra1 = {
-      requestedUrl: 'https://example.com/page2',
-      map: createDummyAppMap('https://example.com/page2', [
-        createDummyElement('elem-1'),
-      ], [
-        { id: 'form-a', purpose: 'search' as const, fieldIds: ['elem-1'], submitButtonId: null },
-      ]),
-    };
-
-    const extra2 = {
-      requestedUrl: 'https://example.com/page3',
-      map: createDummyAppMap('https://example.com/page3', [
-        createDummyElement('elem-99'),
-      ]),
-    };
-
-    const merged = mergeAppMaps(startPage, [extra1, extra2]);
-
-    // IDs continuous elem-1..N
-    assert.equal(merged.elements.length, 4);
-    assert.deepEqual(merged.elements.map((e) => e.id), ['elem-1', 'elem-2', 'elem-3', 'elem-4']);
-
-    // Page indices: undefined on start, 2 on extra1, 3 on extra2
-    assert.equal(merged.elements[0].page, undefined);
-    assert.equal(merged.elements[1].page, undefined);
-    assert.equal(merged.elements[2].page, 2);
-    assert.equal(merged.elements[3].page, 3);
-
-    // Form fields remapped, extra form ids prefixed
-    assert.equal(merged.forms.length, 2);
-    assert.equal(merged.forms[0].id, 'form-1');
-    assert.deepEqual(merged.forms[0].fieldIds, ['elem-1']);
-    assert.equal(merged.forms[0].submitButtonId, 'elem-2');
-
-    assert.equal(merged.forms[1].id, 'p2-form-a');
-    assert.deepEqual(merged.forms[1].fieldIds, ['elem-3']);
-
-    // Crawled pages removed from discoveredLinks, uncrawled stays
-    assert.deepEqual(merged.discoveredLinks, ['https://example.com/uncrawled']);
-  }
-
-  console.log('--- 3. validateAndNormalizePlan with PageScope ---');
-  {
-    const startElem = createDummyElement('elem-1');
-    const aboutElem = createDummyElement('elem-2', { page: 2 });
-    const appMap: AppMap = {
-      ...createDummyAppMap('https://example.com/'),
-      elements: [startElem, aboutElem],
-      pages: [
-        { url: 'https://example.com/', requestedUrl: 'https://example.com/', title: 'Home' },
-        { url: 'https://example.com/about', requestedUrl: 'https://example.com/about', title: 'About' },
-      ],
-    };
-
-    const scope = buildPageScope(appMap);
-    assert.ok(scope !== null);
-
-    const knownIds = new Set(['elem-1', 'elem-2']);
-
-    // Off-page element without navigate -> kind 'references', detail mentions 'another page'
-    const planOffPageWithoutNav = JSON.stringify({
+    const knownIds = new Set(['elem-1']);
+    const validPlan = JSON.stringify({
       testCases: [
         {
           id: 'tc-1',
-          title: 'Off-page without nav',
-          description: 'Testing off page',
+          title: 'Basic plan',
+          description: 'Testing element',
           steps: [
-            { action: 'click', elementId: 'elem-2', value: null, description: 'click about button directly' },
+            { action: 'click', elementId: 'elem-1', value: null, description: 'click elem' },
           ],
         },
       ],
     });
-
-    const res1 = validateAndNormalizePlan(planOffPageWithoutNav, knownIds, 'https://example.com/', scope);
-    assert.equal(res1.ok, false);
-    if (!res1.ok && res1.kind === 'references') {
-      assert.ok(res1.detail.includes('another page'));
-    } else {
-      assert.fail('Expected kind references with detail about another page');
-    }
-
-    // Same plan without scope -> ok
-    const resWithoutScope = validateAndNormalizePlan(planOffPageWithoutNav, knownIds, 'https://example.com/', null);
-    assert.equal(resWithoutScope.ok, true);
-
-    // Navigate to /about -> click elem-2 -> navigate back to / -> click elem-1 -> ok
-    const planWithNav = JSON.stringify({
-      testCases: [
-        {
-          id: 'tc-2',
-          title: 'With proper nav',
-          description: 'Navigating between pages',
-          steps: [
-            { action: 'navigate', elementId: null, value: 'https://example.com/about', description: 'go to about' },
-            { action: 'click', elementId: 'elem-2', value: null, description: 'click about button' },
-            { action: 'navigate', elementId: null, value: 'https://example.com/', description: 'go back home' },
-            { action: 'click', elementId: 'elem-1', value: null, description: 'click home button' },
-          ],
-        },
-      ],
-    });
-
-    const res2 = validateAndNormalizePlan(planWithNav, knownIds, 'https://example.com/', scope);
-    assert.equal(res2.ok, true);
+    const res = validateAndNormalizePlan(validPlan, knownIds, 'https://example.com/');
+    assert.equal(res.ok, true);
   }
 
   console.log('--- 4. crawlCache ---');
@@ -269,20 +146,26 @@ async function runTests() {
 
   console.log('--- 8. GenerateRequestSchema ---');
   {
-    // url + deepCrawl + webhookUrl ok
+    // url + deepCrawl stripped + webhookUrl ok
     const res1 = GenerateRequestSchema.safeParse({
       url: 'https://example.com',
       deepCrawl: true,
       webhookUrl: 'https://api.example.com/webhook',
     });
     assert.equal(res1.success, true);
+    if (res1.success) {
+      assert.equal('deepCrawl' in res1.data, false);
+    }
 
-    // urls + deepCrawl rejected (strict schema rejects unknown key on urls branch)
+    // urls + deepCrawl stripped ok
     const res2 = GenerateRequestSchema.safeParse({
       urls: ['https://example.com'],
       deepCrawl: true,
     });
-    assert.equal(res2.success, false);
+    assert.equal(res2.success, true);
+    if (res2.success) {
+      assert.equal('deepCrawl' in res2.data, false);
+    }
 
     // bad webhookUrl rejected
     const res3 = GenerateRequestSchema.safeParse({

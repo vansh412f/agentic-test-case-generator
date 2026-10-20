@@ -11,11 +11,9 @@ interface CrawlPreviewProps {
   selectedUrls: string[];
   generating: boolean;
   disabled?: boolean;
-  deepCrawl?: boolean;
   testData?: Record<string, { value: string; sensitive: boolean }>;
   budget?: BudgetResponse | null;
   maxUrlsPerRun?: number;
-  onToggleDeepCrawl?: (enabled: boolean) => void;
   onToggleUrl: (url: string) => void;
   onUpdateTestData?: (elementId: string, value: string, sensitive: boolean) => void;
   onGenerate: (testDataByUrl?: Record<string, TestDataParam[]>) => void;
@@ -51,10 +49,8 @@ export function CrawlPreview({
   selectedUrls,
   generating,
   disabled = false,
-  deepCrawl = false,
   budget,
   maxUrlsPerRun,
-  onToggleDeepCrawl,
   onToggleUrl,
   onGenerate,
   onReset,
@@ -79,10 +75,6 @@ export function CrawlPreview({
     ? (budget?.maxUrlsPerRun ?? 10)
     : (maxUrlsPerRun ?? budget?.maxUrlsPerRun ?? (budget?.byok ? 5 : 3));
   const maxReached = selectedUrls.length >= maxAllowedUrls;
-  const canDeepCrawl =
-    onToggleDeepCrawl !== undefined &&
-    selectedUrls.length === 1 &&
-    appMap.discoveredLinks.length > 0;
 
   const visitorScope = budget?.scopes?.find((s) => s.scope === 'visitor');
   const limit = visitorScope?.limit ?? 8;
@@ -183,8 +175,10 @@ export function CrawlPreview({
           <p className="eyebrow">Crawl complete</p>
           <h2 id="app-map-title">App Map</h2>
           <p>
-            {totalPagesCount} {totalPagesCount === 1 ? 'page' : 'pages'} and{' '}
-            {appMap.elements.length} interactive elements discovered.
+            1 page crawled · {appMap.discoveredLinks.length} links found
+            {appMap.discoveredLinkTotal && appMap.discoveredLinkTotal > appMap.discoveredLinks.length
+              ? ` (showing ${appMap.discoveredLinks.length} of ${appMap.discoveredLinkTotal})`
+              : ''}
           </p>
         </div>
         {appMap.elements.length === 0 ? (
@@ -263,7 +257,7 @@ export function CrawlPreview({
                 <Globe aria-hidden="true" className="h-4 w-4" />
               </span>
               <span className="page-name">
-                <strong>{formatPageTitle(link, crawledMap?.title)}</strong>
+                <strong>{crawledMap?.title ?? appMap.discoveredLinkLabels?.[link] ?? formatPageTitle(link)}</strong>
                 <code>{formatPathname(link)}</code>
               </span>
               <span className="page-meta">
@@ -302,27 +296,9 @@ export function CrawlPreview({
         disabled={generating || disabled}
       />
 
-      {canDeepCrawl && (
-        <label className="deep-crawl-toggle">
-          <input
-            type="checkbox"
-            checked={Boolean(deepCrawl)}
-            disabled={generating || disabled}
-            onChange={(e) => onToggleDeepCrawl?.(e.target.checked)}
-          />
-          <div>
-            <strong>Deep crawl (experimental)</strong>
-            <small>
-              Also maps up to 2 linked pages so tests can cover journeys that cross pages. Slower; still counts as one run.
-            </small>
-          </div>
-        </label>
-      )}
-
       <div className="map-footer">
         <span>
           {selectedUrls.length} of {totalPagesCount} pages selected
-          {canDeepCrawl && deepCrawl ? ' · deep crawl on' : ''}
         </span>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           {budgetCopy && (

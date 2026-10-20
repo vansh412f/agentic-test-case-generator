@@ -45,6 +45,7 @@ export interface LlmRequest {
   jsonMode?: boolean;
   /** Latency/reasoning tier. Default is 'reasoning'. */
   tier?: 'reasoning' | 'fast';
+  purpose?: 'plan' | 'repair' | 'expand';
   signal?: AbortSignal;
 }
 

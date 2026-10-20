@@ -143,46 +143,5 @@ export function buildBaselineTests(appMap: AppMap): BaselineTest[] {
     });
   }
 
-  // smoke-3: No serious or critical accessibility violations (WCAG 2 A/AA)
-  if (config.A11Y_SMOKE) {
-    const smoke3Code = [
-      `import { test, expect } from '@playwright/test';`,
-      `import AxeBuilder from '@axe-core/playwright';`,
-      '',
-      `test('No serious or critical accessibility violations (WCAG 2 A/AA)', async ({ page }) => {`,
-      `  test.setTimeout(45_000);`,
-      `  await page.goto(${JSON.stringify(appMap.url)});`,
-      `  const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();`,
-      `  const violations = r.violations`,
-      `    .filter((v) => v.impact === 'serious' || v.impact === 'critical')`,
-      `    .map((v) => \`\${v.id} (\${v.nodes.length} nodes)\`);`,
-      `  expect(violations).toEqual([]);`,
-      `});`,
-      '',
-    ].join('\n');
-
-    const smoke3Steps: PlanStep[] = [
-      {
-        action: 'navigate',
-        elementId: null,
-        target: null,
-        value: appMap.url,
-        description: `Audit WCAG 2 A/AA accessibility on ${appMap.url}`,
-      },
-    ];
-
-    baselineTests.push({
-      testCase: {
-        id: 'smoke-3',
-        title: 'No serious or critical accessibility violations (WCAG 2 A/AA)',
-        description: 'Baseline check: analyzes page with axe-core for serious and critical accessibility violations.',
-        steps: smoke3Steps,
-        origin: 'baseline',
-      },
-      filename: 'smoke-3.spec.ts',
-      code: smoke3Code,
-    });
-  }
-
   return baselineTests;
 }

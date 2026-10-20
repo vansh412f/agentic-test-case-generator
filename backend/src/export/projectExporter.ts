@@ -10,10 +10,8 @@ const packageJson: unknown = JSON.parse(readFileSync(new URL('../../playwright-r
 const runnerVersion = z.object({
   dependencies: z.object({
     '@playwright/test': z.string().regex(/^\d+\.\d+\.\d+$/),
-    '@axe-core/playwright': z.string().optional(),
   }),
 }).parse(packageJson).dependencies['@playwright/test'];
-const axeVersion = (packageJson as { dependencies?: Record<string, string> })?.dependencies?.['@axe-core/playwright'] ?? '^4.14.0';
 
 export function rewriteBaseUrl(code: string, targetUrl: string): string {
   const jsonTarget = JSON.stringify(targetUrl);
@@ -74,8 +72,6 @@ export async function exportProject(job: LoadedJob, destination: Writable): Prom
   archive.on('warning', (error) => archive.destroy(error));
   const completed = pipeline(archive, destination);
   try {
-    const hasA11yTest = tests.some((test) => test.filename.includes('smoke-3') || test.finalCode.includes('@axe-core/playwright'));
-
     archive.append(JSON.stringify({
       name: `generated-tests-${job.id}`,
       private: true,
@@ -83,7 +79,6 @@ export async function exportProject(job: LoadedJob, destination: Writable): Prom
       scripts: { test: 'npx playwright test' },
       devDependencies: {
         '@playwright/test': runnerVersion,
-        ...(hasA11yTest ? { '@axe-core/playwright': axeVersion } : {}),
       },
     }, null, 2), { name: 'package.json' });
 

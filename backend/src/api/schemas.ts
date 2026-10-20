@@ -75,36 +75,43 @@ const testDataByUrlSchema = z
 
 // POST /api/generate accepts exactly one of { url } or { urls } (multi-page
 // run group). Both branches are strict so a body carrying both fields is
-// rejected instead of silently dropping one. Both respond 202 { jobIds }.
-export const GenerateRequestSchema = z.union([
-  z
-    .object({
-      url: targetUrlSchema,
-      deepCrawl: z.boolean().optional(),
-      webhookUrl,
-      altcha: z.string().optional(),
-      fresh: z.boolean().optional(),
-      testData: z.array(TestDataEntrySchema).max(30).optional(),
-      focus: z.array(ElementRef).min(1).max(5).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      urls: z.array(targetUrlSchema).min(1).max(MAX_URLS_PER_RUN),
-      webhookUrl,
-      altcha: z.string().optional(),
-      fresh: z.boolean().optional(),
-      testData: z.array(TestDataEntrySchema).max(30).optional(),
-      testDataByUrl: testDataByUrlSchema,
-      focus: z.array(ElementRef).min(1).max(5).optional(),
-    })
-    .strict()
-    .refine((data) => {
-      if (!data.testDataByUrl) return true;
-      const urlSet = new Set(data.urls);
-      return Object.keys(data.testDataByUrl).every((k) => urlSet.has(k));
-    }, 'Every key in testDataByUrl must be in urls'),
-]);
+export const GenerateRequestSchema = z.preprocess(
+  (raw) => {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw) && 'deepCrawl' in raw) {
+      const { deepCrawl: _, ...rest } = raw as Record<string, unknown>;
+      return rest;
+    }
+    return raw;
+  },
+  z.union([
+    z
+      .object({
+        url: targetUrlSchema,
+        webhookUrl,
+        altcha: z.string().optional(),
+        fresh: z.boolean().optional(),
+        testData: z.array(TestDataEntrySchema).max(30).optional(),
+        focus: z.array(ElementRef).min(1).max(5).optional(),
+      })
+      .strict(),
+    z
+      .object({
+        urls: z.array(targetUrlSchema).min(1).max(MAX_URLS_PER_RUN),
+        webhookUrl,
+        altcha: z.string().optional(),
+        fresh: z.boolean().optional(),
+        testData: z.array(TestDataEntrySchema).max(30).optional(),
+        testDataByUrl: testDataByUrlSchema,
+        focus: z.array(ElementRef).min(1).max(5).optional(),
+      })
+      .strict()
+      .refine((data) => {
+        if (!data.testDataByUrl) return true;
+        const urlSet = new Set(data.urls);
+        return Object.keys(data.testDataByUrl).every((k) => urlSet.has(k));
+      }, 'Every key in testDataByUrl must be in urls'),
+  ]),
+);
 
 export type GenerateRequest = z.infer<typeof GenerateRequestSchema>;
 // Module component implementation.

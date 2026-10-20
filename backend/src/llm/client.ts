@@ -19,6 +19,7 @@ interface LlmCallLog {
   success: boolean;
   latencyMs: number;
   usage?: { promptTokens: number; completionTokens: number };
+  purpose?: 'plan' | 'repair' | 'expand';
   errorCode?: LlmErrorCode;
   errorMessage?: string;
   requestPreview: string;
@@ -181,6 +182,7 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
           provider: providerName,
           model: response.model,
           attempt,
+          purpose: request.purpose,
           success: true,
           latencyMs: response.latencyMs ?? 0,
           usage: response.usage,
@@ -203,6 +205,7 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
           provider: providerName,
           model: 'unknown',
           attempt,
+          purpose: request.purpose,
           success: false,
           latencyMs: Date.now() - Date.parse(timestamp),
           errorCode: llmErr.code,
