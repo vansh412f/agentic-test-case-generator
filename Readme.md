@@ -163,7 +163,7 @@ stateDiagram-v2
 
 - **Context:** LLMs tasked with authoring browser tests from URLs or screenshots routinely hallucinate CSS classes, non-existent button texts, or deprecated IDs.
 - **Decision:** Crawl the real DOM first with headless Chromium before engaging the planner model. Compile locators deterministically using strict preference ordering: `getByTestId` &rarr; `getByRole` &rarr; `getByPlaceholder` &rarr; `getByLabel` &rarr; `getByText` &rarr; CSS selector.
-- **Why:** Deterministic mapping produces Playwright code that adheres to official testing best practices and aligns with actual page elements without model hallucination on the compiled path. When `compileTest` throws `CompileError` (such as unresolvable element references), the pipeline falls back to the LLM generator (`generateTest`, origin `'llm'`) as implemented in [backend/src/agent/pipeline.ts:300-313](file:///d:/Files/programs/agentic-test-generator/backend/src/agent/pipeline.ts#L300-L313).
+- **Why:** Deterministic mapping produces Playwright code that adheres to official testing best practices and aligns with actual page elements without model hallucination on the compiled path. When `compileTest` throws `CompileError` (such as unresolvable element references), the pipeline falls back to the LLM generator (`generateTest`, origin `'llm'`) as implemented in [backend/src/agent/pipeline.ts:300-313](backend/src/agent/pipeline.ts#L300-L313).
 - **Trade-off Accepted:** Dynamic elements that appear only after complex multi-step user interactions are not visible during the initial crawl unless deep crawl is enabled.
 - **Where in Code:** `backend/src/crawler/pageCrawler.ts`, `backend/src/agent/steps/compiler.ts:12`, `backend/src/agent/pipeline.ts:300-313`.
 

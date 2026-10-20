@@ -1,4 +1,4 @@
-# Production Deployment Guide (Phase 9A)
+# Production Deployment Guide 
 
 This document provides exact, copy-pasteable deployment instructions for hosting the Agentic Test Generator on free-tier infrastructure: Supabase (Database), Render (Docker Backend), and Vercel (Next.js Frontend).
 
@@ -65,7 +65,7 @@ In Render Dashboard -> **Environment Variables**, fill in values for the `sync: 
 |---|---|---|
 | `DATABASE_URL` | Pooled connection string | Port 6543 with `?pgbouncer=true&connection_limit=1` |
 | `DIRECT_URL` | Direct connection string | Port 5432 |
-| `VISITOR_SIGNING_SECRET` | HMAC key for visitor cookies | min 16 characters (enforced); use `openssl rand -hex 32` |
+| `VISITOR_SIGNING_SECRET` | HMAC key for signed visitor IDs | min 16 characters (enforced); use `openssl rand -hex 32` |
 | `POW_SECRET` | ALTCHA PoW secret | min 16 characters (enforced); use `openssl rand -hex 32` |
 | `ADMIN_SECRET` | Header key for admin routes (`X-Admin-Secret`) | Min 24 characters (e.g., `openssl rand -hex 24`) |
 | `EDGE_SHARED_SECRET` | Shared secret with Vercel edge rewrite | Min 24 characters (must match Vercel) |
