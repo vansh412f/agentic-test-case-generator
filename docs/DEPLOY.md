@@ -65,8 +65,8 @@ In Render Dashboard -> **Environment Variables**, fill in values for the `sync: 
 |---|---|---|
 | `DATABASE_URL` | Pooled connection string | Port 6543 with `?pgbouncer=true&connection_limit=1` |
 | `DIRECT_URL` | Direct connection string | Port 5432 |
-| `VISITOR_SIGNING_SECRET` | HMAC key for visitor cookies | Min 24 characters (e.g., `openssl rand -hex 24`) |
-| `POW_SECRET` | ALTCHA PoW secret | Min 24 characters (e.g., `openssl rand -hex 24`) |
+| `VISITOR_SIGNING_SECRET` | HMAC key for visitor cookies | min 16 characters (enforced); use `openssl rand -hex 32` |
+| `POW_SECRET` | ALTCHA PoW secret | min 16 characters (enforced); use `openssl rand -hex 32` |
 | `ADMIN_SECRET` | Header key for admin routes (`X-Admin-Secret`) | Min 24 characters (e.g., `openssl rand -hex 24`) |
 | `EDGE_SHARED_SECRET` | Shared secret with Vercel edge rewrite | Min 24 characters (must match Vercel) |
 | `FRONTEND_ORIGIN` | Allowed CORS origins (comma-separated) | `https://your-app.vercel.app` |

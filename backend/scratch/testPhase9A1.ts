@@ -14,7 +14,7 @@ import { isAllowedOrigin } from '../src/index.ts';
 import { buildRunnerArgv } from '../src/runner/isolation.ts';
 import { validateTestCode } from '../src/runner/validator.ts';
 import { RUNNER_DIR } from '../src/runner/config.ts';
-import { config } from '../src/config.ts';
+import { config, configSchema } from '../src/config.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -436,7 +436,43 @@ function testIsAllowedOrigin() {
   assert.equal(isAllowedOrigin('http://localhost:3000', devOptions), true);
   assert.equal(isAllowedOrigin('http://127.0.0.1:5173', devOptions), true);
 
-  console.log('✓ isAllowedOrigin correctly evaluated origin permissions');
+  // Unanchored CORS_PREVIEW_ORIGIN_REGEX fails config parse
+  const unanchoredLeading = configSchema.safeParse({
+    DATABASE_URL: 'postgresql://localhost:5432/db',
+    DIRECT_URL: 'postgresql://localhost:5432/db',
+    CORS_PREVIEW_ORIGIN_REGEX: 'https://agentic-test-[a-z0-9-]+\\.vercel\\.app$',
+  });
+  assert.equal(unanchoredLeading.success, false);
+  const leadingIssue = unanchoredLeading.error?.issues.find(
+    (i) => i.path.includes('CORS_PREVIEW_ORIGIN_REGEX'),
+  );
+  assert.equal(
+    leadingIssue?.message,
+    'CORS_PREVIEW_ORIGIN_REGEX must be anchored with ^ and $',
+  );
+
+  const unanchoredTrailing = configSchema.safeParse({
+    DATABASE_URL: 'postgresql://localhost:5432/db',
+    DIRECT_URL: 'postgresql://localhost:5432/db',
+    CORS_PREVIEW_ORIGIN_REGEX: '^https://agentic-test-[a-z0-9-]+\\.vercel\\.app',
+  });
+  assert.equal(unanchoredTrailing.success, false);
+  const trailingIssue = unanchoredTrailing.error?.issues.find(
+    (i) => i.path.includes('CORS_PREVIEW_ORIGIN_REGEX'),
+  );
+  assert.equal(
+    trailingIssue?.message,
+    'CORS_PREVIEW_ORIGIN_REGEX must be anchored with ^ and $',
+  );
+
+  const anchoredValid = configSchema.safeParse({
+    DATABASE_URL: 'postgresql://localhost:5432/db',
+    DIRECT_URL: 'postgresql://localhost:5432/db',
+    CORS_PREVIEW_ORIGIN_REGEX: '^https://agentic-test-[a-z0-9-]+\\.vercel\\.app$',
+  });
+  assert.equal(anchoredValid.success, true);
+
+  console.log('✓ isAllowedOrigin correctly evaluated origin permissions and unanchored regex rejected');
 }
 
 // ==========================================

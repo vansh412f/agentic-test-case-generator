@@ -62,19 +62,13 @@ RUN node playwright-runner/node_modules/@playwright/test/cli.js install --with-d
 
 # Setup users and permissions
 # Group agt (1002), user agtrunner (1001), node added to agt
-# /app root-owned, not writable by node or agtrunner
 # /app/playwright-runner/tests: owner node, group agt, mode 2770
-# /ms-playwright: root-owned, world-readable (o+rX)
 RUN groupadd -g 1002 agt && \
     useradd -u 1001 -g 1002 -M -s /usr/sbin/nologin agtrunner && \
     usermod -aG agt node && \
     mkdir -p /app/playwright-runner/tests /tmp && \
-    chown -R root:root /app && \
-    chmod -R 755 /app && \
     chown node:agt /app/playwright-runner/tests && \
-    chmod 2770 /app/playwright-runner/tests && \
-    chown -R root:root /ms-playwright && \
-    chmod -R o+rX /ms-playwright
+    chmod 2770 /app/playwright-runner/tests
 
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod 0755 /app/docker-entrypoint.sh && chown root:root /app/docker-entrypoint.sh

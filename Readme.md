@@ -6,7 +6,7 @@ Generates typed Playwright end-to-end test suites from live web applications usi
 
 <p>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.9.3-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript 5.9.3" /></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-%3E=22.13.4_(tested_v24.14.1)-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js >=22.13.4" /></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22_(tested_v24.14.1)-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node 22 (Docker image node:22-bookworm-slim); tested on v24.14.1" /></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-14.2.5_(Pages_Router)-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js 14.2.5" /></a>
   <a href="https://expressjs.com/"><img src="https://img.shields.io/badge/Express-5.2.1-000000?style=flat-square&logo=express&logoColor=white" alt="Express 5.2.1" /></a>
   <a href="https://playwright.dev/"><img src="https://img.shields.io/badge/Playwright-1.63.0-2EAD33?style=flat-square&logo=playwright&logoColor=white" alt="Playwright 1.63.0" /></a>
@@ -35,8 +35,9 @@ Generates typed Playwright end-to-end test suites from live web applications usi
 
 - **Discovers interactive state directly from the DOM:** Navigates the target URL using headless Chromium, cataloging visible buttons, inputs, links, forms, and semantic accessibility roles into a structured AppMap.
 - **Plans targeted test scenarios:** Submits the discovered element tree to an LLM reasoning model to design user journeys across validation, navigation, state changes, and negative edge cases.
-- **Compiles Playwright TypeScript deterministically:** Synthesizes typed test files using strict locator priority rules without model hallucination for locators where semantic roles or test IDs exist.
-- **Enforces a static compilation gate:** Pre-validates every emitted test via an in-process TypeScript compiler (`tsc --noEmit`) before executing any browser code.
+- **Includes built-in baseline checks:** Automatically injects deterministic checks alongside AI scenarios: `smoke-1` (no uncaught JavaScript errors on load), `smoke-2` (linked pages respond), and `smoke-3` (axe scan for serious/critical WCAG 2 A/AA violations under `A11Y_SMOKE`).
+- **Compiles Playwright TypeScript deterministically:** Synthesizes typed test files using strict locator priority rules without model hallucination on the compiled path (falling back to generative LLM synthesis only when compilation throws `CompileError`).
+- **Enforces a static compilation gate:** Pre-validates every emitted test via `tsc --noEmit` in a child process before executing any browser code.
 - **Runs tests in isolated Chromium processes:** Executes generated tests in Chromium (Chromium-only execution) inside a sandboxed runner sandbox.
 - **Classifies and isolates failures:** Distinguishes assertion discrepancies from mechanical harness failures (missing locators, network timeouts); mechanical failures undergo bounded correction while assertion failures are preserved.
 - **Exports complete test suites:** Packages validated tests into a runnable Playwright project zip complete with `playwright.config.ts`, `.env.example`, and a GitHub Actions workflow.
@@ -92,7 +93,7 @@ sequenceDiagram
 
 ### Execution Walkthrough
 
-1. **Submission & Admission (`backend/src/api/routes.ts`):** Client submits target URLs with an ALTCHA proof-of-work payload. The API validates target reachability, enforces daily quotas, assigns a signed visitor cookie, and pushes the run into the in-process queue.
+1. **Submission & Admission (`backend/src/api/routes.ts`):** Client submits target URLs with an ALTCHA proof-of-work payload. The API enforces public network policy (`assertPublicTarget`), checks daily quotas, verifies the signed visitor ID sent in the `X-Visitor-Id` header, and pushes the run into the in-process queue.
 2. **DOM Observation (`backend/src/crawler/pageCrawler.ts`):** Headless Chromium navigates to the target, collects interactive elements, computes accessible roles and CSS selectors, and serializes the DOM into an AppMap.
 3. **Plan Synthesis (`backend/src/agent/steps/planner.ts`):** The AppMap is checked against the in-memory plan cache. On a cache miss, an LLM reasoning model synthesizes user journeys matching the observed interactive elements.
 4. **Deterministic Compilation (`backend/src/agent/steps/compiler.ts`):** Scenarios are mapped directly into `@playwright/test` TypeScript files by looking up referenced elements from the AppMap.
@@ -145,7 +146,7 @@ stateDiagram-v2
 | [Plan caching](#decision-3-plan-caching) | Cuts token consumption by over 50% when re-testing stable URLs. | Cache hits reuse prior test structures until cache expiration or target changes. |
 | [Static type-check gate](#decision-4-static-type-check-gate) | Blocks syntax and type errors from consuming browser execution time. | Adds 1–2 seconds of `tsc` overhead per validation round. |
 | [Guarded round execution](#decision-5-guarded-round-execution) | Prevents the model from weakening assertions to artificially pass broken tests. | Tests that fail valid assertions cannot be auto-repaired and remain marked as failures. |
-| [Built-in baseline checks](#decision-6-built-in-baseline-checks) | Provides immediate smoke coverage for broken links and accessibility without LLM calls. | Baseline assertions are static and cannot auto-correct if the application has minor known flaws. |
+| [Built-in baseline checks](#decision-6-built-in-baseline-checks) | Injects smoke-1 (no uncaught JS errors), smoke-2 (linked pages respond), and smoke-3 (a11y scan) without LLM calls. | A failing check classified as a finding stays failed; mechanical failures become gave_up; checks are never sent to corrector. |
 | [Secret token substitution](#decision-7-secret-token-substitution) | Shields passwords and credentials from LLMs, databases, and logs. | Complex multi-stage credentials require manual mapping via the preview interface. |
 | [In-process run queue](#decision-8-in-process-run-queue) | Eliminates Redis operational complexity for single-instance container hosting. | In-flight queue state does not persist across container restarts or horizontal scaling. |
 | [Server-Sent Events](#decision-9-server-sent-events) | Delivers lightweight, unidirectional live job progress over standard HTTP. | Client cannot push data backward over the same stream (uses discrete REST endpoints). |
@@ -162,9 +163,9 @@ stateDiagram-v2
 
 - **Context:** LLMs tasked with authoring browser tests from URLs or screenshots routinely hallucinate CSS classes, non-existent button texts, or deprecated IDs.
 - **Decision:** Crawl the real DOM first with headless Chromium before engaging the planner model. Compile locators deterministically using strict preference ordering: `getByTestId` &rarr; `getByRole` &rarr; `getByPlaceholder` &rarr; `getByLabel` &rarr; `getByText` &rarr; CSS selector.
-- **Why:** Deterministic mapping produces Playwright code that adheres to official testing best practices and aligns with actual page elements.
+- **Why:** Deterministic mapping produces Playwright code that adheres to official testing best practices and aligns with actual page elements without model hallucination on the compiled path. When `compileTest` throws `CompileError` (such as unresolvable element references), the pipeline falls back to the LLM generator (`generateTest`, origin `'llm'`) as implemented in [backend/src/agent/pipeline.ts:300-313](file:///d:/Files/programs/agentic-test-generator/backend/src/agent/pipeline.ts#L300-L313).
 - **Trade-off Accepted:** Dynamic elements that appear only after complex multi-step user interactions are not visible during the initial crawl unless deep crawl is enabled.
-- **Where in Code:** `backend/src/crawler/pageCrawler.ts`, `backend/src/agent/steps/compiler.ts:12`.
+- **Where in Code:** `backend/src/crawler/pageCrawler.ts`, `backend/src/agent/steps/compiler.ts:12`, `backend/src/agent/pipeline.ts:300-313`.
 
 ### Decision 2: Two-Tier Model Separation
 
@@ -200,11 +201,11 @@ stateDiagram-v2
 
 ### Decision 6: Built-in Baseline Checks
 
-- **Context:** Web applications share foundational quality requirements (working links, basic accessibility, console hygiene) that do not require generative planning.
-- **Decision:** Inject deterministic baseline tests alongside AI-generated scenarios: a broken-links crawler, console error auditor, and an Axe accessibility audit. Label them distinctly in the UI as **Built-in check** versus **Generated scenario**.
+- **Context:** Web applications share foundational quality requirements (clean runtime page execution, working links, accessibility standards) that do not require generative planning.
+- **Decision:** Inject deterministic baseline tests alongside AI-generated scenarios: `smoke-1` (no uncaught JavaScript errors on load), `smoke-2` (linked pages respond), and `smoke-3` (axe scan for serious/critical WCAG 2 A/AA violations when `A11Y_SMOKE` is enabled). Label them distinctly in the UI as **Built-in check** versus **Generated scenario**.
 - **Why:** Guarantees baseline regression coverage on every run even if LLM rate limits or token budgets are reached.
-- **Trade-off Accepted:** Baseline checks are rigid; failures cannot be auto-corrected by the LLM and are marked as gave-up when failing.
-- **Where in Code:** `backend/src/agent/baseline.ts`, `frontend/components/job/TestResultCard.tsx:122,136`.
+- **Trade-off Accepted:** A failing built-in check classified as a finding stays failed; mechanical failures become `gave_up`; built-in checks are never sent to the corrector.
+- **Where in Code:** `backend/src/agent/baseline.ts:31-77`, `backend/src/agent/rounds.ts:330-348`, `frontend/components/job/TestResultCard.tsx:122,136`.
 
 ### Decision 7: Secret Token Substitution
 
@@ -267,7 +268,7 @@ stateDiagram-v2
 - **Context:** Tests generated in a hosted browser tool are only valuable if engineering teams can easily integrate them into their development repositories.
 - **Decision:** Provide an export endpoint that streams a zip archive containing individual `@playwright/test` specs, a `playwright.config.ts`, a `.env.example` mapping parameter secrets, and a ready-to-run GitHub Actions workflow (`.github/workflows/playwright.yml`).
 - **Why:** Enables teams to run the generated test suite locally or inside CI/CD with a single command.
-- **Trade-off Accepted:** The downloaded zip file includes only passed and failed tests; tests marked `needs_review` are segregated into a separate review folder.
+- **Trade-off Accepted:** Tests marked `needs_review` are excluded from the zip and listed in its README (`backend/src/export/projectExporter.ts:63,190-194`).
 - **Where in Code:** `backend/src/export/projectExporter.ts`, `backend/src/api/jobsRoutes.ts:208`.
 
 </details>
@@ -356,7 +357,7 @@ Measurements recorded from a live 12-run verification matrix (`docs/measurements
 |---|---|---|
 | Total Runs Executed | 12 | Tested across TodoMVC, the-internet, saucedemo, practicetestautomation |
 | AI Scenarios Planned | 56 | Synthesized by planner reasoning model |
-| Baseline Checks Injected | 28 | Built-in smoke tests (broken links, a11y, console) |
+| Baseline Checks Injected | 28 | Built-in smoke tests (smoke-1: no uncaught JavaScript errors on load; smoke-2: linked pages respond; smoke-3: axe scan for serious/critical WCAG 2 A/AA violations under A11Y_SMOKE) |
 | Total Tests Evaluated | 84 | Combined test suite execution |
 | Tests Passing | 56 (66.7%) | Tests completing without failure |
 | Reported Findings | 20 (23.8%) | Potential defects flagged to user |
@@ -378,7 +379,7 @@ Measurements recorded from a live 12-run verification matrix (`docs/measurements
 
 ### Prerequisites
 
-- **Node.js:** `>=22.13.4` (tested on `v24.14.1`)
+- **Node.js:** Node 22 (Docker image `node:22-bookworm-slim`); tested on `v24.14.1`
 - **Package Manager:** `pnpm` (version 10)
 - **Database:** PostgreSQL database instance (local PostgreSQL or Supabase project)
 - **LLM API Key:** At least one API key from Groq, Google Gemini, or NVIDIA
@@ -387,8 +388,8 @@ Measurements recorded from a live 12-run verification matrix (`docs/measurements
 
 ```powershell
 # 1. Clone repository and navigate to root
-git clone https://github.com/example/agentic-test-generator.git
-cd agentic-test-generator
+git clone https://github.com/vansh412f/agentic-test-case-generator.git
+cd agentic-test-case-generator
 
 # 2. Configure Backend
 cd backend
@@ -424,8 +425,8 @@ pnpm dev
 
 ```bash
 # 1. Clone repository and enter directory
-git clone https://github.com/example/agentic-test-generator.git
-cd agentic-test-generator
+git clone https://github.com/vansh412f/agentic-test-case-generator.git
+cd agentic-test-case-generator
 
 # 2. Configure Backend
 cd backend
@@ -494,8 +495,8 @@ cd frontend && pnpm dev
 | `BYOK_VALIDATE_DAILY_LIMIT_PER_IP` | `50` | No | Daily limit for API key pre-flight checks per IP |
 | `PIPELINE_CONCURRENCY` | `1` | No | Maximum concurrent test execution pipelines (1–4) |
 | `QUEUE_MAX_WAITING_GROUPS` | `5` | No | Maximum pending run groups allowed in memory queue |
-| `BASELINE_TESTS` | `true` | No | When true, injects broken link and console baseline checks |
-| `A11Y_SMOKE` | `true` | No | When true, injects an Axe accessibility smoke test |
+| `BASELINE_TESTS` | `true` | No | When true, injects smoke-1 (no uncaught JavaScript errors on load) and smoke-2 (linked pages respond) |
+| `A11Y_SMOKE` | `true` | No | When true, injects smoke-3 (axe scan for serious/critical WCAG 2 A/AA violations) |
 | `WAKING_HOST_SUFFIXES` | `onrender.com,...` | No | Comma-separated host suffixes subject to cold start detection |
 | `LOCAL_AGENT_MODE` | `false` | Fatal if true in prod | Disables quotas, admission checks, and private IP blocks |
 | `TRUST_PROXY_HOPS` | `1` | No | Number of upstream reverse proxy hops to trust for IP extraction |
@@ -727,7 +728,7 @@ erDiagram
 │   ├── OPERATIONS.md               # Operations, keep-alive monitoring, and runbook
 │   └── measurements/               # Empirical performance and token reduction audits
 ├── frontend/                       # Next.js 14 Pages Router user interface
-│   ├── components/                 # React UI components (Tailwind CSS, Radix UI)
+│   ├── components/                 # React UI components (Tailwind CSS)
 │   ├── lib/                        # Client-side API fetchers and localStorage helpers
 │   ├── pages/                      # Next.js Pages Router views (/jobs, [id], privacy)
 │   └── styles/                     # Tailwind and global stylesheet configurations
@@ -772,7 +773,7 @@ npx tsx scratch/testQuickFixes.ts       # Validates error mapping and URL transf
 
 ## Roadmap
 
-- **Scenario Accuracy & Negative Template Separation:** Segregate negative test cases (empty or invalid inputs) from valid credentials in `planCompiler.ts` to eliminate false finding reports caused by test data collisions.
+- **Scenario Accuracy & Negative Template Separation:** Segregate negative test cases (empty or invalid inputs) from valid credentials in `backend/src/agent/steps/planner.ts:213-239` (`enforceTestData`) to eliminate false finding reports caused by test data collisions.
 - **Navigation-Aware Correction Guidance:** Supply post-navigation page URLs and visible interactive element snapshots directly to the correction prompt, preventing locator spin on vanished selectors.
 - **In-Browser Scenario Editing & Re-Execution:** Allow users to adjust generated Playwright code in the Monaco editor and trigger immediate re-execution without incurring an LLM call.
 - **Trace Viewer & Screenshot Artifacts:** Attach Playwright execution traces and screenshot artifacts directly to test result cards for rapid debugging.
@@ -789,7 +790,7 @@ npx tsx scratch/testQuickFixes.ts       # Validates error mapping and URL transf
 | **Redux / Zustand** | Avoided | Next.js Pages Router with local React state and SWR caching satisfies all state management needs without state store boilerplate. |
 | **GraphQL / tRPC** | Avoided | Standard REST endpoints with Zod request schemas cleanly support Server-Sent Events, streaming zips, and HTML file downloads. |
 | **WebSockets** | Avoided | Live progress is strictly unidirectional (server to browser). Server-Sent Events work seamlessly over standard HTTP proxies without WebSocket upgrade complexity. |
-| **Redis** | Avoided | Single-instance deployment runs on an in-memory queue and SQLite/Postgres. Redis adds unwarranted infrastructure overhead on free-tier deployments. |
+| **Redis** | Avoided | Single-instance deployment runs on an in-memory queue and Postgres. Redis adds unwarranted infrastructure overhead on free-tier deployments. |
 | **Next.js App Router / RSC** | Avoided | Pages Router provides predictable, stable client-side lifecycle management for long-lived Server-Sent Event streams and Monaco editor instances. |
 | **Vector DBs / RAG** | Avoided | The application tests live DOM structures discovered in real time. Historical embeddings are inapplicable for testing fresh DOM layouts. |
 | **Paid Cloud Tiers** | Avoided | Purposefully designed to run continuously on free-tier allocations (Render, Vercel, Supabase, Groq/Gemini free tiers) with zero hosting expenditure. |

@@ -10,7 +10,7 @@ if (process.env.HEADLESS === 'false') {
   );
 }
 
-const configSchema = z.object({
+export const configSchema = z.object({
   PORT: z.coerce.number().default(4000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   HEADED_DEBUG: z
@@ -73,6 +73,13 @@ const configSchema = z.object({
         }
       },
       { message: 'CORS_PREVIEW_ORIGIN_REGEX must be a valid regular expression' },
+    )
+    .refine(
+      (val) => {
+        if (!val) return true;
+        return val.startsWith('^') && val.endsWith('$');
+      },
+      { message: 'CORS_PREVIEW_ORIGIN_REGEX must be anchored with ^ and $' },
     ),
 });
 
