@@ -260,6 +260,15 @@ Call log:
   console.log('   ✓ Group 7: isBotWall passed');
 
   // 8. Planner call cap with a REAL mock
+  // Phase 12.1: dual-call is the default for non-focus planning (no longer gated on
+  // observations); Group 8 rewritten from single-call semantics.
+  // Non-focus planning issues TWO parallel 'plan' calls — tier 'reasoning' (side A, core
+  // cases) and tier 'fast' (side B, negative cases) — merged and deduped by normalized
+  // title. If BOTH sides yield zero cases and side A produced content that failed
+  // validation, exactly ONE 'repair' call (tier 'reasoning') fires. The merged plan is
+  // then finalized with allowExpansion=true, so an 'expand' call fires when merged cases
+  // < 5 and the page has >= 4 visible elements; the expanded plan replaces the merged one
+  // only if it has MORE cases.
   console.log('8. Planner call cap with real mock...');
   function plannerFixtureAppMap(): AppMap {
     const elements = Array.from({ length: 8 }, (_, i) => ({
@@ -286,35 +295,48 @@ Call log:
     });
   }
 
-  function recordingLlm(responses: string[], purposes: Array<string | undefined>) {
-    let call = 0;
-    return (async (req: { purpose?: string }) => {
+  // Deterministic dispatcher keyed on (purpose, tier) — independent of parallel call scheduling.
+  function dispatchLlm(
+    map: { A?: string; B?: string; expand?: string; repair?: string },
+    purposes: Array<string | undefined>,
+  ) {
+    return (async (req: { purpose?: string; tier?: string }) => {
       purposes.push(req.purpose);
-      const content = responses[Math.min(call++, responses.length - 1)];
+      const content =
+        req.purpose === 'expand' ? map.expand! :
+        req.purpose === 'repair' ? map.repair! :
+        req.tier === 'fast' ? map.B! : map.A!;
       return { content, model: 'mock', provider: 'groq', latencyMs: 1, usage: { promptTokens: 1, completionTokens: 1 } };
     }) as never;
   }
 
-  // Case A (repair path)
+  // Case A (A invalid, B carries, expand no-grow)
   const purposesA: Array<string | undefined> = [];
   const planA = await planTests(plannerFixtureAppMap(), {
     fresh: true,
-    callLlmImpl: recordingLlm(['not-json{', validPlanJson(3)], purposesA),
+    callLlmImpl: dispatchLlm({ A: 'not-json{', B: validPlanJson(3), expand: validPlanJson(3) }, purposesA),
   });
-  assert.equal(purposesA.length, 2, 'Repair path makes exactly 2 calls');
-  assert.deepEqual(purposesA, ['plan', 'repair'], 'Repair path purposes must be plan, repair');
-  assert.equal(planA.testCases.length, 3, 'Returned plan has 3 test cases');
+  assert.deepEqual([...purposesA].sort(), ['expand', 'plan', 'plan'], 'Case A purposes must be expand + 2 plan');
+  assert.equal(planA.testCases.length, 3, 'Case A merged plan keeps 3 cases (expand did not grow)');
 
-  // Case B (expand path)
+  // Case A2 (both sides invalid -> exactly one repair)
+  const purposesA2: Array<string | undefined> = [];
+  const planA2 = await planTests(plannerFixtureAppMap(), {
+    fresh: true,
+    callLlmImpl: dispatchLlm({ A: 'not-json{', B: 'not-json{', repair: validPlanJson(6) }, purposesA2),
+  });
+  assert.deepEqual([...purposesA2].sort(), ['plan', 'plan', 'repair'], 'Case A2 purposes must be repair + 2 plan');
+  assert.equal(planA2.testCases.length, 6, 'Case A2 repair recovers 6 cases (no expansion)');
+
+  // Case B (expansion upgrades a small merged plan)
   const purposesB: Array<string | undefined> = [];
   const planB = await planTests(plannerFixtureAppMap(), {
     fresh: true,
-    callLlmImpl: recordingLlm([validPlanJson(3), validPlanJson(6)], purposesB),
+    callLlmImpl: dispatchLlm({ A: validPlanJson(2), B: validPlanJson(3), expand: validPlanJson(6) }, purposesB),
   });
-  assert.equal(purposesB.length, 2, 'Expand path makes exactly 2 calls');
-  assert.deepEqual(purposesB, ['plan', 'expand'], 'Expand path purposes must be plan, expand');
-  assert.equal(planB.testCases.length, 6, 'Returned plan has 6 test cases');
-  console.log('   ✓ Group 8: planner call cap & purposes (repair and expand paths) passed with real mock');
+  assert.deepEqual([...purposesB].sort(), ['expand', 'plan', 'plan'], 'Case B purposes must be expand + 2 plan');
+  assert.equal(planB.testCases.length, 6, 'Case B expansion upgrades merged plan to 6 cases');
+  console.log('   ✓ Group 8: planner dual-call structure (repair + expand paths) passed with real mock');
 
   // 9. Baseline tests (no smoke-3, no axe)
   console.log('9. Baseline tests inspection...');

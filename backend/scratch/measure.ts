@@ -245,11 +245,47 @@ export interface DetailedRunResult {
   // Latencies by phase
   phaseLatencies: {
     crawlMs: number;
+    observeMs: number;
     planMs: number;
     generateMs: number;
     validateMs: number;
     executeMs: number;
     correctMs: number;
+  };
+
+  // Phase 12 compat: Observe step summary (new step type since c89620e)
+  observe: {
+    latencyMs: number;
+    observationCount: number;
+    byKind: Record<string, number>;
+  };
+
+  // Phase 12 audit artifacts (additive; enables grounding audit + failure classification)
+  audit: {
+    testDataProvided: boolean;
+    observations: Array<{
+      kind: string;
+      elementId: string | null;
+      finalUrl: string | null;
+      role: string | null;
+      visibleTexts: string[];
+    }>;
+    planTestCases: Array<{
+      id: string;
+      title: string;
+      steps: Array<{ action: string; elementId: string | null; target: string | null; value: string | null }>;
+    }>;
+    tests: Array<{
+      testCaseId: string;
+      finalStatus: string;
+      finalCode: string;
+      attempts: Array<{
+        attemptNumber: number;
+        executionPassed: boolean | null;
+        failureClass: string | null;
+        executionError: string | null;
+      }>;
+    }>;
   };
 
   // LLM calls & tokens
@@ -485,18 +521,19 @@ async function runMeasurement() {
     let expansionReason = '';
     if (planCacheHit) {
       expansionReason = 'Plan-cache hit (reused cached plan)';
-    } else if (visibleElementCount < 6) {
-      expansionReason = `visibleCount (${visibleElementCount}) < 6`;
+    } else if (visibleElementCount < 4) {
+      expansionReason = `visibleCount (${visibleElementCount}) < 4`;
     } else if (aiCases.length >= 5) {
       expansionReason = `Initial plan already produced ${aiCases.length} cases (>=5 rule)`;
     } else {
       expansionTriggered = true;
-      expansionReason = 'Triggered (<5 cases on page with >=6 visible elements)';
+      expansionReason = 'Triggered (<5 cases on page with >=4 visible elements)';
     }
 
     // Phase latencies
     const phaseLatencies = {
       crawlMs: 0,
+      observeMs: 0,
       planMs: 0,
       generateMs: 0,
       validateMs: 0,
@@ -506,6 +543,7 @@ async function runMeasurement() {
     for (const step of dbJob.agentSteps) {
       const ms = step.latencyMs ?? 0;
       if (step.stepType === 'crawl') phaseLatencies.crawlMs += ms;
+      else if (step.stepType === 'observe') phaseLatencies.observeMs += ms;
       else if (step.stepType === 'plan') phaseLatencies.planMs += ms;
       else if (step.stepType === 'generate') phaseLatencies.generateMs += ms;
       else if (step.stepType === 'validate') phaseLatencies.validateMs += ms;
@@ -552,6 +590,7 @@ async function runMeasurement() {
     let gaveUpTokenBudget = 0;
 
     const testDetails = [];
+    const codeByTestId = new Map<string, string>();
 
     for (const t of dbJob.generatedTests) {
       if (t.finalStatus === 'passed') {
@@ -580,6 +619,7 @@ async function runMeasurement() {
       }
 
       const { count: assertionCount, strongest: strongestAssertion } = analyzeAssertions(t.finalCode);
+      codeByTestId.set(t.testCaseId, t.finalCode);
       const planTc = testPlanJson?.testCases?.find((tc: any) => tc.id === t.testCaseId);
       const category = inferCategory(t.testCaseId, planTc?.title);
 
@@ -599,6 +639,15 @@ async function runMeasurement() {
           executionError: r.executionError,
         })),
       });
+    }
+
+    // Phase 12: Observe summary + grounding-audit artifacts
+    const observeStep = dbJob.agentSteps.find((s) => s.stepType === 'observe');
+    const rawObservations: any[] = Array.isArray((appMapAny as any)?.observations) ? (appMapAny as any).observations : [];
+    const observeByKind: Record<string, number> = {};
+    for (const o of rawObservations) {
+      const k = String(o?.kind ?? 'unknown');
+      observeByKind[k] = (observeByKind[k] ?? 0) + 1;
     }
 
     // Payload byte comparison
@@ -647,6 +696,44 @@ async function runMeasurement() {
       },
 
       phaseLatencies,
+
+      observe: {
+        latencyMs: observeStep?.latencyMs ?? 0,
+        observationCount: rawObservations.length,
+        byKind: observeByKind,
+      },
+
+      audit: {
+        testDataProvided: (runDef.testData?.length ?? 0) > 0,
+        observations: rawObservations.map((o: any) => ({
+          kind: String(o?.kind ?? 'unknown'),
+          elementId: o?.elementId ?? null,
+          finalUrl: o?.finalUrl ?? null,
+          role: o?.role ?? null,
+          visibleTexts: Array.isArray(o?.visibleTexts) ? o.visibleTexts : [],
+        })),
+        planTestCases: (Array.isArray(testPlanJson?.testCases) ? testPlanJson.testCases : []).map((tc: any) => ({
+          id: tc.id,
+          title: tc.title,
+          steps: (Array.isArray(tc.steps) ? tc.steps : []).map((s: any) => ({
+            action: s.action,
+            elementId: s.elementId ?? null,
+            target: s.target ?? null,
+            value: s.value ?? null,
+          })),
+        })),
+        tests: testDetails.map((t) => ({
+          testCaseId: t.testCaseId,
+          finalStatus: t.finalStatus,
+          finalCode: codeByTestId.get(t.testCaseId) ?? '',
+          attempts: t.attempts.map((a) => ({
+            attemptNumber: a.attemptNumber,
+            executionPassed: a.executionPassed,
+            failureClass: a.failureClass,
+            executionError: a.executionError ?? null,
+          })),
+        })),
+      },
 
       llm: {
         totalCalls: Object.values(callsByStep).reduce((a, b) => a + b, 0),

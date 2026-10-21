@@ -41,6 +41,9 @@ Generates typed Playwright end-to-end test suites from live web applications usi
 - **Runs tests in isolated Chromium processes:** Executes generated tests in Chromium (Chromium-only execution) inside a sandboxed runner sandbox.
 - **Classifies and isolates failures:** Distinguishes assertion discrepancies from mechanical harness failures (missing locators, network timeouts); mechanical failures undergo bounded correction while assertion failures are preserved.
 - **Exports complete test suites:** Packages validated tests into a runnable Playwright project zip complete with `playwright.config.ts`, `.env.example`, and a GitHub Actions workflow.
+- **Edits and re-runs tests without a model call:** Generated specs can be edited in the Monaco editor and re-executed in place (`POST /api/jobs/:id/tests/:testCaseId/rerun`, `backend/src/agent/testRerun.ts`). Re-execution runs the **same** safety gates (AST `codeSafety` + `tsc --noEmit`) and never invokes an LLM. Tests that need protected fields are blocked with an explanatory message (`TEST_DATA_REQUIRED`) until test data is supplied.
+- **Serves owner-only trace viewer links on reruns:** A rerun emits a signed, short-lived trace link (HMAC token, 10-minute TTL) to a Playwright trace served by `GET /api/traces/:traceId`. Traces are visible only to the originating visitor and are retained for 1 hour (`backend/src/runner/traceStore.ts`).
+- **Accepts per-site test data without persisting secrets:** Form credentials are supplied per normalized target URL (`TestDataEntrySchema`, `backend/src/api/schemas.ts:41`) and replaced with `__AGT_SECRET_n__` placeholders before planning or storage; real values are substituted only at execution time on the ephemeral file. Secrets are never stored in the database and never sent to the model.
 
 ---
 
@@ -54,7 +57,8 @@ sequenceDiagram
   participant API as Express API (:4000)
   participant Queue as Run Queue
   participant Crawler as Page Crawler (Chromium)
-  participant Planner as LLM Planner (120B / Cache)
+  participant Observer as Observer (Chromium)
+  participant Planner as LLM Planner (dual-call: 120B + 20B / Cache)
   participant Compiler as AST Compiler
   participant TSC as tsc Pre-flight Gate
   participant Runner as Test Runner (agtrunner UID 1001)
@@ -70,10 +74,13 @@ sequenceDiagram
 
   Queue->>Crawler: crawlPage(targetUrl)
   Crawler-->>Queue: AppMap (elements, forms, links)
+
+  Queue->>Observer: observeAppMap(appMap)
+  Observer-->>Queue: Observations (navigation / popup / form-submit / count)
   Queue->>SSE: emit phase_change: planning
 
-  Queue->>Planner: planTests(appMap)
-  Planner-->>Queue: TestPlan (scenarios + steps)
+  Queue->>Planner: planTests(appMap, observations)
+  Planner-->>Queue: TestPlan (reasoning core cases + fast negative cases)
   Queue->>Compiler: compileTest(testCase, elements)
   Compiler-->>Queue: Spec file code
 
@@ -94,13 +101,14 @@ sequenceDiagram
 ### Execution Walkthrough
 
 1. **Submission & Admission (`backend/src/api/routes.ts`):** Client submits target URLs with an ALTCHA proof-of-work payload. The API enforces public network policy (`assertPublicTarget`), checks daily quotas, verifies the signed visitor ID sent in the `X-Visitor-Id` header, and pushes the run into the in-process queue.
-2. **DOM Observation (`backend/src/crawler/pageCrawler.ts`):** Headless Chromium navigates to the target, collects interactive elements, computes accessible roles and CSS selectors, and serializes the DOM into an AppMap.
-3. **Plan Synthesis (`backend/src/agent/steps/planner.ts`):** The AppMap is checked against the in-memory plan cache. On a cache miss, an LLM reasoning model synthesizes user journeys matching the observed interactive elements.
-4. **Deterministic Compilation (`backend/src/agent/steps/compiler.ts`):** Scenarios are mapped directly into `@playwright/test` TypeScript files by looking up referenced elements from the AppMap.
-5. **Static Type-Check Gate (`backend/src/runner/validator.ts`):** Emitted test code is written to an ephemeral directory with a scoped `tsconfig.json` and compiled with `tsc --noEmit`.
-6. **Sandboxed Execution (`backend/src/runner/executor.ts`):** Playwright runs the test files in headless Chromium. In production Linux containers, execution runs under an unprivileged user (`agtrunner`, UID 1001) with network access restricted to the internal egress proxy.
-7. **Triage & Correction Loop (`backend/src/agent/rounds.ts`):** Results are parsed. Passing tests are marked `passed`. Real assertion discrepancies become `failed`. Mechanical locator and timeout issues trigger correction attempts (up to 3 rounds) using a fast model.
-8. **Persistence & Streaming (`backend/src/agent/jobEvents.ts`):** State transitions and test outcomes are saved in Supabase and pushed in real time to the browser UI over Server-Sent Events.
+2. **DOM Crawl (`backend/src/crawler/pageCrawler.ts`):** Headless Chromium navigates to the target, collects interactive elements, computes accessible roles and CSS selectors, and serializes the DOM into an AppMap.
+3. **Grounded Observation (`backend/src/crawler/observe.ts`, invoked at `backend/src/agent/pipeline.ts:200`):** Headless Chromium drives the crawled page to record **grounded facts** before planning: `navigation` (where a link leads), `popup` (popups opened by links), `form_empty_submit` (submit with empty fields), `form_filled_submit` (submit with provided test data), and `count` (repeated-item counts). Observation is bounded (`MAX_OBSERVATIONS=25`, 5 s per action, 45 s overall deadline, up to 6 links and 3 forms) and best-effort — it records what it can and **never fails the job**; if the AppMap already carries observations, the step is skipped.
+4. **Plan Synthesis (`backend/src/agent/steps/planner.ts`):** The AppMap and its observations are checked against the in-memory plan cache. On a cache miss, the planner runs in **dual-call** mode: a high-reasoning model plans core cases and a fast model plans negative cases, bounded by `MAX_AI_TEST_CASES` and `MAX_TEST_CASES` (`backend/src/agent/run.config.ts`). When a test-data focus is supplied, the planner runs a single constrained call instead.
+5. **Deterministic Compilation (`backend/src/agent/steps/compiler.ts`):** Scenarios are mapped directly into `@playwright/test` TypeScript files by looking up referenced elements from the AppMap.
+6. **Static Type-Check Gate (`backend/src/runner/validator.ts`):** Emitted test code is written to an ephemeral directory with a scoped `tsconfig.json` and compiled with `tsc --noEmit`.
+7. **Sandboxed Execution (`backend/src/runner/executor.ts`):** Playwright runs the test files in headless Chromium. In production Linux containers, execution runs under an unprivileged user (`agtrunner`, UID 1001) with network access restricted to the internal egress proxy.
+8. **Triage & Correction Loop (`backend/src/agent/rounds.ts`):** Results are parsed. Passing tests are marked `passed`. Real assertion discrepancies become `failed`. Mechanical locator and timeout issues trigger correction attempts (up to 3 rounds) using a fast model.
+9. **Persistence & Streaming (`backend/src/agent/jobEvents.ts`):** State transitions and test outcomes are saved in Supabase and pushed in real time to the browser UI over Server-Sent Events.
 
 ---
 
@@ -141,9 +149,9 @@ stateDiagram-v2
 
 | Decision | Why | Trade-off Accepted |
 |---|---|---|
-| [Observe-first grounding](#decision-1-observe-first-grounding) | Eliminates hallucinated selectors by cataloging DOM elements before planning. | Cannot test paths guarded behind interactions not discovered during initial crawl. |
-| [Two-tier model separation](#decision-2-two-tier-model-separation) | Uses a high-capacity model for scenario planning and a fast model for repairs. | Requires coordinating two distinct model profiles and fallback pathways. |
-| [Plan caching](#decision-3-plan-caching) | Cuts token consumption by over 50% when re-testing stable URLs. | Cache hits reuse prior test structures until cache expiration or target changes. |
+| [Observe-first grounding](#decision-1-observe-first-grounding) | Eliminates hallucinated selectors by cataloging DOM elements before planning, and grounds success assertions in observed page behavior. | Cannot test paths guarded behind interactions not discovered during crawl; success outcomes that were never observed cannot be asserted. |
+| [Two-tier model separation](#decision-2-two-tier-model-separation) | Uses a high-capacity model for core scenario planning, a fast model for negative scenarios and locator repairs. | Requires coordinating two distinct model profiles and fallback pathways; dual-call planning costs more tokens than a single planning call. |
+| [Plan caching](#decision-3-plan-caching) | Cuts median token consumption by ~85% on cache hits when re-testing stable URLs. | Cache hits reuse prior test structures until cache expiration or target changes. |
 | [Static type-check gate](#decision-4-static-type-check-gate) | Blocks syntax and type errors from consuming browser execution time. | Adds 1–2 seconds of `tsc` overhead per validation round. |
 | [Guarded round execution](#decision-5-guarded-round-execution) | Prevents the model from weakening assertions to artificially pass broken tests. | Tests that fail valid assertions cannot be auto-repaired and remain marked as failures. |
 | [Built-in baseline checks](#decision-6-built-in-baseline-checks) | Injects smoke-1 (no uncaught JS errors) and smoke-2 (linked pages respond) without LLM calls. | A failing check classified as a finding stays failed; mechanical failures become gave_up; checks are never sent to corrector. |
@@ -162,24 +170,24 @@ stateDiagram-v2
 ### Decision 1: Observe-First Grounding
 
 - **Context:** LLMs tasked with authoring browser tests from URLs or screenshots routinely hallucinate CSS classes, non-existent button texts, or deprecated IDs.
-- **Decision:** Crawl the real DOM first with headless Chromium before engaging the planner model. Compile locators deterministically using strict preference ordering: `getByTestId` &rarr; `getByRole` &rarr; `getByPlaceholder` &rarr; `getByLabel` &rarr; `getByText` &rarr; CSS selector.
-- **Why:** Deterministic mapping produces Playwright code that adheres to official testing best practices and aligns with actual page elements without model hallucination on the compiled path. When `compileTest` throws `CompileError` (such as unresolvable element references), the pipeline falls back to the LLM generator (`generateTest`, origin `'llm'`) as implemented in [backend/src/agent/pipeline.ts:300-313](backend/src/agent/pipeline.ts#L300-L313).
-- **Trade-off Accepted:** Dynamic elements that appear only after complex multi-step user interactions are not visible during the initial crawl.
-- **Where in Code:** `backend/src/crawler/pageCrawler.ts`, `backend/src/agent/steps/compiler.ts:12`, `backend/src/agent/pipeline.ts:300-313`.
+- **Decision:** Crawl the real DOM first with headless Chromium before engaging the planner model, then **observe** the crawled page to record grounded facts (navigation targets, popups, empty/filled form submits, repeated-item counts) as implemented in [backend/src/crawler/observe.ts](backend/src/crawler/observe.ts) and invoked at [backend/src/agent/pipeline.ts:200](backend/src/agent/pipeline.ts#L200-L201). Compile locators deterministically using strict preference ordering: `getByTestId` &rarr; `getByRole` &rarr; `getByPlaceholder` &rarr; `getByLabel` &rarr; `getByText` &rarr; CSS selector.
+- **Why:** Deterministic mapping produces Playwright code that adheres to official testing best practices and aligns with actual page elements without model hallucination on the compiled path. Grounding rules force **success** assertions to be derived from observed facts, so a test cannot assert a success outcome (a post-submit URL, a hidden element, a reset field) that the observation run never produced. When `compileTest` throws `CompileError` (such as unresolvable element references), the pipeline falls back to the LLM generator (`generateTest`, origin `'llm'`) as implemented in [backend/src/agent/pipeline.ts:299-308](backend/src/agent/pipeline.ts#L299-L308).
+- **Trade-off Accepted:** Dynamic elements that appear only after complex multi-step user interactions are not visible during the initial crawl, and paths the observation run did not exercise cannot be asserted as successes. Observing adds a dedicated browser pass (measured median ~11 s per run).
+- **Where in Code:** `backend/src/crawler/pageCrawler.ts`, `backend/src/crawler/observe.ts`, `backend/src/agent/steps/compiler.ts:12`, `backend/src/agent/pipeline.ts:198-205`.
 
 ### Decision 2: Two-Tier Model Separation
 
-- **Context:** Running a high-parameter reasoning model for small locator syntax adjustments is inefficient and exhausts request limits.
-- **Decision:** Split LLM responsibilities into two tiers: a high-reasoning model (`openai/gpt-oss-120b`) for scenario planning, and a fast low-latency model (`openai/gpt-oss-20b`) for targeted locator fixes. Route calls through an ordered provider list (`groq,gemini,nvidia`) using standard `fetch` without vendor SDKs.
-- **Why:** Maximizes journey creativity during planning while minimizing latency and token consumption during error recovery.
-- **Trade-off Accepted:** Prompts must be maintained and validated across multiple provider implementations.
-- **Where in Code:** `backend/src/config.ts:28-34`, `backend/src/llm/client.ts`, `backend/src/llm/providers/openAiCompatible.ts`.
+- **Context:** Running a high-parameter reasoning model for small locator syntax adjustments is inefficient and exhausts request limits, while a single planning call tends to blur core journeys and negative edge cases.
+- **Decision:** Split LLM responsibilities into two tiers and use both during planning (**dual-call**): the high-reasoning model (`openai/gpt-oss-120b`) plans the **core** cases, and the fast low-latency model (`openai/gpt-oss-20b`) plans the **negative** cases, with the two sides merged and capped at `MAX_AI_TEST_CASES` planned cases inside the `MAX_TEST_CASES` total ([backend/src/agent/run.config.ts](backend/src/agent/run.config.ts)). The fast tier also handles targeted locator repairs during correction. Route all calls through an ordered provider list (`groq,gemini,nvidia`) using standard `fetch` without vendor SDKs. When a test-data focus is supplied, or the dual-call token budget would be exceeded, the planner falls back to a single constrained call.
+- **Why:** Separating core from negative planning raises journey coverage while keeping each prompt narrow; the fast tier minimizes latency and token consumption during error recovery.
+- **Trade-off Accepted:** Prompts must be maintained and validated across multiple provider implementations, and dual-call planning consumes more tokens than a single planning call (measured: median fresh tokens 3,113 → 10,213 after Phase 12).
+- **Where in Code:** `backend/src/agent/steps/planner.ts:279-291`, `backend/src/agent/run.config.ts`, `backend/src/config.ts:28-34`, `backend/src/llm/client.ts`, `backend/src/llm/providers/openAiCompatible.ts`.
 
 ### Decision 3: Plan Caching
 
 - **Context:** Re-testing the same application URL during continuous development generates identical crawl structures and prompts.
-- **Decision:** Hash the normalized AppMap structure and start URL. On match, serve the previously synthesized scenario plan from memory while re-executing fresh compilation and browser runs.
-- **Why:** Measured results demonstrated a 57.6% median token reduction on cache hits (1,321 vs 3,113 tokens) while bypassing planner latency entirely.
+- **Decision:** Hash the plan-relevant inputs — the AppMap view, supplied test data, planning focus, and the observed facts (`buildPlanCacheKey`, [backend/src/agent/planCache.ts:14-28](backend/src/agent/planCache.ts#L14-L28)). On match, serve the previously synthesized scenario plan from memory while re-executing fresh compilation and browser runs. Entries expire after 6 hours (max 100 entries).
+- **Why:** Measured results demonstrated an 85.5% median token reduction on cache hits (1,480 vs 10,213 tokens) while bypassing planner latency entirely.
 - **Trade-off Accepted:** UI changes on the target URL that do not alter the top-level element structure reuse the cached scenario set until cache eviction or force-fresh execution.
 - **Where in Code:** `backend/src/agent/planCache.ts`, `backend/src/agent/pipeline.ts`.
 
@@ -323,13 +331,15 @@ The AST static analysis check (`codeSafety.ts`) inspects the TypeScript syntax t
 | `GENERATE_DAILY_LIMIT` | `40` | Maximum total job generations allowed per day globally | `backend/src/config.ts:39` |
 | `FREE_VISITOR_DAILY_LIMIT` | `8` | Maximum job generations allowed per visitor ID per day | `backend/src/config.ts:40` |
 | `FREE_IP_DAILY_LIMIT` | `20` | Maximum job generations allowed per client IP per day | `backend/src/config.ts:41` |
-| `FREE_MAX_URLS_PER_RUN` | `3` | Maximum URLs in a single run group for free users | `backend/src/config.ts:42` |
-| `BYOK_MAX_URLS_PER_RUN` | `5` | Maximum URLs in a single run group for BYOK or local users | `backend/src/config.ts:43` |
-| `CRAWL_DAILY_LIMIT_PER_IP` | `40` | Maximum crawl previews allowed per IP per day | `backend/src/config.ts:44` |
-| `POW_DAILY_LIMIT_PER_IP` | `200` | Maximum proof-of-work challenges issued per IP per day | `backend/src/config.ts:45` |
-| `BYOK_VALIDATE_DAILY_LIMIT_PER_IP` | `50` | Maximum BYOK key validation requests per IP per day | `backend/src/config.ts:46` |
-| `PIPELINE_CONCURRENCY` | `1` | Simultaneous test generation pipelines executed | `backend/src/config.ts:47` |
-| `QUEUE_MAX_WAITING_GROUPS` | `5` | Maximum queued runs waiting in the in-process queue | `backend/src/config.ts:48` |
+| `FREE_MAX_URLS_PER_RUN` | `3` | Maximum URLs in a single run group for free users | `backend/src/config.ts:43` |
+| `BYOK_MAX_URLS_PER_RUN` | `5` | Maximum URLs in a single run group for BYOK or local users | `backend/src/config.ts:44` |
+| `CRAWL_DAILY_LIMIT_PER_IP` | `40` | Maximum crawl previews allowed per IP per day | `backend/src/config.ts:45` |
+| `POW_DAILY_LIMIT_PER_IP` | `200` | Maximum proof-of-work challenges issued per IP per day | `backend/src/config.ts:46` |
+| `BYOK_VALIDATE_DAILY_LIMIT_PER_IP` | `50` | Maximum BYOK key validation requests per IP per day | `backend/src/config.ts:47` |
+| `PIPELINE_CONCURRENCY` | `1` | Simultaneous test generation pipelines executed | `backend/src/config.ts:48` |
+| `QUEUE_MAX_WAITING_GROUPS` | `5` | Maximum queued runs waiting in the in-process queue | `backend/src/config.ts:49` |
+| `MAX_AI_TEST_CASES` | `8` | Maximum AI-planned cases per run (inside the total cap) | `backend/src/agent/run.config.ts` |
+| `MAX_TEST_CASES` | `12` | Maximum total test cases per run (AI + baseline) | `backend/src/agent/run.config.ts` |
 | `JOB_TOKEN_BUDGET` | `40000` | Total token budget ceiling per test generation job | `backend/src/config.ts:57` |
 | `MAX_ELEMENTS_PER_PAGE` | `200` | Maximum interactive DOM elements indexed per page | `backend/src/config.ts:21` |
 | `NAVIGATION_TIMEOUT_MS` | `30000` | Browser navigation timeout during crawler indexing | `backend/src/config.ts:22` |
@@ -347,31 +357,35 @@ The AST static analysis check (`codeSafety.ts`) inspects the TypeScript syntax t
 
 ## Measured Results
 
-Measurements recorded from a live 12-run verification matrix (`docs/measurements/2026-10-measurement.md`):
+Measurements recorded from a live 12-run verification matrix re-run after Phase 12 (Observe step + dual-call planning + success-only grounding) — full report: [`docs/measurements/2026-10-phase12-measurement.md`](docs/measurements/2026-10-phase12-measurement.md):
 
-- **Commit:** `c89620e`
-- **Date:** October 19, 2026
-- **Configuration:** `LOCAL_AGENT_MODE=false`, `BASELINE_TESTS=true`, `A11Y_SMOKE=true`, `JOB_TOKEN_BUDGET=40000` (`A11Y_SMOKE`/smoke-3 has since been removed; recorded as run at measurement time)
+- **Commit:** `2563338`
+- **Date:** October 21, 2026
+- **Configuration:** `LOCAL_AGENT_MODE=false` (egress proxy enabled), `BASELINE_TESTS=true`, `JOB_TOKEN_BUDGET=40000` (one run capped at `8000`), harness run under `MEASURE=1`. `A11Y_SMOKE`/`smoke-3` no longer exist in the product and were not used.
 
 | Metric | Measured Value | Notes |
 |---|---|---|
-| Total Runs Executed | 12 | Tested across TodoMVC, the-internet, saucedemo, practicetestautomation |
-| AI Scenarios Planned | 56 | Synthesized by planner reasoning model |
-| Baseline Checks Injected | 28 | Built-in smoke tests (smoke-1: no uncaught JavaScript errors on load; smoke-2: linked pages respond) |
-| Total Tests Evaluated | 84 | Combined test suite execution |
-| Tests Passing | 56 (66.7%) | Tests completing without failure |
-| Reported Findings | 20 (23.8%) | Potential defects flagged to user |
-| Tests Gave Up | 8 (9.5%) | Exhausted attempts or token limits |
-| Repaired by Correction Loop | 1 | Locator strict-mode collision resolved |
-| Median Fresh Run Tokens | 3,113 | Median token count without plan cache |
-| Median Cached Run Tokens | 1,321 | 57.6% reduction in token consumption on cache hit |
-| Median Wall Time | 62.8s | Across crawl, plan, compile, execution, and triage |
+| Total Runs Executed | 12 | Same matrix as the baseline (TodoMVC, the-internet, saucedemo, practicetestautomation); 1 run failed at planning with 0 tests |
+| AI Scenarios Planned | 72 | Synthesized by the dual-call planner (reasoning core + fast negative) |
+| Baseline Checks Injected | 15 | Built-in smoke tests (smoke-1: no uncaught JavaScript errors on load; smoke-2: linked pages respond) |
+| Total Tests Evaluated | 87 | Combined test suite execution |
+| Tests Passing | 69 (79.3%) | Tests completing without failure |
+| Reported Findings | 9 (10.3%) | Potential defects flagged to user |
+| Tests Gave Up | 9 (10.3%) | Exhausted attempts, token limits, or unrecoverable locators |
+| Repaired by Correction Loop | 3 | Strict-mode locator disambiguation (all on TodoMVC) |
+| Median Fresh Run Tokens | 10,213 | Median token count without plan cache (n=11) |
+| Median Cached Run Tokens | 1,480 | 85.5% reduction in token consumption on cache hit |
+| Median Wall Time | 70.1s | Across crawl, observe, plan, compile, execution, and triage |
+| Median Observe Step Latency | 11.2s | New Phase 12 phase (per-run range 5.7–22.7s) |
+
+**Previous measurement (`c89620e`, pre-Phase-12):** pass rate 66.7% (56/84), false-finding rate 100% (20/20), median fresh tokens 3,113, median wall time 62.8s — full detail in [`docs/measurements/2026-10-measurement.md`](docs/measurements/2026-10-measurement.md).
 
 > [!WARNING]
 > **Known Pipeline Limitations Identified During Measurement**
-> 1. **High False Finding Rate (100% of reported findings):** In the 12-run measurement, all 20 reported findings were test bugs rather than genuine target application regressions. The primary driver (65% of test bugs) was test data collisions where valid credentials were automatically bound into negative test cases (e.g., verifying empty passwords), causing unexpected successful logins.
-> 2. **Low Correction Success Rate (11.1% attempt success):** The correction loop succeeded in 1 of 9 correction attempts (1 of 6 multi-attempt tests). While the model successfully resolved locator strict-mode ambiguities, it struggled when tests navigated away to authenticated screens, repeatedly waiting for elements from the previous page.
-> 3. Resolving these behaviors through enhanced observe-first state tracking and negative scenario template segregation is the central objective of the subsequent roadmap phase.
+> 1. **False-finding rate unchanged at 100% of reported findings:** In the 12-run measurement, all 9 reported findings (plus 1 `gave_up`) were test bugs rather than genuine target defects — no genuine defect was detected in any run. The *volume* of findings more than halved (20 → 9) and pass rate rose (66.7% → 79.3%), but the *rate* did not move. Observe-first grounding only guards **success** assertions; the remaining false findings come from the fast/negative tier — 5 negatives inject valid test-data credentials and then assert the login must fail, and 4 assert unobserved post-submit state changes (a field resets, an element becomes hidden).
+> 2. **Low Correction Success Rate (30.0% attempt success):** The correction loop succeeded in 3 of 10 attempts (3 of 8 multi-attempt tests), all strict-mode locator disambiguation on TodoMVC. Every attempt on role-based login locators (the-internet/saucedemo/practicetestautomation) exhausted its retries.
+> 3. **Planning cost and reliability:** Dual-call planning roughly tripled median fresh tokens (3,113 → 10,213) and nearly doubled LLM calls per run (1.8 → 3.4), and added a dedicated ~11 s observe phase. One run (Run 4) produced zero tests because both dual-call sides and the self-repair call failed output-schema validation.
+> 4. Negating the fast/negative tier (never inject valid credentials into a "must fail" case; never assert an unobserved state change) and supplying navigation-aware correction guidance are the central objectives of the next tuning phase.
 
 ---
 
@@ -380,7 +394,7 @@ Measurements recorded from a live 12-run verification matrix (`docs/measurements
 ### Prerequisites
 
 - **Node.js:** Node 22 (Docker image `node:22-bookworm-slim`); tested on `v24.14.1`
-- **Package Manager:** `pnpm` (version 10)
+- **Package Manager:** `pnpm` (version 12.8.1)
 - **Database:** PostgreSQL database instance (local PostgreSQL or Supabase project)
 - **LLM API Key:** At least one API key from Groq, Google Gemini, or NVIDIA
 
@@ -488,6 +502,7 @@ cd frontend && pnpm dev
 | `GENERATE_DAILY_LIMIT` | `40` | No | Global daily ceiling for test generation jobs |
 | `FREE_VISITOR_DAILY_LIMIT` | `8` | No | Daily generation limit per anonymous visitor |
 | `FREE_IP_DAILY_LIMIT` | `20` | No | Daily generation limit per client IP |
+| `RERUN_DAILY_LIMIT` | `20` | No | Daily limit for single-test rerun requests |
 | `FREE_MAX_URLS_PER_RUN` | `3` | No | Maximum URLs per run group for free anonymous users |
 | `BYOK_MAX_URLS_PER_RUN` | `5` | No | Maximum URLs per run group for BYOK or local agent runs |
 | `CRAWL_DAILY_LIMIT_PER_IP` | `40` | No | Daily limit for `/api/crawl` requests per IP |
@@ -555,6 +570,9 @@ cd frontend && pnpm dev
 | `GET` | `/api/jobs/:id/stream` | Server-Sent Events live execution stream | Param: `id`, Header: `Last-Event-ID` | `JOB_NOT_FOUND` |
 | `GET` | `/api/jobs/:id/report.html` | Generates standalone HTML run report | Param: `id` (UUID) | `REPORT_NOT_READY`, `JOB_NOT_FOUND` |
 | `GET` | `/api/jobs/:id/export.zip` | Downloads runnable Playwright project zip | Param: `id` (UUID) | `NO_EXPORTABLE_TESTS`, `JOB_NOT_FOUND` |
+| `POST` | `/api/jobs/:id/tests/:testCaseId/rerun` | Re-executes a single test without an LLM call (same safety gates) | Body: `{ code?, headed?, secrets? }` | `TEST_DATA_REQUIRED`, `RATE_LIMITED` (429), `JOB_NOT_FOUND` |
+| `GET` | `/api/jobs/:id/tests/:testCaseId/trace` | Returns a signed, short-lived trace link for a rerun | Param: `id`, `testCaseId` | `JOB_NOT_FOUND` |
+| `GET` | `/api/traces/:traceId` | Serves an owner-only Playwright trace zip given its signed token | Param: `traceId`, Query: `t` | `TRACE_NOT_FOUND` |
 
 ### Administrative Endpoints (Requires `X-Admin-Secret`)
 
@@ -614,7 +632,7 @@ erDiagram
   AgentStep {
     uuid id PK
     uuid jobId FK
-    enum stepType "crawl|plan|generate|validate|execute|correct"
+    enum stepType "crawl|observe|plan|generate|validate|execute|correct"
     string testCaseId
     int attemptNumber
     enum status "success|failure"
@@ -705,6 +723,7 @@ erDiagram
 │       ├── config.ts               # Centralized Zod-validated environment configuration
 │       ├── crawler/                # Playwright DOM scraping and element cataloging
 │       │   ├── gotoErrors.ts       # Navigation error taxonomy mapping
+│       │   ├── observe.ts          # Grounded-fact observation (nav/popup/form/count)
 │       │   ├── pageCrawler.ts      # Headless DOM extraction and semantic role builder
 │       │   └── wakeDetect.ts       # Sleeping target host detection heuristics
 │       ├── db/                     # Prisma database client and query helpers
@@ -772,10 +791,9 @@ npx tsx scratch/testQuickFixes.ts       # Validates error mapping and URL transf
 
 ## Roadmap
 
-- **Scenario Accuracy & Negative Template Separation:** Segregate negative test cases (empty or invalid inputs) from valid credentials in `backend/src/agent/steps/planner.ts:213-239` (`enforceTestData`) to eliminate false finding reports caused by test data collisions.
-- **Navigation-Aware Correction Guidance:** Supply post-navigation page URLs and visible interactive element snapshots directly to the correction prompt, preventing locator spin on vanished selectors.
-- **In-Browser Scenario Editing & Re-Execution:** Allow users to adjust generated Playwright code in the Monaco editor and trigger immediate re-execution without incurring an LLM call.
-- **Trace Viewer & Screenshot Artifacts:** Attach Playwright execution traces and screenshot artifacts directly to test result cards for rapid debugging.
+- **Scenario Accuracy & Negative Template Separation:** The dual-call planner split (Phase 12) separates core from negative planning, but the **fast/negative tier is still the driver of false findings** (5 of 10 false expectations in the latest 12-run measurement inject valid test data into a case titled "must fail"). Segregate negative cases from valid credentials in `backend/src/agent/steps/planner.ts` (`enforceTestData`) so a "must fail" case never binds the valid test-data values.
+- **Navigation-Aware Correction Guidance:** Supply post-navigation page URLs and visible interactive element snapshots directly to the correction prompt, preventing locator spin on vanished selectors (measured: correction success 30.0%, all heals on strict-mode locator collisions).
+- **Screenshot Artifacts:** Attach screenshot artifacts directly to test result cards for rapid debugging (owner-only Playwright trace links already ship on reruns; screenshots do not yet).
 - **Production Infrastructure Rollout:** Execute production deployment to Render and Vercel following the steps outlined in `docs/DEPLOY.md`.
 
 ---
