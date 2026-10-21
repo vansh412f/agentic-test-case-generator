@@ -66,7 +66,7 @@ export function withLlmStep<T>(
 
 export async function withMeasuredStep<T>(
   context: StepContext,
-  stepType: 'crawl' | 'validate' | 'execute' | 'generate',
+  stepType: 'crawl' | 'observe' | 'validate' | 'execute' | 'generate',
   operation: () => Promise<T>,
   outcome: (result: T) => { success: boolean; error?: string },
 ): Promise<T> {

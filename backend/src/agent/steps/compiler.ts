@@ -246,7 +246,7 @@ export function compileTest(
             (o) => o.kind === 'count' && o.elementId === step.elementId && o.containerCss && o.role,
           );
           if (!countObs) {
-            const stepEl = elementsMap.get(step.elementId) as { ariaRole?: string | null } | undefined;
+            const stepEl = elementsMap.get(step.elementId);
             if (stepEl?.ariaRole) {
               countObs = observations.find(
                 (o) => o.kind === 'count' && o.role === stepEl.ariaRole && o.containerCss && o.role,

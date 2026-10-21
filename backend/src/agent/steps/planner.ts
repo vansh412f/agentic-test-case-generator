@@ -276,7 +276,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   const sysChars = PLANNER_SYSTEM_PROMPT.length;
   const totalChars = userChars + sysChars;
 
-  const isDual = resolvedFocus.length === 0 && appMap.observations !== undefined;
+  const isDual = resolvedFocus.length === 0;
   const dualEst = Math.ceil((totalChars * 2) / 3.5 + 5500);
   const singleEst = Math.ceil(totalChars / 3.5 + 3500);
 
@@ -329,14 +329,14 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     plan.testCases = filterNavigationOnlyTests(plan.testCases, appMap);
     capAndRenumberTestPlan(plan);
 
-    // 2. Expansion call if allowExpansion && < 5 cases AND >= 6 visible interactive elements AND meter <= 50%
+    // 2. Expansion call if allowExpansion && < 5 cases AND >= 4 visible interactive elements AND meter <= 50%
     const budgetExceeded = Boolean(
       options?.tokenBudget &&
         options.tokenBudget > 0 &&
         options?.consumedTokens &&
         options.consumedTokens() > options.tokenBudget * 0.5,
     );
-    if (allowExpansion && !isSalvaged && plan.testCases.length < 5 && visibleCount >= 6 && assistantResponseContent && !budgetExceeded) {
+    if (allowExpansion && !isSalvaged && plan.testCases.length < 5 && visibleCount >= 4 && assistantResponseContent && !budgetExceeded) {
       try {
         const expansionMessages: LlmMessage[] = [
           ...messages,
@@ -383,8 +383,8 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   };
 
   if (useDualCall) {
-    const promptA = `${userPrompt}\n\nASSIGNMENT: plan up to 5 core cases — primary happy paths end-to-end, key navigation, main content visibility. Prefer cases grounded in OBSERVED FACTS.`;
-    const promptB = `${userPrompt}\n\nASSIGNMENT: plan up to 4 negative / validation / edge cases — empty submits, invalid input, counts, visibility of secondary elements. Prefer cases grounded in OBSERVED FACTS.`;
+    const promptA = `${userPrompt}\n\nASSIGNMENT: plan up to 6 core cases — primary happy paths end-to-end, key navigation, main content visibility. Prefer cases grounded in OBSERVED FACTS.`;
+    const promptB = `${userPrompt}\n\nASSIGNMENT: plan up to 5 negative / validation / edge cases — empty submits, invalid input, counts, visibility of secondary elements. Prefer cases grounded in OBSERVED FACTS.`;
 
     const [settledA, settledB] = await Promise.allSettled([
       doCallLlm({

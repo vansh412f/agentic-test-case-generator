@@ -6,4 +6,6 @@ export interface ScopedElement {
   type: InteractiveElement['type'];
   text: string | null;
   selectors: InteractiveElement['selectors'];
+  ariaRole?: string | null;
+  href?: string | null;
 }

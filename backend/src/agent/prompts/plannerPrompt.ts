@@ -324,6 +324,7 @@ GROUNDING IN OBSERVED FACTS: When OBSERVED FACTS are provided:
 - assert_count may only use counts from kind:'count' observations.
 - A test may assert a form's SUCCESS outcome (URL navigates away from the form page, or a success message) ONLY if a kind:'form_filled_submit' observation exists for that form, and the asserted URL/text must match that observation. Otherwise form tests must be negative/validation (empty or invalid submit) and should match kind:'form_empty_submit' observations when present.
 - For kind:'popup' elements, assert the popup's observed finalUrl after clicking.
+- For links whose href points to a different origin than the App Map URL: only assert the destination (URL/text after clicking) when a kind:'popup' or kind:'navigation' observation exists for that element; otherwise limit the case to asserting the link itself is visible/enabled — do not click it and assert where it leads.
 When OBSERVED FACTS are absent, be conservative: prefer visibility and navigation assertions over specific text/count claims.`;
 
 export function buildPlannerUserPrompt(appMapJson: string): string {

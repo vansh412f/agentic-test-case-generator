@@ -5,6 +5,7 @@ import { launchBrowser } from './pageCrawler.ts';
 import { isSkipLink } from './appMapBuilder.ts';
 import { resolveTestData } from '../agent/testData.ts';
 import type { TestDataEntry } from '../api/schemas.ts';
+import { isPrivateOrLoopbackHost } from '../security/targetUrl.ts';
 
 export interface ObserveOptions {
   testData?: TestDataEntry[];
@@ -24,6 +25,27 @@ function scrubSecrets(text: string, secrets?: Map<string, string>): string {
     }
   }
   return result;
+}
+
+export function normalizeObservedText(text: string): string {
+  return text
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[\s×✕✖]+$/u, '')
+    .trim()
+    .slice(0, 120);
+}
+
+export function isObservableHref(href: string, baseUrl: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(href, baseUrl);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (isPrivateOrLoopbackHost(u.hostname)) return false;
+  return true;
 }
 
 export async function observeAppMap(
@@ -166,13 +188,7 @@ export async function observeAppMap(
       const href = el.href.trim();
       if (href.startsWith('#') || href.startsWith('javascript:')) return false;
       if (isSkipLink(el)) return false;
-      try {
-        const u = new URL(href, appMap.url);
-        const b = new URL(appMap.url);
-        return u.origin === b.origin;
-      } catch {
-        return false;
-      }
+      return isObservableHref(href, appMap.url);
     });
 
     let linksProcessed = 0;
@@ -207,6 +223,8 @@ export async function observeAppMap(
             });
             await popup.close().catch(() => {});
             linksProcessed++;
+          } else {
+            await resetPage().catch(() => {});
           }
         } else {
           await loc.click({ timeout: ACTION_TIMEOUT_MS });
@@ -426,6 +444,20 @@ export async function observeAppMap(
     if (browser) {
       await browser.close().catch(() => {});
     }
+  }
+
+  // Normalize observed texts uniformly (no newlines, no trailing close glyphs, no dupes).
+  for (const obs of observations) {
+    if (!obs.visibleTexts || obs.visibleTexts.length === 0) continue;
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const t of obs.visibleTexts) {
+      const n = normalizeObservedText(t);
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      normalized.push(n);
+    }
+    obs.visibleTexts = normalized;
   }
 
   return observations;

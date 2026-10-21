@@ -5,7 +5,7 @@ import { isSkipLink } from '../src/crawler/appMapBuilder.ts';
 import { planTests } from '../src/agent/steps/planner.ts';
 import { buildBaselineTests } from '../src/agent/baseline.ts';
 import { crawlPage } from '../src/crawler/pageCrawler.ts';
-import { observeAppMap } from '../src/crawler/observe.ts';
+import { observeAppMap, normalizeObservedText, isObservableHref } from '../src/crawler/observe.ts';
 import type { AppMap, InteractiveElement, Observation } from '../src/crawler/types.ts';
 import type { TestDataEntry } from '../src/api/schemas.ts';
 import type { LlmRequest } from '../src/llm/client.ts';
@@ -233,11 +233,11 @@ async function main() {
 
     assert.ok(reasoningUserMsg.includes('OBSERVED FACTS'), 'Reasoning prompt must include OBSERVED FACTS');
     assert.ok(reasoningUserMsg.includes('https://example.com/observed-final'), 'Reasoning prompt must include observed URL');
-    assert.ok(reasoningUserMsg.includes('ASSIGNMENT: plan up to 5 core cases'), 'Reasoning prompt has A assignment');
+    assert.ok(reasoningUserMsg.includes('ASSIGNMENT: plan up to 6 core cases'), 'Reasoning prompt has A assignment');
 
     assert.ok(fastUserMsg.includes('OBSERVED FACTS'), 'Fast prompt must include OBSERVED FACTS');
     assert.ok(fastUserMsg.includes('https://example.com/observed-final'), 'Fast prompt must include observed URL');
-    assert.ok(fastUserMsg.includes('ASSIGNMENT: plan up to 4 negative / validation / edge cases'), 'Fast prompt has B assignment');
+    assert.ok(fastUserMsg.includes('ASSIGNMENT: plan up to 5 negative / validation / edge cases'), 'Fast prompt has B assignment');
 
     // Test fallback when fast tier throws
     const fallbackFake = async (req: LlmRequest) => {
@@ -346,6 +346,113 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
+  // P8: normalizeObservedText
+  // ---------------------------------------------------------------------------
+  await run('P8: normalizeObservedText collapses whitespace and strips close glyphs', () => {
+    assert.equal(
+      normalizeObservedText('Your username is invalid!\n×'),
+      'Your username is invalid!',
+      'newline + trailing × must be stripped',
+    );
+    assert.equal(
+      normalizeObservedText('  You logged into a secure area!\n×  '),
+      'You logged into a secure area!',
+      'surrounding whitespace and trailing glyph must be stripped',
+    );
+    assert.equal(normalizeObservedText('a\n\nb  c'), 'a b c', 'internal whitespace runs collapse to one space');
+    assert.equal(normalizeObservedText('×'), '', 'a pure close-glyph becomes empty');
+    assert.ok(normalizeObservedText('x'.repeat(200)).length <= 120, 'output must be capped at 120 chars');
+  });
+
+  // ---------------------------------------------------------------------------
+  // P9: dual planning without observations
+  // ---------------------------------------------------------------------------
+  await run('P9: dual planning runs two calls even without observations', async () => {
+    const el1 = makeElement('elem-1', { text: 'Elem 1', selectors: { css: '#elem-1' } });
+    // Deliberately NO observations field on this App Map.
+    const appMap = makeAppMap({
+      elements: [el1],
+      totalElementsFound: 1,
+    });
+
+    function makePlanPayload(cases: Array<{ id: string; title: string }>) {
+      return JSON.stringify({
+        testCases: cases.map((c) => ({
+          id: c.id,
+          title: c.title,
+          description: 'fixture desc',
+          steps: [
+            { action: 'click', elementId: 'elem-1', target: null, value: null, description: 'click elem-1' },
+            { action: 'assert_visible', elementId: 'elem-1', target: null, value: null, description: 'visible elem-1' },
+          ],
+        })),
+      });
+    }
+
+    const capturedRequests: LlmRequest[] = [];
+    const dualCallFake = async (req: LlmRequest) => {
+      capturedRequests.push(req);
+      if (req.tier === 'reasoning') {
+        return {
+          content: makePlanPayload([{ id: 'tc-a1', title: 'Core A' }]),
+          model: 'mock-reasoning',
+          provider: 'mock',
+          latencyMs: 10,
+          usage: { promptTokens: 10, completionTokens: 10 },
+        };
+      }
+      return {
+        content: makePlanPayload([{ id: 'tc-b1', title: 'Negative A' }]),
+        model: 'mock-fast',
+        provider: 'mock',
+        latencyMs: 5,
+        usage: { promptTokens: 5, completionTokens: 5 },
+      };
+    };
+
+    const plan = await planTests(appMap, {
+      fresh: true,
+      callLlmImpl: dualCallFake as never,
+    });
+
+    assert.equal(capturedRequests.length, 2, 'Must make exactly 2 planner calls without observations');
+    assert.equal(
+      capturedRequests.filter((r) => r.tier === 'reasoning').length,
+      1,
+      'Exactly one reasoning-tier call',
+    );
+    assert.equal(capturedRequests.filter((r) => r.tier === 'fast').length, 1, 'Exactly one fast-tier call');
+
+    for (const r of capturedRequests) {
+      const userMsg = String(r.messages.find((m) => m.role === 'user')?.content ?? '');
+      assert.ok(
+        !userMsg.includes('OBSERVED FACTS (recorded by actually driving this page'),
+        'Prompt must NOT contain the OBSERVED FACTS block when the App Map has no observations',
+      );
+    }
+
+    assert.deepEqual(
+      plan.testCases.map((c) => c.title),
+      ['Core A', 'Negative A'],
+      'Merged cases from both tiers must be returned',
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // P10: isObservableHref
+  // ---------------------------------------------------------------------------
+  await run('P10: isObservableHref predicate', () => {
+    const base = 'https://example.com/page';
+    assert.equal(isObservableHref('https://example.com/other', base), true, 'same-origin https → true');
+    assert.equal(isObservableHref('https://other-site.com/x', base), true, 'cross-origin https → true');
+    assert.equal(isObservableHref('http://127.0.0.1/admin', base), false, 'loopback → false');
+    assert.equal(isObservableHref('http://192.168.1.1/x', base), false, 'private range → false');
+    assert.equal(isObservableHref('javascript:void(0)', base), false, 'javascript: → false');
+    assert.equal(isObservableHref('mailto:a@b.c', base), false, 'mailto: → false');
+    assert.equal(isObservableHref('http://', base), false, 'unparseable garbage → false');
+  });
+
+  // ---------------------------------------------------------------------------
   // P7: LIVE (gated on PHASE12_LIVE=1)
   // ---------------------------------------------------------------------------
   if (process.env.PHASE12_LIVE === '1') {
@@ -400,6 +507,28 @@ async function main() {
         !obsJson.includes('SuperSecretPassword!'),
         'Scrubbing guard: real secret must NEVER appear in observations JSON',
       );
+
+      // (i) External target="_blank" link → a popup observation with the real destination.
+      const popupObs = filledObs.find((o) => o.kind === 'popup');
+      if (popupObs?.finalUrl?.includes('elementalselenium')) {
+        console.log(`   popup observation finalUrl: ${popupObs.finalUrl}`);
+      } else {
+        const linkHrefs = appMap.elements
+          .filter((e) => e.type === 'link' && e.href)
+          .map((e) => e.href);
+        console.log(
+          '   [SKIP] no elementalselenium popup observation found. Link hrefs:',
+          JSON.stringify(linkHrefs),
+        );
+      }
+
+      // (ii) Normalization: no visibleTexts entry contains a newline or ends with the × close glyph.
+      for (const o of filledObs) {
+        for (const t of o.visibleTexts ?? []) {
+          assert.ok(!t.includes('\n'), `visibleText must not contain a newline: ${JSON.stringify(t)}`);
+          assert.ok(!t.endsWith('×'), `visibleText must not end with ×: ${JSON.stringify(t)}`);
+        }
+      }
     });
   } else {
     console.log('[SKIP] P7 live test skipped (set PHASE12_LIVE=1)');

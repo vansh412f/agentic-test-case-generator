@@ -56,13 +56,14 @@ export interface PipelineResult {
 }
 
 function projectElementScope(elements: InteractiveElement[]): ScopedElement[] {
-  return elements.map(({ id, type, text, selectors, ariaRole }) => ({
+  return elements.map(({ id, type, text, selectors, ariaRole, href }) => ({
     id,
     type,
     text: text ?? null,
     selectors,
     ariaRole: ariaRole ?? null,
-  })) as ScopedElement[];
+    href: href ?? null,
+  }));
 }
 
 function announcePhase(jobId: string, status: JobStatus): void {
@@ -196,7 +197,7 @@ async function runPersistedPipeline(
 
     const observations = appMap.observations?.length
       ? appMap.observations
-      : await withMeasuredStep({ jobId }, 'observe' as never,
+      : await withMeasuredStep({ jobId }, 'observe',
           () => observeAppMap(appMap, { testData, signal }), () => ({ success: true }));
     if (observations.length > 0 && observations !== appMap.observations) {
       appMap = { ...appMap, observations };
