@@ -56,3 +56,5 @@ powershell.cmd
 
 # Ephemeral rerun traces (1h TTL, may contain typed values)
 **/playwright-runner/.traces/
+
+backend/scratch/measure_results.json
