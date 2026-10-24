@@ -232,7 +232,11 @@ export default function HomePage() {
       }
       dispatch({ type: 'CRAWL_SUCCEEDED', appMap, prefillTestData });
     } catch (err) {
-      if (err instanceof ApiError && (err.code === 'TARGET_WAKING' || err.status === 503)) {
+      if (err instanceof ApiError && (err.code === 'UPSTREAM_UNAVAILABLE' || err.code === 'BROWSER_LAUNCH_FAILED')) {
+        setWakingCrawl(null);
+        toast.error(err.message);
+        dispatch({ type: 'FAILED', message: err.message });
+      } else if (err instanceof ApiError && (err.code === 'TARGET_WAKING' || err.status === 503)) {
         if (attempt >= 4) {
           setWakingCrawl((prev) => (prev ? { ...prev, stillAsleep: true } : null));
         }
@@ -371,6 +375,14 @@ export default function HomePage() {
           dispatch({ type: 'FAILED', message: 'Tunnel host header rejected by dev server.' });
           return;
         }
+        if (
+          error.code === 'UPSTREAM_UNAVAILABLE' ||
+          error.code === 'BROWSER_LAUNCH_FAILED'
+        ) {
+          toast.error(error.message);
+          dispatch({ type: 'FAILED', message: error.message });
+          return;
+        }
         if (error.code === 'TARGET_WAKING' || error.status === 503) {
           let host = url;
           try {
@@ -387,15 +399,8 @@ export default function HomePage() {
           });
           return;
         }
-        if (
-          error.code === 'UPSTREAM_UNAVAILABLE' ||
-          error.code === 'BROWSER_LAUNCH_FAILED'
-        ) {
-          toast.error(error.message);
-          dispatch({ type: 'FAILED', message: error.message });
-          return;
-        }
       }
+
       let msg = errorMessage(error);
       if (error instanceof ApiError) {
         msg = presentError(error.code, error.details, error.message).body;

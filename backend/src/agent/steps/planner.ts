@@ -22,7 +22,7 @@ export type ValidationResult =
   | { ok: false; kind: 'syntax' | 'schema'; detail: string }
   | { ok: false; kind: 'references'; detail: string; plan: TestPlan; badCaseIndexes: Set<number> };
 
-function serializeObservations(observations?: Observation[]): string | undefined {
+export function serializeObservations(observations?: Observation[], maxChars = 6000): string | undefined {
   if (!observations || observations.length === 0) return undefined;
   const obsList = observations.map((o) => ({
     ...o,
@@ -30,12 +30,18 @@ function serializeObservations(observations?: Observation[]): string | undefined
   }));
 
   let json = JSON.stringify(obsList);
-  while (json.length > 6000 && obsList.length > 1) {
+  // Whole-item thinning: drop observations from the end until under budget
+  while (json.length > maxChars && obsList.length > 1) {
     obsList.pop();
     json = JSON.stringify(obsList);
   }
-  if (json.length > 6000) {
-    return json.slice(0, 6000);
+  // If single remaining item still exceeds budget, aggressively trim its visibleTexts
+  if (json.length > maxChars && obsList.length === 1) {
+    const item = obsList[0];
+    while (item.visibleTexts.length > 0 && JSON.stringify(obsList).length > maxChars) {
+      item.visibleTexts.pop();
+    }
+    json = JSON.stringify(obsList);
   }
   return json;
 }
@@ -79,15 +85,17 @@ export function validateAndNormalizePlan(
     tc.id = `tc-${idx + 1}`;
 
     // Strip redundant leading navigate to crawled page if emitted
-    if (
-      tc.steps.length > 1 &&
-      tc.steps[0].action === 'navigate' &&
-      tc.steps[0].value &&
-      (tc.steps[0].value === '/' ||
-        tc.steps[0].value === appMapUrl ||
-        tc.steps[0].value.replace(/\/$/, '') === appMapUrl.replace(/\/$/, '') ||
-        new URL(tc.steps[0].value, appMapUrl).href.replace(/\/$/, '') === appMapUrl.replace(/\/$/, ''))
-    ) {
+    const isLeadingNavRedundant = (() => {
+      if (tc.steps.length <= 1 || tc.steps[0].action !== 'navigate' || !tc.steps[0].value) return false;
+      const v = tc.steps[0].value;
+      if (v === '/' || v === appMapUrl || v.replace(/\/$/, '') === appMapUrl.replace(/\/$/, '')) return true;
+      try {
+        return new URL(v, appMapUrl).href.replace(/\/$/, '') === appMapUrl.replace(/\/$/, '');
+      } catch {
+        return false;
+      }
+    })();
+    if (isLeadingNavRedundant) {
       tc.steps.shift();
     }
 
@@ -182,7 +190,17 @@ export function enforceTestData(plan: TestPlan, fills: Map<string, string>): Tes
     const keptSteps: PlanStep[] = [];
     for (const step of tc.steps) {
       if ((step.action === 'fill' || step.action === 'select') && step.elementId && fills.has(step.elementId)) {
-        step.value = fills.get(step.elementId)!;
+        if (tc.intent === 'negative') {
+          const fillValue = fills.get(step.elementId)!;
+          const isExplicitEmpty = step.value === '';
+          const isDifferentLiteral =
+            step.value !== null && step.value !== undefined && step.value !== fillValue;
+          if (!isExplicitEmpty && !isDifferentLiteral) {
+            step.value = fillValue;
+          }
+        } else {
+          step.value = fills.get(step.elementId)!;
+        }
       }
       if (
         (step.action === 'assert_visible' || step.action === 'assert_text' || step.action === 'assert_url') &&
@@ -329,6 +347,23 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     plan.testCases = filterNavigationOnlyTests(plan.testCases, appMap);
     capAndRenumberTestPlan(plan);
 
+    // S5.1: For single-call or unassigned plans, infer intent from title+description regex
+    for (const tc of plan.testCases) {
+      if (!tc.intent) {
+        tc.intent = /(empty|missing|blank|invalid|wrong|incorrect|malformed|without)/i.test(
+          `${tc.title} ${tc.description}`,
+        )
+          ? 'negative'
+          : 'positive';
+      }
+    }
+
+    const negativeTitles = new Set<string>(
+      plan.testCases
+        .filter((tc) => tc.intent === 'negative')
+        .map((tc) => tc.title.trim().toLowerCase()),
+    );
+
     // 2. Expansion call if allowExpansion && < 5 cases AND >= 4 visible interactive elements AND meter <= 50%
     const budgetExceeded = Boolean(
       options?.tokenBudget &&
@@ -361,6 +396,17 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
         );
         if (expansionResult.ok && expansionResult.plan.testCases.length > plan.testCases.length) {
           plan = expansionResult.plan;
+          for (const tc of plan.testCases) {
+            if (negativeTitles.has(tc.title.trim().toLowerCase())) {
+              tc.intent = 'negative';
+            } else {
+              tc.intent = /(empty|missing|blank|invalid|wrong|incorrect|malformed|without)/i.test(
+                `${tc.title} ${tc.description}`,
+              )
+                ? 'negative'
+                : 'positive';
+            }
+          }
           plan.testCases = filterNavigationOnlyTests(plan.testCases, appMap);
           capAndRenumberTestPlan(plan);
         }
@@ -371,6 +417,18 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
 
     if (resolvedData && resolvedData.fills.size > 0) {
       enforceTestData(plan, resolvedData.fills);
+    }
+
+    // S5.1: Strip intent from all cases after enforceTestData and before cache/return
+    for (const tc of plan.testCases) {
+      delete tc.intent;
+    }
+
+    // S1.3: Zero-plan guard after enforceTestData — if all cases were filtered out, fail early
+    if (plan.testCases.length === 0) {
+      throw new LlmError('BAD_RESPONSE', 'Planner produced no valid test cases after test-data enforcement', {
+        detail: 'All planned test cases were removed during enforceTestData filtering',
+      });
     }
 
     // Cache rules: never cache salvaged plans; never cache plans with < 3 cases unless page has <= 3 visible elements
@@ -384,7 +442,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
 
   if (useDualCall) {
     const promptA = `${userPrompt}\n\nASSIGNMENT: plan up to 6 core cases — primary happy paths end-to-end, key navigation, main content visibility. Prefer cases grounded in OBSERVED FACTS.`;
-    const promptB = `${userPrompt}\n\nASSIGNMENT: plan up to 5 negative / validation / edge cases — empty submits, invalid input, counts, visibility of secondary elements. Prefer cases grounded in OBSERVED FACTS.`;
+    const promptB = `${userPrompt}\n\nASSIGNMENT: plan up to 5 negative / validation / edge cases — empty submits, invalid input, counts, visibility of secondary elements. Prefer cases grounded in OBSERVED FACTS.\nTEST DATA values are valid success values. Never use a secret placeholder as the invalid/missing value under test: empty field = fill '' or omit the fill; wrong credential = a non-secret literal such as wrong-password. Use exact test-data only for fields meant to stay valid in that case.`;
 
     const [settledA, settledB] = await Promise.allSettled([
       doCallLlm({
@@ -425,9 +483,17 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
         return { cases: [], salvaged: false };
       }
       const res = validateAndNormalizePlan(settled.value.content, knownIds, appMap.url, { cap: false });
-      if (res.ok) return { cases: res.plan.testCases, salvaged: false, content: settled.value.content, res };
+      if (res.ok) {
+        for (const tc of res.plan.testCases) {
+          tc.intent = side === 'B' ? 'negative' : 'positive';
+        }
+        return { cases: res.plan.testCases, salvaged: false, content: settled.value.content, res };
+      }
       if (res.kind === 'references') {
         const validCases = res.plan.testCases.filter((_, idx) => !res.badCaseIndexes.has(idx));
+        for (const tc of validCases) {
+          tc.intent = side === 'B' ? 'negative' : 'positive';
+        }
         console.warn(`[Planner] Dual-call ${side} references error; salvaged ${validCases.length} cases`);
         return { cases: validCases, salvaged: true, content: settled.value.content, res };
       }
@@ -462,8 +528,10 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
           const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, { cap: false });
           if (repairResult.ok) {
             casesA = repairResult.plan.testCases;
+            for (const tc of casesA) tc.intent = 'positive';
           } else if (repairResult.kind === 'references') {
             casesA = repairResult.plan.testCases.filter((_, idx) => !repairResult.badCaseIndexes.has(idx));
+            for (const tc of casesA) tc.intent = 'positive';
             salvagedA = true;
           }
         } catch (repairErr) {

@@ -4,7 +4,7 @@ import { crawlPage } from '../crawler/pageCrawler.ts';
 import { assertPublicTarget } from '../security/netPolicy.ts';
 import { config } from '../config.ts';
 import { takeFreshCrawl } from '../crawler/crawlCache.ts';
-import { planTests } from './steps/planner.ts';
+import { planTests, serializeObservations } from './steps/planner.ts';
 import { generateTest } from './steps/generator.ts';
 import type { GeneratedTest } from './steps/generator.ts';
 import { compileTest, CompileError } from './steps/compiler.ts';
@@ -16,6 +16,7 @@ import { MAX_TEST_CASES } from './run.config.ts';
 import type { ElementRef, TestDataEntry } from '../api/schemas.ts';
 import { validateTestCode } from '../runner/validator.ts';
 import { executeTests, type TestCaseResult } from '../runner/executor.ts';
+import { registerTrace } from '../runner/traceStore.ts';
 import { findUnsafeConstructs } from '../runner/codeSafety.ts';
 import { RUNNER_TESTS_DIR } from '../runner/config.ts';
 import type { AppMap, InteractiveElement } from '../crawler/types.ts';
@@ -192,6 +193,13 @@ async function runPersistedPipeline(
     await assertPublicTarget(url);
     await safeWrite('markJobStarted', () => markJobStarted(jobId));
     announcePhase(jobId, 'crawling');
+
+    const jobRecord = await prisma.job.findUnique({
+      where: { id: jobId },
+      select: { visitorId: true },
+    });
+    const traceOwnerId = jobRecord?.visitorId ?? '';
+
     let appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, signal, fresh), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
 
@@ -341,13 +349,29 @@ async function runPersistedPipeline(
           batchLatencyMs,
         };
       },
-      executeBatch: async (validFiles) => {
+      executeBatch: async (validFiles, executionMeta) => {
         const timeoutMs = Math.min(30_000 + validFiles.length * 25_000, 300_000);
         try {
           return await executeTests(runId, validFiles, {
             secrets: resolvedData?.secrets,
             timeoutMs,
             signal,
+            trace: true,
+            onTraceZips: async (traces) => {
+              if (!executionMeta) return;
+              for (const meta of executionMeta) {
+                const stem = meta.filename.replace(/\.spec\.ts$/, '');
+                const zipPath = traces.get(stem) || traces.get(meta.testCaseId);
+                if (zipPath) {
+                  await registerTrace(zipPath, {
+                    jobId,
+                    testCaseId: meta.testCaseId,
+                    attemptNumber: meta.attemptNumber,
+                    visitorId: traceOwnerId,
+                  });
+                }
+              }
+            },
           });
         } catch (err) {
           if (err instanceof JobCancelledError || (err instanceof Error && err.name === 'AbortError') || signal?.aborted) {
@@ -360,6 +384,7 @@ async function runPersistedPipeline(
             const fallbackResults: TestCaseResult[] = [];
             for (const file of validFiles) {
               signal?.throwIfAborted();
+              const meta = executionMeta?.find((m) => m.filename === file.filename);
               try {
                 const singleRes = await executeTests(
                   runId,
@@ -368,6 +393,20 @@ async function runPersistedPipeline(
                     secrets: resolvedData?.secrets,
                     timeoutMs: Math.min(30_000 + 25_000, 300_000),
                     signal,
+                    trace: true,
+                    onTraceZips: async (traces) => {
+                      if (!meta) return;
+                      const stem = meta.filename.replace(/\.spec\.ts$/, '');
+                      const zipPath = traces.get(stem) || traces.get(meta.testCaseId) || Array.from(traces.values())[0];
+                      if (zipPath) {
+                        await registerTrace(zipPath, {
+                          jobId,
+                          testCaseId: meta.testCaseId,
+                          attemptNumber: meta.attemptNumber,
+                          visitorId: traceOwnerId,
+                        });
+                      }
+                    },
                   },
                 );
                 fallbackResults.push(...singleRes.results);
@@ -395,9 +434,7 @@ async function runPersistedPipeline(
       },
       correct: async ({ test, errorText, attemptNumber, failureContext }) => {
         const context = { jobId, testCaseId: test.testCase.id, attemptNumber };
-        const observationsText = appMap.observations?.length
-          ? JSON.stringify(appMap.observations).slice(0, 2000)
-          : undefined;
+        const observationsText = serializeObservations(appMap.observations, 4000);
         const correction = await withLlmStep(
           context,
           'correct',
