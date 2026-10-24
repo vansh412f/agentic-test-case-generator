@@ -5,7 +5,7 @@ import { CaretDown, CaretUp } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { mutate as globalMutate } from 'swr';
 import { readActiveJobs, subscribe, untrackJob, type ActiveJobItem } from '@/lib/activeJobs';
-import { apiBase, getJob, ApiError } from '@/lib/api';
+import { apiBase, getJob, ApiError, MAX_URLS_PER_RUN } from '@/lib/api';
 import { computePipelineProgress } from '@/lib/pipelineProgress';
 import { isTerminalJobStatus } from '@/lib/utils';
 import type { JobDetail } from '@/types/api';
@@ -43,8 +43,8 @@ export function ActiveJobsDock() {
   }, []);
 
   useEffect(() => {
-    const mostRecent = [...items].sort((a, b) => b.addedAt - a.addedAt).slice(0, 3);
-    if (mostRecent.length === 0) return;
+    const tracked = [...items].sort((a, b) => b.addedAt - a.addedAt);
+    if (tracked.length === 0) return;
 
     let cancelled = false;
 
@@ -52,7 +52,7 @@ export function ActiveJobsDock() {
       if (document.hidden || cancelled) return;
 
       await Promise.all(
-        mostRecent.map(async (entry) => {
+        tracked.map(async (entry) => {
           try {
             const job = await getJob(entry.id);
             if (cancelled) return;
@@ -113,9 +113,8 @@ export function ActiveJobsDock() {
     };
   }, [items, router]);
 
-  const visibleEntries = [...items]
+  const baseEntries = [...items]
     .sort((a, b) => b.addedAt - a.addedAt)
-    .slice(0, 3)
     .filter((entry) => {
       const isOnPage =
         router.asPath === `/jobs/${entry.id}` ||
@@ -123,9 +122,12 @@ export function ActiveJobsDock() {
       return !isOnPage;
     });
 
-  if (visibleEntries.length === 0) {
+  if (baseEntries.length === 0) {
     return null;
   }
+
+  const visibleEntries = baseEntries.slice(0, MAX_URLS_PER_RUN);
+  const overflowCount = baseEntries.length - visibleEntries.length;
 
   return (
     <aside
@@ -158,7 +160,7 @@ export function ActiveJobsDock() {
         }}
       >
         <span style={{ fontSize: '12px', fontWeight: 700, color: '#243027' }}>
-          {visibleEntries.length} {visibleEntries.length === 1 ? 'running' : 'running'}
+          {baseEntries.length} {baseEntries.length === 1 ? 'running' : 'running'}
         </span>
         <button
           type="button"
@@ -178,7 +180,14 @@ export function ActiveJobsDock() {
       </div>
 
       {!isCollapsed && (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            maxHeight: 'min(60vh, 420px)',
+            overflowY: 'auto',
+          }}
+        >
           {visibleEntries.map((entry) => {
             const state = jobsState[entry.id];
             const percent = state?.percent ?? 0;
@@ -248,6 +257,25 @@ export function ActiveJobsDock() {
               </Link>
             );
           })}
+          {overflowCount > 0 && (
+            <Link
+              href="/jobs"
+              style={{
+                display: 'block',
+                padding: '8px 14px',
+                textAlign: 'center',
+                fontSize: '11px',
+                fontWeight: 600,
+                color: '#15803d',
+                textDecoration: 'none',
+                background: '#f8faf7',
+                borderTop: '1px solid #e0e5de',
+              }}
+              className="hover:bg-slate-50"
+            >
+              +{overflowCount} more in Jobs history
+            </Link>
+          )}
         </div>
       )}
     </aside>

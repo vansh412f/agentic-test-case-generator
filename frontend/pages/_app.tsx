@@ -129,6 +129,7 @@ export default function App({ Component, pageProps }: AppProps) {
           <Toaster
             position="bottom-right"
             richColors={false}
+            visibleToasts={5}
             toastOptions={{
               style: {
                 background: 'var(--surface-elevated)',
