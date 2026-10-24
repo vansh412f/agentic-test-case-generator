@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowCounterClockwise,
   ArrowSquareOut,
@@ -97,6 +97,15 @@ export function ReplayPanel({
     return items.find((i) => i.hasLiveTrace) ?? items[0];
   }, [items, selectedTestCaseId, selectedAttemptNumber]);
 
+  const activeTestCaseId = activeItem?.testCaseId ?? null;
+  const activeAttemptNumber = activeItem?.attemptNumber ?? null;
+  const activeKey =
+    activeTestCaseId && activeAttemptNumber !== null
+      ? `${activeTestCaseId}:${activeAttemptNumber}`
+      : null;
+
+  const requestSeqRef = useRef(0);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [traceLinks, setTraceLinks] = useState<{
@@ -106,31 +115,47 @@ export function ReplayPanel({
     viewerPath: string;
   } | null>(null);
 
-  const fetchLinks = useCallback(async (item: ReplayItem) => {
-    setLoading(true);
-    setErrorMsg(null);
-    try {
-      const links = await getTraceLinks(job.id, item.testCaseId, item.attemptNumber);
-      setTraceLinks(links);
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'TRACE_NOT_FOUND') {
-        setErrorMsg('This trace has expired. Traces are kept for 1 hour after execution.');
-      } else {
-        setErrorMsg(err instanceof Error ? err.message : 'Could not load trace replay.');
-      }
+  const fetchLinks = useCallback(
+    async (testCaseId: string, attemptNumber: number) => {
+      const seq = ++requestSeqRef.current;
+      const key = `${testCaseId}:${attemptNumber}`;
+      setLoading(true);
+      setErrorMsg(null);
       setTraceLinks(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [job.id]);
+
+      try {
+        const links = await getTraceLinks(job.id, testCaseId, attemptNumber);
+        if (requestSeqRef.current !== seq) return;
+        setTraceLinks(links);
+        setLoadedKey(key);
+      } catch (err) {
+        if (requestSeqRef.current !== seq) return;
+        if (err instanceof ApiError && err.code === 'TRACE_NOT_FOUND') {
+          setErrorMsg('This trace has expired. Traces are kept for 1 hour after execution.');
+        } else {
+          setErrorMsg(err instanceof Error ? err.message : 'Could not load trace replay.');
+        }
+        setTraceLinks(null);
+        setLoadedKey(key);
+      } finally {
+        if (requestSeqRef.current === seq) {
+          setLoading(false);
+        }
+      }
+    },
+    [job.id],
+  );
 
   useEffect(() => {
-    if (activeItem) {
-      void fetchLinks(activeItem);
+    if (activeTestCaseId && activeAttemptNumber !== null) {
+      void fetchLinks(activeTestCaseId, activeAttemptNumber);
     } else {
       setTraceLinks(null);
+      setLoadedKey(null);
     }
-  }, [activeItem, fetchLinks]);
+  }, [activeTestCaseId, activeAttemptNumber, fetchLinks]);
+
+  const visibleLinks = loadedKey === activeKey ? traceLinks : null;
 
   const handleSelect = (item: ReplayItem) => {
     if (onSelectAttempt) {
@@ -227,7 +252,9 @@ export function ReplayPanel({
                 type="button"
                 className="secondary-button text-xs py-1 px-2.5 flex items-center gap-1.5"
                 onClick={() => {
-                  if (activeItem) void fetchLinks(activeItem);
+                  if (activeTestCaseId && activeAttemptNumber !== null) {
+                    void fetchLinks(activeTestCaseId, activeAttemptNumber);
+                  }
                   onRefresh?.();
                 }}
                 title="Refresh trace"
@@ -236,10 +263,10 @@ export function ReplayPanel({
                 <span>Refresh</span>
               </button>
 
-              {traceLinks && (
+              {visibleLinks && (
                 <>
                   <a
-                    href={traceLinks.downloadPath}
+                    href={visibleLinks.downloadPath}
                     download={`trace-${activeItem.testCaseId}-attempt-${activeItem.attemptNumber}.zip`}
                     className="secondary-button text-xs py-1 px-2.5 flex items-center gap-1.5"
                     title="Download raw trace zip"
@@ -249,7 +276,7 @@ export function ReplayPanel({
                   </a>
 
                   <a
-                    href={traceLinks.viewerPath}
+                    href={visibleLinks.viewerPath}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="secondary-button text-xs py-1 px-2.5 flex items-center gap-1.5"
@@ -280,9 +307,9 @@ export function ReplayPanel({
             </div>
           )}
 
-          {!loading && !errorMsg && traceLinks && (
+          {!loading && !errorMsg && visibleLinks && (
             <iframe
-              src={traceLinks.viewerPath}
+              src={visibleLinks.viewerPath}
               title={`Trace viewer for ${activeItem?.testCaseId}`}
               className="replay-iframe"
             />

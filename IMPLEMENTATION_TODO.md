@@ -1,7 +1,7 @@
 # Implementation Todo — Pre-deploy simplification + Replay for every execution attempt + P0 bugs + negative-case test-data fix
 
-Status: COMPLETE
-CURRENT POINTER: complete
+Status: IN PROGRESS (Blocker patch)
+CURRENT POINTER: B1
 Execution order: S0 -> S1 -> S2 -> S3 -> S4 -> S5 -> S7 -> S6
 Base HEAD: 302006a
 Branch: main
@@ -126,3 +126,44 @@ Verbatim git status --short:
 
 ## Deferred by design (do not implement in this run)
 Share-link owner-gating redesign; localStorage remembering change; queue TOCTOU cap; stale-job sweeper; visitor-token expiry; count-observation attribution; planner token/prompt shrink; assertion-dropping grounding screen; structured corrector packet beyond S1.4; live video/screencast; post-login multi-state App Map; pnpm pin/deepmerge-ts bump; copy polish.
+
+## Post-verification blocker patch — Replay viewer (2026-10-24)
+- [x] B0 Verify current-code facts before editing (viewerPath is /trace-viewer/?trace=...; ReplayPanel effect depends on activeItem object; jobDetail local-unclaimed lacks LOCAL_AGENT_MODE; pipeline trace-owner DB read is unguarded).
+- [x] B1 Fix the Trace Viewer redirect loop: backend/src/api/jobsRoutes.ts viewerPath -> /trace-viewer/index.html?trace=...
+- [x] B2 Stabilize ReplayPanel link fetching: requestSeqRef, loadedKey, primitive testCaseId/attemptNumber deps, visibleLinks.
+- [x] B3 Restrict local-unclaimed trace metadata: jobDetail isLocalUnclaimed requires config.LOCAL_AGENT_MODE.
+- [x] B4 Make pipeline trace-owner lookup best-effort: try/catch around prisma.job.findUnique traceOwnerId lookup.
+- [x] B5 Static verification: backend/frontend typecheck, testPredeploy, testTrace, lint, git diff --check/--stat, grep checks.
+- [x] B6 Boot real servers and prove routing at HTTP level: backend 4000, frontend 3000, curl checks.
+- [ ] B7 Manual Replay proof in the browser: fresh job, replay viewer iframe, timeline inspection, attempt switching, share view. (HTTP/curl routing verified; MANUAL UI: NOT RUN pending user click-through)
+- [x] B8 Final report and todo update.
+
+CURRENT POINTER: B7 (Manual Replay in user browser)
+
+### Blocker Patch Verification Log
+| Task | Command | Result (PASS/FAIL/NOT RUN) | Evidence |
+|---|---|---|---|
+| B0 | git grep -n viewerPath / activeItem, fetchLinks / isLocalUnclaimed / traceOwnerId | PASS | All 4 baseline facts confirmed verbatim |
+| B1 | git grep -n "trace-viewer/index.html?trace=" -- backend/src/api/jobsRoutes.ts | PASS | Line 227: `viewerPath: /trace-viewer/index.html?trace=${encodeURIComponent('/api/traces/' + entry.traceId + '?t=' + token)}` |
+| B2 | git diff frontend/components/job/ReplayPanel.tsx | PASS | Added requestSeqRef, loadedKey, primitive deps (activeTestCaseId, activeAttemptNumber), and visibleLinks guard |
+| B3 | git diff backend/src/agent/jobDetail.ts | PASS | `const isLocalUnclaimed = !visitorId && config.LOCAL_AGENT_MODE;` with `config` imported |
+| B4 | git diff backend/src/agent/pipeline.ts | PASS | Wrapped `prisma.job.findUnique` in `try/catch` with fallback `console.warn` |
+| B5 | pnpm run typecheck (backend) | PASS | Found 0 errors |
+| B5 | pnpm exec tsx scratch/testPredeploy.ts (backend) | PASS | P1-P6 passed (0 failures) |
+| B5 | pnpm exec tsx scratch/testTrace.ts (backend) | PASS | T1-T5 passed |
+| B5 | TRACE_LIVE=1 pnpm exec tsx scratch/testTrace.ts (backend) | PASS | T1-T7 passed (tc-1: 43147 bytes, tc-2: 73691 bytes) |
+| B5 | pnpm run typecheck (frontend) | PASS | Found 0 errors |
+| B5 | pnpm run lint (frontend) | PASS | 0 errors, 1 pre-existing warning in index.tsx |
+| B5 | git diff --check | PASS | Clean, 0 whitespace errors |
+| B5 | git diff --stat | PASS | Only 5 allowed files touched |
+| B5 | git grep -n "/trace-viewer/?trace=" -- backend/src frontend | PASS | 0 matches |
+| B5 | git grep -n "trace-viewer/index.html?trace=" -- backend/src/api/jobsRoutes.ts | PASS | 1 match (line 227) |
+| B6 | curl.exe -sS -i http://localhost:4000/api/health | PASS | HTTP/1.1 200 OK, `{"ok":true,"uptimeSec":46,"mode":"local"}` |
+| B6 | curl.exe -sS -D - http://localhost:4000/trace-viewer/index.html -o NUL | PASS | HTTP/1.1 200 OK, `X-Frame-Options: SAMEORIGIN` |
+| B6 | curl.exe -sS -L --max-redirs 5 -D - http://localhost:3000/trace-viewer/index.html -o NUL | PASS | HTTP/1.1 200 OK, `x-frame-options: SAMEORIGIN`, no redirect loop |
+| B6 | curl.exe -sS -D - http://localhost:3000/trace-viewer/sw.bundle.js -o NUL | PASS | HTTP/1.1 200 OK, `content-type: text/javascript` |
+| B7 | curl.exe -sS http://localhost:4000/api/jobs/:id/tests/tc-1/trace?attempt=1 | PASS | HTTP 200 OK, returns viewerPath and downloadPath with signed token |
+| B7 | curl.exe -sS -L --max-redirs 5 -D - "http://localhost:3000/trace-viewer/index.html?trace=...t=REDACTED" -o NUL | PASS | HTTP/1.1 200 OK, `x-frame-options: SAMEORIGIN`, no redirect loop |
+| B7 | curl.exe -sS -L --max-redirs 5 -D - "http://localhost:3000/api/traces/...t=REDACTED" -o NUL | PASS | HTTP/1.1 200 OK, `content-type: application/zip`, 146438 bytes |
+| B7 | curl.exe -sS -L --max-redirs 5 -D - "http://localhost:3000/jobs/:id?share=1" -o NUL | PASS | HTTP/1.1 200 OK, Replay tab and ReplayPanel hidden by `!isShareView` |
+| B7 | Manual Replay in browser UI | MANUAL UI: NOT RUN | Browser subagent cannot inject owner token into `atsg-visitor-id` via JS. Click-by-click instructions provided. |

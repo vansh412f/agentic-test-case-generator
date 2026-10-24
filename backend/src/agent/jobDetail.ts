@@ -8,6 +8,7 @@ import { runQueue } from './runQueue.ts';
 import { sanitizeError } from '../runner/sanitizeError.ts';
 import { summarizeFailure, type FailureSummary } from '../report/failureSummary.ts';
 import { traceForAttempt } from '../runner/traceStore.ts';
+import { config } from '../config.ts';
 
 type PersistedTest = LoadedJob['generatedTests'][number];
 type PersistedAttempt = PersistedTest['executionResults'][number];
@@ -84,7 +85,7 @@ export function buildJobDetail(
 
       // Add traceExpiresAt for EVERY attempt with a live trace (owner/local-unclaimed only)
       const isOwner = Boolean(visitorId && options?.viewerVisitorId && options.viewerVisitorId === visitorId);
-      const isLocalUnclaimed = !visitorId;
+      const isLocalUnclaimed = !visitorId && config.LOCAL_AGENT_MODE;
       if (isOwner || isLocalUnclaimed) {
         const effectiveOwner = visitorId ?? '';
         for (const attempt of sortedAttempts) {

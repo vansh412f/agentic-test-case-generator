@@ -194,11 +194,18 @@ async function runPersistedPipeline(
     await safeWrite('markJobStarted', () => markJobStarted(jobId));
     announcePhase(jobId, 'crawling');
 
-    const jobRecord = await prisma.job.findUnique({
-      where: { id: jobId },
-      select: { visitorId: true },
-    });
-    const traceOwnerId = jobRecord?.visitorId ?? '';
+    let traceOwnerId = '';
+    try {
+      const jobRecord = await prisma.job.findUnique({
+        where: { id: jobId },
+        select: { visitorId: true },
+      });
+      traceOwnerId = jobRecord?.visitorId ?? '';
+    } catch (err) {
+      console.warn(
+        `[Pipeline] trace owner lookup failed; continuing without trace owner: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     let appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, signal, fresh), () => ({ success: true }));
     await safeWrite('setAppMap', () => setAppMap(jobId, appMap));

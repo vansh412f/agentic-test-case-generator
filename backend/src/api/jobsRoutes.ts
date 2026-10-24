@@ -224,7 +224,7 @@ router.get('/:id/tests/:testCaseId/trace', async (req, res) => {
       traceId: entry.traceId,
       expiresAt: new Date(entry.expiresAt).toISOString(),
       downloadPath: `/api/traces/${entry.traceId}?t=${token}`,
-      viewerPath: `/trace-viewer/?trace=${encodeURIComponent(`/api/traces/${entry.traceId}?t=${token}`)}`,
+      viewerPath: `/trace-viewer/index.html?trace=${encodeURIComponent(`/api/traces/${entry.traceId}?t=${token}`)}`,
     });
   } catch (error) {
     respondWithError(res, error);
