@@ -1873,3 +1873,255 @@ footer.reference-footer a:hover, footer.reference-footer button:hover {
   padding: 8px 16px;
   font-size: 13px;
 }
+
+/* Job Page Tabs Navigation */
+.job-tabs-nav {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #dce2da;
+  padding-bottom: 8px;
+}
+
+.job-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6b7280;
+  padding: 8px 14px;
+  border-radius: 8px;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.job-tab-btn:hover {
+  color: #17201b;
+  background: #edf1e9;
+}
+
+.job-tab-btn.is-active {
+  color: #17201b;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.job-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #d1fb70;
+  color: #17201b;
+}
+
+/* Replay UI */
+.replay-panel-root {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 22px;
+  min-height: 620px;
+}
+
+.replay-empty-card {
+  border: 1px solid #dce2da;
+  border-radius: 12px;
+  background: white;
+  padding: 48px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  margin-bottom: 22px;
+}
+
+.replay-sidebar {
+  width: 300px;
+  flex-shrink: 0;
+  border: 1px solid #dce2da;
+  border-radius: 12px;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-height: 700px;
+}
+
+.replay-sidebar-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.replay-items-list {
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.replay-item-btn {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  text-align: left;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.replay-item-btn:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+}
+
+.replay-item-btn.is-selected {
+  background: #f5f8f2;
+  border-color: #2c382f;
+  box-shadow: 0 0 0 1px #2c382f;
+}
+
+.replay-item-tc-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #17201b;
+}
+
+.replay-item-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1.2;
+}
+
+.replay-item-badge.badge-passed {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.replay-item-badge.badge-failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.replay-item-title {
+  font-size: 12px;
+  color: #374151;
+  margin: 4px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.replay-item-footer {
+  font-size: 11px;
+  color: #6b7280;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.replay-main-viewer {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #dce2da;
+  border-radius: 12px;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.replay-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.replay-viewer-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.replay-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.replay-frame-container {
+  flex: 1;
+  min-height: 540px;
+  display: flex;
+  flex-direction: column;
+  background: #f3f4f6;
+  position: relative;
+}
+
+.replay-loading-state,
+.replay-error-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.replay-iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 540px;
+  border: none;
+  flex: 1;
+}
+
+.replay-privacy-notice {
+  padding: 10px 16px;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+@media (max-width: 860px) {
+  .replay-panel-root {
+    flex-direction: column;
+  }
+
+  .replay-sidebar {
+    width: 100%;
+    max-height: 240px;
+  }
+
+  .replay-frame-container,
+  .replay-iframe {
+    min-height: 420px;
+  }
+}
+

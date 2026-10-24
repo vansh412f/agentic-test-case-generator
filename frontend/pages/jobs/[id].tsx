@@ -1,7 +1,7 @@
 import type { GetServerSideProps } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowCounterClockwise,
   ArrowSquareOut,
@@ -15,6 +15,7 @@ import { ErrorNotice } from '@/components/common/ErrorNotice';
 import { Seo } from '@/components/common/Seo';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { TestResultCard } from '@/components/job/TestResultCard';
+import { ReplayPanel } from '@/components/job/ReplayPanel';
 import { ShareButton } from '@/components/job/ShareButton';
 import { ContinueTesting } from '@/components/job/ContinueTesting';
 import { useJobStream } from '@/hooks/useJobStream';
@@ -122,6 +123,26 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     wakingInfo,
     budgetNote,
   } = useJobStream(jobId, initialJob ?? undefined);
+
+  const [activeTab, setActiveTab] = useState<'tests' | 'replay'>('tests');
+  const [selectedReplay, setSelectedReplay] = useState<{
+    testCaseId?: string;
+    attemptNumber?: number;
+  }>({});
+
+  const liveReplayCount = useMemo(() => {
+    if (!job) return 0;
+    const now = Date.now();
+    let count = 0;
+    for (const test of job.generatedTests) {
+      for (const att of test.executionResults) {
+        if (att.traceExpiresAt && Date.parse(att.traceExpiresAt) > now) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }, [job]);
 
   const [wakingCountdown, setWakingCountdown] = useState<number | null>(null);
 
@@ -693,65 +714,105 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           </section>
         ) : null}
 
-        <section className="detail-section cases">
-          <div className="detail-heading">
-            <div>
-              <p className="eyebrow">GENERATED TESTS</p>
-              <h2>
-                {job.generatedTests.length === 0 && !terminal
-                  ? job.testPlan?.testCases.length
-                    ? `${job.testPlan.testCases.length} scenarios planned`
-                    : 'Planning scenarios…'
-                  : `${job.generatedTests.length} test cases`}
-              </h2>
-            </div>
-            <div className="result-pills">
-              <span>{passedCount} passed</span>
-              <span>
-                {failedCount} {failedCount === 1 ? 'finding' : 'findings'}
-              </span>
-              {needsReviewCount > 0 && (
-                <span>{needsReviewCount} needs review</span>
+        {!isShareView && (
+          <div className="job-tabs-nav" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'tests'}
+              className={`job-tab-btn ${activeTab === 'tests' ? 'is-active' : ''}`}
+              onClick={() => setActiveTab('tests')}
+            >
+              Test cases ({job.generatedTests.length})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'replay'}
+              className={`job-tab-btn ${activeTab === 'replay' ? 'is-active' : ''}`}
+              onClick={() => setActiveTab('replay')}
+            >
+              Replay
+              {liveReplayCount > 0 && (
+                <span className="job-tab-badge">{liveReplayCount}</span>
               )}
-              {correctedCount > 0 && (
-                <span>{correctedCount} fixed after correction</span>
-              )}
-            </div>
+            </button>
           </div>
+        )}
 
-          {job.generatedTests.some((t) => t.finalCode.includes('__AGT_SECRET_')) && (
-            <p style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280' }}>
-              Secret values were injected at run time and are not stored.
-            </p>
-          )}
+        {!isShareView && activeTab === 'replay' ? (
+          <ReplayPanel
+            job={job}
+            selectedTestCaseId={selectedReplay.testCaseId}
+            selectedAttemptNumber={selectedReplay.attemptNumber}
+            onSelectAttempt={(testCaseId, attemptNumber) => {
+              setSelectedReplay({ testCaseId, attemptNumber });
+            }}
+            onRefresh={() => void mutate()}
+          />
+        ) : (
+          <section className="detail-section cases">
+            <div className="detail-heading">
+              <div>
+                <p className="eyebrow">GENERATED TESTS</p>
+                <h2>
+                  {job.generatedTests.length === 0 && !terminal
+                    ? job.testPlan?.testCases.length
+                      ? `${job.testPlan.testCases.length} scenarios planned`
+                      : 'Planning scenarios…'
+                    : `${job.generatedTests.length} test cases`}
+                </h2>
+              </div>
+              <div className="result-pills">
+                <span>{passedCount} passed</span>
+                <span>
+                  {failedCount} {failedCount === 1 ? 'finding' : 'findings'}
+                </span>
+                {needsReviewCount > 0 && (
+                  <span>{needsReviewCount} needs review</span>
+                )}
+                {correctedCount > 0 && (
+                  <span>{correctedCount} fixed after correction</span>
+                )}
+              </div>
+            </div>
 
-          {job.generatedTests.length === 0 ? null : (
-            (() => {
-              const aiTests = job.generatedTests.filter(
-                (t) =>
-                  !t.testCaseId.startsWith('smoke-') &&
-                  job.testPlan?.testCases.find((tc) => tc.id === t.testCaseId)?.origin !== 'baseline',
-              );
-              const baselineTests = job.generatedTests.filter(
-                (t) =>
-                  t.testCaseId.startsWith('smoke-') ||
-                  job.testPlan?.testCases.find((tc) => tc.id === t.testCaseId)?.origin === 'baseline',
-              );
-              return [...aiTests, ...baselineTests].map((test) => (
-                <TestResultCard
-                  canEdit={Boolean(job.canEdit) && !isShareView}
-                  jobId={job.id}
-                  key={test.id}
-                  onRefresh={() => void mutate()}
-                  plannedCase={job.testPlan?.testCases.find(
-                    (testCase) => testCase.id === test.testCaseId,
-                  )}
-                  test={test}
-                />
-              ));
-            })()
-          )}
-        </section>
+            {job.generatedTests.some((t) => t.finalCode.includes('__AGT_SECRET_')) && (
+              <p style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280' }}>
+                Secret values were injected at run time and are not stored.
+              </p>
+            )}
+
+            {job.generatedTests.length === 0 ? null : (
+              (() => {
+                const aiTests = job.generatedTests.filter(
+                  (t) =>
+                    !t.testCaseId.startsWith('smoke-') &&
+                    job.testPlan?.testCases.find((tc) => tc.id === t.testCaseId)?.origin !== 'baseline',
+                );
+                const baselineTests = job.generatedTests.filter(
+                  (t) =>
+                    t.testCaseId.startsWith('smoke-') ||
+                    job.testPlan?.testCases.find((tc) => tc.id === t.testCaseId)?.origin === 'baseline',
+                );
+                return [...aiTests, ...baselineTests].map((test) => (
+                  <TestResultCard
+                    jobId={job.id}
+                    key={test.id}
+                    onViewReplay={(testCaseId, attemptNumber) => {
+                      setSelectedReplay({ testCaseId, attemptNumber });
+                      setActiveTab('replay');
+                    }}
+                    plannedCase={job.testPlan?.testCases.find(
+                      (testCase) => testCase.id === test.testCaseId,
+                    )}
+                    test={test}
+                  />
+                ));
+              })()
+            )}
+          </section>
+        )}
 
         {terminal && !isShareView ? (
           <ContinueTesting job={job} />
