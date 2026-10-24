@@ -64,7 +64,6 @@ export function redactSensitiveText(text: string): string {
     process.env.EDGE_SHARED_SECRET,
     process.env.GROQ_API_KEY,
     process.env.GEMINI_API_KEY,
-    process.env.NVIDIA_API_KEY,
   ].filter((s): s is string => Boolean(s && s.length >= 8));
 
   for (const secret of secretsToMask) {

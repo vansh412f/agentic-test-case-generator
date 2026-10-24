@@ -4,10 +4,12 @@ import fsSync from 'node:fs';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.ts';
 import { RUNNER_DIR } from './config.ts';
+import { logger } from '../observability/logger.ts';
 
 // Constants
 export const TRACE_TTL_MS = 60 * 60_000; // 1 hour
-export const MAX_TRACES = 50;
+export const MAX_TRACES = 200;
+export const MAX_TOTAL_TRACE_BYTES = 256 * 1024 * 1024; // 256 MiB
 export const MAX_TRACE_BYTES = 25 * 1024 * 1024; // 25 MB
 
 // Trace registry entry
@@ -36,7 +38,53 @@ function signingSecret(): string {
     .digest('hex');
 }
 
+/**
+ * Pure helper to plan evictions given current entries and incoming trace size.
+ * Entries are evaluated FIFO: oldest by createdAt first (with registry insertion order for ties).
+ * Evicts until after adding new entry:
+ * (currentCount - evictedCount + 1) <= maxTraces
+ * AND
+ * (currentTotalBytes - evictedBytes + newSizeBytes) <= maxTotalBytes
+ */
+export function planEvictions(
+  entries: Iterable<TraceEntry>,
+  newSizeBytes: number,
+  maxTraces = MAX_TRACES,
+  maxTotalBytes = MAX_TOTAL_TRACE_BYTES
+): string[] {
+  const entryList = Array.from(entries);
+  let totalBytes = 0;
+  for (const e of entryList) {
+    totalBytes += e.sizeBytes;
+  }
+  let currentCount = entryList.length;
 
+  // Stable sort by createdAt ascending (insertion order preserved on ties)
+  const sorted = [...entryList].sort((a, b) => a.createdAt - b.createdAt);
+  const evictedIds: string[] = [];
+
+  for (const entry of sorted) {
+    if (currentCount + 1 <= maxTraces && totalBytes + newSizeBytes <= maxTotalBytes) {
+      break;
+    }
+    evictedIds.push(entry.traceId);
+    currentCount--;
+    totalBytes -= entry.sizeBytes;
+  }
+
+  return evictedIds;
+}
+
+/**
+ * Inspection helper returning registry count and total retained bytes.
+ */
+export function getTraceStats(): { count: number; totalBytes: number } {
+  let totalBytes = 0;
+  for (const entry of registry.values()) {
+    totalBytes += entry.sizeBytes;
+  }
+  return { count: registry.size, totalBytes };
+}
 
 /**
  * Register a trace zip file in the store.
@@ -50,7 +98,11 @@ export async function registerTrace(
 
     // Check size limit
     if (srcSize > MAX_TRACE_BYTES) {
-      console.warn(`[TraceStore] Trace file exceeds MAX_TRACE_BYTES (${srcSize} > ${MAX_TRACE_BYTES}); rejecting.`);
+      logger.warn(`Trace file exceeds MAX_TRACE_BYTES (${srcSize} > ${MAX_TRACE_BYTES}); rejecting.`, {
+        component: 'TraceStore',
+        sizeBytes: srcSize,
+        maxBytes: MAX_TRACE_BYTES,
+      });
       return null;
     }
 
@@ -79,31 +131,20 @@ export async function registerTrace(
       }
     }
 
+    // Evict oldest by createdAt (FIFO) and byte ceiling before copying new trace
+    const toEvict = planEvictions(registry.values(), srcSize);
+    for (const evictId of toEvict) {
+      const evictFile = path.join(TRACE_DIR, `${evictId}.zip`);
+      try {
+        await fs.unlink(evictFile);
+      } catch {
+        // Ignore cleanup errors
+      }
+      registry.delete(evictId);
+    }
+
     // Copy zip to store
     await fs.copyFile(srcZipPath, destPath);
-
-    // If at max, evict oldest by createdAt
-    if (registry.size >= MAX_TRACES) {
-      let oldestEntry: TraceEntry | null = null;
-      let oldestFileTime = Infinity;
-
-      for (const entry of registry.values()) {
-        if (entry.createdAt < oldestFileTime) {
-          oldestFileTime = entry.createdAt;
-          oldestEntry = entry;
-        }
-      }
-
-      if (oldestEntry) {
-        const oldestFile = path.join(TRACE_DIR, `${oldestEntry.traceId}.zip`);
-        try {
-          await fs.unlink(oldestFile);
-        } catch {
-          // Ignore cleanup errors
-        }
-        registry.delete(oldestEntry.traceId);
-      }
-    }
 
     // Set registry entry
     const now = Date.now();
@@ -122,7 +163,10 @@ export async function registerTrace(
 
     return traceId;
   } catch (err) {
-    console.warn('[TraceStore] registerTrace failed:', err);
+    logger.warn('registerTrace failed', {
+      component: 'TraceStore',
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
@@ -261,5 +305,10 @@ export async function initTraceStore(): Promise<void> {
     }
   }, 10 * 60_000).unref();
 
-  console.log(`[TraceStore] ready at ${TRACE_DIR} (ttl 1h)`);
+  logger.info(`ready at ${TRACE_DIR} (ttl 1h)`, {
+    component: 'TraceStore',
+    traceDir: TRACE_DIR,
+    maxTraces: MAX_TRACES,
+    maxBytes: MAX_TOTAL_TRACE_BYTES,
+  });
 }

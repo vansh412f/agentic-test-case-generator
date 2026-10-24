@@ -28,6 +28,7 @@ export async function generateTest(
     messages,
     maxTokens: 2000,
     tier: 'fast',
+    task: 'generate',
     signal: options?.signal,
   });
 

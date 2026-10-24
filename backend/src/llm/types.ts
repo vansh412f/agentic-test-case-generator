@@ -11,6 +11,7 @@ export const LLM_ERROR_CODES = [
 ] as const;
 
 export type LlmErrorCode = (typeof LLM_ERROR_CODES)[number];
+export type LlmModelErrorCode = LlmErrorCode | 'MODEL_UNAVAILABLE';
 
 export class LlmError extends Error {
   readonly code: LlmErrorCode;
@@ -18,14 +19,14 @@ export class LlmError extends Error {
   readonly retryAfterMs?: number;
 
   constructor(
-    code: LlmErrorCode,
+    code: LlmModelErrorCode,
     message: string,
     cause?: unknown,
     retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'LlmError';
-    this.code = code;
+    this.code = code as LlmErrorCode;
     this.cause = cause;
     this.retryAfterMs = retryAfterMs;
   }
@@ -38,6 +39,15 @@ export interface LlmMessage {
 }
 
 // Request / Response shapes
+
+export type LlmTaskLabel =
+  | 'plan-core'
+  | 'plan-negative'
+  | 'plan-single'
+  | 'plan-repair'
+  | 'plan-expand'
+  | 'generate'
+  | 'correct';
 
 /** Everything the caller provides per LLM call. */
 export interface LlmRequest {
@@ -53,6 +63,8 @@ export interface LlmRequest {
   /** Latency/reasoning tier. Default is 'reasoning'. */
   tier?: 'reasoning' | 'fast';
   purpose?: 'plan' | 'repair' | 'expand';
+  task?: LlmTaskLabel | string;
+  modelOverride?: string;
   signal?: AbortSignal;
 }
 

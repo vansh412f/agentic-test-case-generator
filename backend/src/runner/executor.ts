@@ -21,6 +21,7 @@ import {
   isSelfCheckPassed,
   withRunnerIsolationLock,
 } from './isolation.ts';
+import { logger } from '../observability/logger.ts';
 
 export type FailureClass = 'finding' | 'locator' | 'timeout' | 'other';
 
@@ -251,7 +252,10 @@ export async function executeTests(
         try {
           codeToWrite = rewritePlaywrightImport(codeToWrite, '../../agt-capture.ts');
         } catch (err) {
-          console.warn(`[Executor] Failed to rewrite import for ${file.filename}:`, err);
+          logger.warn(`Failed to rewrite import for ${file.filename}`, {
+            component: 'Executor',
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
         if (options?.secrets && options.secrets.size > 0) {
           for (const [token, secretValue] of options.secrets.entries()) {
@@ -562,7 +566,10 @@ export async function executeTests(
           }
         }
       } catch (err) {
-        console.warn('[Executor] trace capture failed:', err instanceof Error ? err.message : String(err));
+        logger.warn('trace capture failed', {
+          component: 'Executor',
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
     return { success, results };

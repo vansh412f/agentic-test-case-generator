@@ -48,6 +48,7 @@ export async function correctTest(
     maxTokens: 2000,
     temperature: 0.1,
     tier: 'fast',
+    task: 'correct',
     signal: options?.signal,
   });
 

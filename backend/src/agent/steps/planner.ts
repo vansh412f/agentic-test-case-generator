@@ -387,6 +387,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
           maxTokens: 3500,
           tier: 'reasoning',
           purpose: 'expand',
+          task: 'plan-expand',
           signal: options?.signal,
         });
         const expansionResult = validateAndNormalizePlan(
@@ -454,6 +455,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
         maxTokens: 3000,
         tier: 'reasoning',
         purpose: 'plan',
+        task: 'plan-core',
         signal: options?.signal,
       }),
       doCallLlm({
@@ -465,6 +467,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
         maxTokens: 2500,
         tier: 'fast',
         purpose: 'plan',
+        task: 'plan-negative',
         signal: options?.signal,
       }),
     ]);
@@ -523,6 +526,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
             maxTokens: 3000,
             tier: 'reasoning',
             purpose: 'repair',
+            task: 'plan-repair',
             signal: options?.signal,
           });
           const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, { cap: false });
@@ -570,6 +574,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     maxTokens: 3500,
     tier: 'reasoning',
     purpose: 'plan',
+    task: 'plan-single',
     signal: options?.signal,
   });
   const firstResult = validateAndNormalizePlan(response.content, knownIds, appMap.url);
@@ -595,6 +600,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     maxTokens: 3500,
     tier: 'reasoning',
     purpose: 'repair',
+    task: 'plan-repair',
     signal: options?.signal,
   });
   const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url);

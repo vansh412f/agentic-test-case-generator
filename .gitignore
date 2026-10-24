@@ -58,3 +58,5 @@ powershell.cmd
 **/playwright-runner/.traces/
 
 backend/scratch/measure_results.json
+backend/scratch/model_benchmark_results.json
+backend/scratch/model_benchmark_fixtures.json

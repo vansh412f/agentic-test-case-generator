@@ -37,6 +37,7 @@ import { JobCancelledError } from './cancellation.ts';
 import { prisma } from '../db/client.ts';
 
 import { runRounds, type RoundTest, type TestAttempt } from './rounds.ts';
+import { logger } from '../observability/logger.ts';
 
 export type { GeneratedTest, TestAttempt };
 
@@ -141,7 +142,7 @@ async function crawlForJob(
       const maxAgeMs = fresh ? 60_000 : 10 * 60_000;
       const cached = takeFreshCrawl(url, maxAgeMs);
       if (cached) {
-        console.log(`[Pipeline] Crawl cache hit for ${url}`);
+        logger.info(`Crawl cache hit for ${url}`, { component: 'Pipeline', jobId });
         return cached;
       }
       return await crawlPage(url, { signal });
@@ -202,9 +203,11 @@ async function runPersistedPipeline(
       });
       traceOwnerId = jobRecord?.visitorId ?? '';
     } catch (err) {
-      console.warn(
-        `[Pipeline] trace owner lookup failed; continuing without trace owner: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      logger.warn('trace owner lookup failed; continuing without trace owner', {
+        component: 'Pipeline',
+        jobId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     let appMap = await withMeasuredStep({ jobId }, 'crawl', () => crawlForJob(jobId, url, signal, fresh), () => ({ success: true }));
@@ -313,7 +316,11 @@ async function runPersistedPipeline(
         );
       } catch (err) {
         if (err instanceof CompileError) {
-          console.warn(`[Runner] ${testCase.id} | compileTest fallback to LLM: ${err.message}`);
+          logger.warn(`compileTest fallback to LLM: ${err.message}`, {
+            component: 'Runner',
+            jobId,
+            testCaseId: testCase.id,
+          });
           initialGen = await withLlmStep(
             { jobId, testCaseId: testCase.id },
             'generate',
@@ -385,9 +392,11 @@ async function runPersistedPipeline(
             throw new JobCancelledError();
           }
           if (err instanceof RunnerError) {
-            console.warn(
-              `[Runner] Batch execution failed with ${err.code}: ${err.message}. Re-running per test.`,
-            );
+            logger.warn(`Batch execution failed with ${err.code}: ${err.message}. Re-running per test.`, {
+              component: 'Runner',
+              jobId,
+              errorCode: err.code,
+            });
             const fallbackResults: TestCaseResult[] = [];
             for (const file of validFiles) {
               signal?.throwIfAborted();

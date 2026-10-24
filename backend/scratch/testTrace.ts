@@ -15,6 +15,10 @@ import {
   traceForAttempt,
   signTraceToken,
   verifyTraceToken,
+  planEvictions,
+  MAX_TRACES,
+  MAX_TOTAL_TRACE_BYTES,
+  TraceEntry,
 } from '../src/runner/traceStore.ts';
 import { executeTests } from '../src/runner/executor.ts';
 
@@ -337,6 +341,102 @@ async function main(): Promise<void> {
         pass('T7 live two-file onTraceZips mapping');
       });
     }
+
+    // T8: FIFO/count + byte eviction planning
+    await run('T8 FIFO/count + byte eviction planning', async () => {
+      // 1. Count-cap FIFO eviction (200 entries + 1 incoming -> evict oldest)
+      const synthetic200: TraceEntry[] = [];
+      for (let i = 0; i < MAX_TRACES; i++) {
+        synthetic200.push({
+          jobId: `job-${i}`,
+          testCaseId: `tc-${i}`,
+          attemptNumber: 1,
+          visitorId: 'v1',
+          createdAt: 1000 + i,
+          expiresAt: 1000 + i + 3600000,
+          sizeBytes: 1024,
+          traceId: `trace-count-${i}`,
+        });
+      }
+
+      const evictedCount = planEvictions(synthetic200, 1024);
+      assert.equal(evictedCount.length, 1, 'must evict exactly 1 entry when count reaches MAX_TRACES');
+      assert.equal(evictedCount[0], 'trace-count-0', 'must evict the oldest entry by createdAt');
+
+      // 2. Byte-ceiling eviction: enough entries evicted for large incoming trace
+      const syntheticBytes: TraceEntry[] = [];
+      const mib = 1024 * 1024;
+      for (let i = 0; i < 10; i++) {
+        syntheticBytes.push({
+          jobId: `job-byte-${i}`,
+          testCaseId: `tc-byte-${i}`,
+          attemptNumber: 1,
+          visitorId: 'v1',
+          createdAt: 2000 + i,
+          expiresAt: 2000 + i + 3600000,
+          sizeBytes: 25 * mib,
+          traceId: `trace-byte-${i}`,
+        });
+      }
+
+      // Incoming 20 MiB requires 14 MiB freed -> evicts oldest 1 entry (25 MiB)
+      const evictedFor20 = planEvictions(syntheticBytes, 20 * mib);
+      assert.equal(evictedFor20.length, 1, 'must evict 1 entry to satisfy byte ceiling');
+      assert.equal(evictedFor20[0], 'trace-byte-0', 'must evict the oldest entry first');
+
+      // Incoming 20 MiB with multiple smaller entries:
+      // 25 entries of 10 MiB = 250 MiB. Incoming 20 MiB -> 250 - X + 20 <= 256 -> X >= 14 MiB -> 2 entries evicted (20 MiB freed)
+      const syntheticMulti: TraceEntry[] = [];
+      for (let i = 0; i < 25; i++) {
+        syntheticMulti.push({
+          jobId: `job-multi-${i}`,
+          testCaseId: `tc-multi-${i}`,
+          attemptNumber: 1,
+          visitorId: 'v1',
+          createdAt: 3000 + i,
+          expiresAt: 3000 + i + 3600000,
+          sizeBytes: 10 * mib,
+          traceId: `trace-multi-${i}`,
+        });
+      }
+      const evictedMulti = planEvictions(syntheticMulti, 20 * mib);
+      assert.equal(evictedMulti.length, 2, 'must evict 2 entries (20 MiB) to free at least 14 MiB');
+      assert.deepEqual(evictedMulti, ['trace-multi-0', 'trace-multi-1'], 'must evict the 2 oldest entries in order');
+
+      // 3. Duplicate replacement does not count as overflow
+      const dupP1 = path.join(os.tmpdir(), `trace-t8-dup1-${randomUUID()}.zip`);
+      const dupP2 = path.join(os.tmpdir(), `trace-t8-dup2-${randomUUID()}.zip`);
+      tempFiles.push(dupP1, dupP2);
+      await fs.writeFile(dupP1, Buffer.alloc(500, 0x44));
+      await fs.writeFile(dupP2, Buffer.alloc(600, 0x45));
+
+      const meta = {
+        jobId: 'trace-t8-dup-job',
+        testCaseId: 'tc-t8',
+        attemptNumber: 1,
+        visitorId: 'trace-t8-visitor',
+      };
+
+      const t1 = await registerTrace(dupP1, meta);
+      assert.ok(t1, 'first registration must succeed');
+      const t2 = await registerTrace(dupP2, meta);
+      assert.ok(t2, 'duplicate registration must succeed');
+      assert.notEqual(t1, t2);
+      assert.equal(getTrace(t1), null, 'old duplicate trace must be evicted');
+      assert.ok(getTrace(t2), 'new trace must exist');
+
+      // 4. Stable tie-breaking on identical createdAt: insertion order preserved
+      const tiedEntries: TraceEntry[] = [
+        { jobId: 'j1', testCaseId: 't1', attemptNumber: 1, visitorId: 'v1', createdAt: 5000, expiresAt: 6000, sizeBytes: 100, traceId: 'tie-1' },
+        { jobId: 'j2', testCaseId: 't2', attemptNumber: 1, visitorId: 'v1', createdAt: 5000, expiresAt: 6000, sizeBytes: 100, traceId: 'tie-2' },
+        { jobId: 'j3', testCaseId: 't3', attemptNumber: 1, visitorId: 'v1', createdAt: 5000, expiresAt: 6000, sizeBytes: 100, traceId: 'tie-3' },
+      ];
+      // Max 2 traces: evicts 2 entries to make room for 1
+      const tieEvicted = planEvictions(tiedEntries, 100, 2, MAX_TOTAL_TRACE_BYTES);
+      assert.deepEqual(tieEvicted, ['tie-1', 'tie-2'], 'must evict earlier-inserted entries first on createdAt tie');
+
+      pass('T8 FIFO/count + byte eviction planning');
+    });
   } finally {
     for (const f of tempFiles) {
       try {

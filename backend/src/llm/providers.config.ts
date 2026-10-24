@@ -1,12 +1,11 @@
 import dotenv from 'dotenv';
-import { config } from '../config.ts';
 dotenv.config();
 
-export const KNOWN_LLM_PROVIDERS = ['groq', 'gemini', 'nvidia'] as const;
+export const KNOWN_LLM_PROVIDERS = ['groq', 'gemini'] as const;
 export type LlmProviderName = (typeof KNOWN_LLM_PROVIDERS)[number];
 
 export function parseProviderOrder(raw?: string): LlmProviderName[] {
-  const input = raw?.trim() || 'groq,gemini,nvidia';
+  const input = raw?.trim() || 'groq,gemini';
   const parts = input.split(',').map((p) => p.trim()).filter(Boolean);
   for (const part of parts) {
     if (!KNOWN_LLM_PROVIDERS.includes(part as LlmProviderName)) {
@@ -18,30 +17,79 @@ export function parseProviderOrder(raw?: string): LlmProviderName[] {
 
 export const LLM_PROVIDER_ORDER: LlmProviderName[] = parseProviderOrder(process.env.LLM_PROVIDER_ORDER);
 
-export const GROQ_DEFAULT_MODEL = 'openai/gpt-oss-120b';
-export const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
-export const NVIDIA_DEFAULT_MODEL = 'openai/gpt-oss-20b';
+export const GROQ_DEFAULT_REASONING_CHAIN = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b'];
+export const GROQ_DEFAULT_FAST_CHAIN = ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b'];
+export const GEMINI_DEFAULT_REASONING_CHAIN = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+export const GEMINI_DEFAULT_FAST_CHAIN = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 
-export function modelFor(provider: LlmProviderName, tier: 'reasoning' | 'fast' = 'reasoning'): string {
+export const GROQ_DEFAULT_MODEL = GROQ_DEFAULT_REASONING_CHAIN[0];
+export const GEMINI_DEFAULT_MODEL = GEMINI_DEFAULT_REASONING_CHAIN[0];
+
+export function parseModelChain(
+  pluralVal?: string,
+  singularVal?: string,
+  defaultChain: string[] = [],
+): string[] {
+  if (pluralVal && pluralVal.trim()) {
+    const list = pluralVal
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (list.length > 0) {
+      return list.slice(0, 3); // 1 primary + up to 2 fallbacks
+    }
+  }
+  if (singularVal && singularVal.trim() && !defaultChain.includes(singularVal.trim())) {
+    return [singularVal.trim()];
+  }
+  return defaultChain.slice(0, 3);
+}
+
+export function getModelsFor(
+  provider: LlmProviderName,
+  tier: 'reasoning' | 'fast' = 'reasoning',
+): string[] {
   if (provider === 'groq') {
     return tier === 'fast'
-      ? (config?.GROQ_FAST_MODEL || process.env.GROQ_FAST_MODEL || 'openai/gpt-oss-20b')
-      : (config?.GROQ_REASONING_MODEL || process.env.GROQ_REASONING_MODEL || GROQ_DEFAULT_MODEL);
+      ? parseModelChain(
+          process.env.GROQ_FAST_MODELS,
+          process.env.GROQ_FAST_MODEL,
+          GROQ_DEFAULT_FAST_CHAIN,
+        )
+      : parseModelChain(
+          process.env.GROQ_REASONING_MODELS,
+          process.env.GROQ_REASONING_MODEL,
+          GROQ_DEFAULT_REASONING_CHAIN,
+        );
   }
   if (provider === 'gemini') {
     return tier === 'fast'
-      ? (config?.GEMINI_FAST_MODEL || process.env.GEMINI_FAST_MODEL || 'gemini-2.5-flash-lite')
-      : (config?.GEMINI_REASONING_MODEL || process.env.GEMINI_REASONING_MODEL || GEMINI_DEFAULT_MODEL);
+      ? parseModelChain(
+          process.env.GEMINI_FAST_MODELS,
+          process.env.GEMINI_FAST_MODEL,
+          GEMINI_DEFAULT_FAST_CHAIN,
+        )
+      : parseModelChain(
+          process.env.GEMINI_REASONING_MODELS,
+          process.env.GEMINI_REASONING_MODEL,
+          GEMINI_DEFAULT_REASONING_CHAIN,
+        );
   }
-  if (provider === 'nvidia') {
-    return config?.NVIDIA_MODEL || process.env.NVIDIA_MODEL || NVIDIA_DEFAULT_MODEL;
-  }
-  return '';
+  return [];
+}
+
+export function modelFor(
+  provider: LlmProviderName,
+  tier: 'reasoning' | 'fast' = 'reasoning',
+): string {
+  const models = getModelsFor(provider, tier);
+  return models[0] ?? '';
 }
 
 export function reasoningEffortFor(
   provider: LlmProviderName,
   tier: 'reasoning' | 'fast' = 'reasoning',
+  _model?: string,
 ): string | undefined {
   if (provider === 'groq') {
     return 'low';
@@ -57,3 +105,4 @@ export const LLM_REQUEST_TIMEOUT_MS = 120_000;
 
 export const LLM_MAX_RETRIES_PER_PROVIDER = 2;
 // Module component implementation.
+

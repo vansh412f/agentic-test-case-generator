@@ -13,8 +13,8 @@ export const geminiProvider: LlmProvider = {
       throw new LlmError('AUTH_FAILED', 'Gemini API key is missing from configuration (server or request).');
     }
     const tier = request.tier ?? 'reasoning';
-    const model = modelFor('gemini', tier);
-    const reasoningEffort = reasoningEffortFor('gemini', tier);
+    const model = request.modelOverride || modelFor('gemini', tier);
+    const reasoningEffort = reasoningEffortFor('gemini', tier, model);
     return openAiCompatibleChat({
       providerName: 'gemini',
       endpointUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',

@@ -84,6 +84,14 @@ export async function openAiCompatibleChat(options: {
     if (errorText.includes('API key not valid')) {
       throw new LlmError('AUTH_FAILED', `${providerName} auth failed (400): ${errorText}`);
     }
+    if (
+      errorText.includes('model_not_found') ||
+      errorText.includes('is no longer available') ||
+      errorText.includes('decommissioned') ||
+      errorText.includes('does not exist')
+    ) {
+      throw new LlmError('MODEL_UNAVAILABLE', `${providerName} model unavailable (400): ${errorText}`);
+    }
     if (bodyPayload.reasoning_effort !== undefined && errorText.includes('reasoning_effort')) {
       unsupportedReasoningEffort.add(unsupportedKey);
       bodyPayload = buildBodyPayload(false);
@@ -118,6 +126,16 @@ export async function openAiCompatibleChat(options: {
       (response.status === 400 && errorText.includes('API key not valid'))
     ) {
       throw new LlmError('AUTH_FAILED', `${providerName} auth failed (${response.status}): ${errorText}`);
+    }
+    if (
+      response.status === 404 ||
+      errorText.includes('model_not_found') ||
+      errorText.includes('is no longer available') ||
+      errorText.includes('decommissioned') ||
+      errorText.includes('does not exist') ||
+      (errorText.includes('models/') && errorText.includes('not found'))
+    ) {
+      throw new LlmError('MODEL_UNAVAILABLE', `${providerName} model unavailable (${response.status}): ${errorText}`);
     }
     if (response.status === 429) {
       const retryAfterHeader = response.headers.get('retry-after');

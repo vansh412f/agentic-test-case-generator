@@ -18,6 +18,10 @@ Generates typed Playwright end-to-end test suites from live web applications usi
 
 <p>
   <a href="#how-it-works">How it works</a> &middot;
+  <a href="#deployment-architecture">Deployment architecture</a> &middot;
+  <a href="#code-workflow">Code workflow</a> &middot;
+  <a href="#database-schema">Database schema</a> &middot;
+  <a href="#storage--state-matrix">Storage &amp; state</a> &middot;
   <a href="#test-lifecycle">Test lifecycle</a> &middot;
   <a href="#architecture-decisions">Architecture decisions</a> &middot;
   <a href="#security-model">Security</a> &middot;
@@ -41,8 +45,8 @@ Generates typed Playwright end-to-end test suites from live web applications usi
 - **Runs tests in isolated Chromium processes:** Executes generated tests in Chromium (Chromium-only execution) inside a sandboxed runner sandbox.
 - **Classifies and isolates failures:** Distinguishes assertion discrepancies from mechanical harness failures (missing locators, network timeouts); mechanical failures undergo bounded correction while assertion failures are preserved.
 - **Exports complete test suites:** Packages validated tests into a runnable Playwright project zip complete with `playwright.config.ts`, `.env.example`, and a GitHub Actions workflow.
-- **Serves owner-only Playwright trace replay for every execution attempt:** Every test execution attempt (initial runs and corrector passes) captures a Playwright trace zip retained in memory for 1 hour (`backend/src/runner/traceStore.ts`). The job page **Replay** tab provides an embedded trace viewer and direct zip download, gated to the job owner via signed tokens with a 10-minute TTL.
-- **Accepts per-site test data without persisting secrets server-side:** Form credentials are supplied per normalized target URL (`TestDataEntrySchema`, `backend/src/api/schemas.ts:41`) and replaced with `__AGT_SECRET_n__` placeholders before planning or storage; real values are substituted only at execution time on the ephemeral file. Secrets are never stored in the database and never sent to the model. Credentials the user asks to remember are kept only in their own browser `localStorage` (30 days) for prefill.
+- **Serves owner-only Playwright trace replay for every execution attempt:** Every test execution attempt (initial runs and corrector passes) captures a Playwright trace zip retained in ephemeral storage with a 200-trace cap, 256 MiB total retained byte ceiling, 25 MiB single trace limit, FIFO eviction by createdAt, and 1-hour TTL (`backend/src/runner/traceStore.ts`). The job page **Replay** tab provides an embedded trace viewer and direct zip download, gated to the job owner via signed tokens with a 10-minute TTL.
+- **Accepts per-site test data without persisting secrets server-side:** Form credentials are supplied per normalized target URL (`TestDataEntrySchema`, `backend/src/api/schemas.ts`) and replaced with `__AGT_SECRET_n__` placeholders before planning or storage; real values are substituted only at execution time on the ephemeral file. Secrets are never stored in the database and never sent to the model. Credentials the user asks to remember are kept only in their own browser `localStorage` (30 days) for prefill.
 
 ---
 
@@ -101,13 +105,87 @@ sequenceDiagram
 
 1. **Submission & Admission (`backend/src/api/routes.ts`):** Client submits target URLs with an ALTCHA proof-of-work payload. The API enforces public network policy (`assertPublicTarget`), checks daily quotas, verifies the signed visitor ID sent in the `X-Visitor-Id` header, and pushes the run into the in-process queue.
 2. **DOM Crawl (`backend/src/crawler/pageCrawler.ts`):** Headless Chromium navigates to the target, collects interactive elements, computes accessible roles and CSS selectors, and serializes the DOM into an AppMap.
-3. **Grounded Observation (`backend/src/crawler/observe.ts`, invoked at `backend/src/agent/pipeline.ts:200`):** Headless Chromium drives the crawled page to record **grounded facts** before planning: `navigation` (where a link leads), `popup` (popups opened by links), `form_empty_submit` (submit with empty fields), `form_filled_submit` (submit with provided test data), and `count` (repeated-item counts). Observation is bounded (`MAX_OBSERVATIONS=25`, 5 s per action, 45 s overall deadline, up to 6 links and 3 forms) and best-effort — it records what it can and **never fails the job**; if the AppMap already carries observations, the step is skipped.
+3. **Grounded Observation (`backend/src/crawler/observe.ts`, invoked during `runPipeline` in `backend/src/agent/pipeline.ts`):** Headless Chromium drives the crawled page to record **grounded facts** before planning: `navigation` (where a link leads), `popup` (popups opened by links), `form_empty_submit` (submit with empty fields), `form_filled_submit` (submit with provided test data), and `count` (repeated-item counts). Observation is bounded (`MAX_OBSERVATIONS=25`, 5 s per action, 45 s overall deadline, up to 6 links and 3 forms) and best-effort — it records what it can and **never fails the job**; if the AppMap already carries observations, the step is skipped.
 4. **Plan Synthesis (`backend/src/agent/steps/planner.ts`):** The AppMap and its observations are checked against the in-memory plan cache. On a cache miss, the planner runs in **dual-call** mode: a high-reasoning model plans core cases and a fast model plans negative cases, bounded by `MAX_AI_TEST_CASES` and `MAX_TEST_CASES` (`backend/src/agent/run.config.ts`). When focus elements are supplied (via the optional `focus` field on `POST /api/generate`), the planner runs a single constrained call instead.
 5. **Deterministic Compilation (`backend/src/agent/steps/compiler.ts`):** Scenarios are mapped directly into `@playwright/test` TypeScript files by looking up referenced elements from the AppMap.
 6. **Static Type-Check Gate (`backend/src/runner/validator.ts`):** Emitted test code is written to an ephemeral directory with a scoped `tsconfig.json` and compiled with `tsc --noEmit`.
 7. **Sandboxed Execution (`backend/src/runner/executor.ts`):** Playwright runs the test files in headless Chromium. In production Linux containers, execution runs under an unprivileged user (`agtrunner`, UID 1001) with network access restricted to the internal egress proxy.
 8. **Triage & Correction Loop (`backend/src/agent/rounds.ts`):** Results are parsed. Passing tests are marked `passed`. Real assertion discrepancies become `failed`. Mechanical locator and timeout issues trigger correction attempts (up to 3 rounds) using a fast model.
 9. **Persistence & Streaming (`backend/src/agent/jobEvents.ts`):** State transitions and test outcomes are saved in Supabase and pushed in real time to the browser UI over Server-Sent Events.
+
+---
+
+## Deployment Architecture
+
+```mermaid
+flowchart TD
+  UserBrowser["User Browser"] -->|HTTPS / UI Interaction| Vercel["Vercel (Next.js Pages Router)"]
+  Vercel -->|Rewrite /api/* + Edge Secret| Render["Render Docker Express (:4000)"]
+  Render -->|Supavisor Pooler :6543| Supabase["Supabase PostgreSQL"]
+  Render -->|HTTPS API Requests| LlmApis["Groq & Google Gemini APIs"]
+  
+  subgraph RenderHost ["Render Backend Linux Container (node:22-bookworm-slim)"]
+    ExpressAPI["Express API Server (:4000)"]
+    CrawlerModule["Chromium DOM Crawler & Observer"]
+    RunnerSandbox["Playwright Runner Sandbox (agtrunner UID 1001)"]
+    TraceStoreEngine["Ephemeral .traces Store (200 traces, 256 MiB cap, FIFO)"]
+    
+    ExpressAPI --> CrawlerModule
+    ExpressAPI --> RunnerSandbox
+    RunnerSandbox -->|Trace Zips| TraceStoreEngine
+  end
+
+  CrawlerModule -->|Navigate & Inspect DOM| TargetSite["Target Web Application"]
+  RunnerSandbox -->|Execute Specs via Internal Egress Proxy| TargetSite
+  TraceStoreEngine -->|Signed Download & /trace-viewer| UserBrowser
+  UptimeRobot["UptimeRobot Probe"] -->|Health Checks /api/health & /api/health/db| ExpressAPI
+```
+
+> [!IMPORTANT]
+> **Containerized Playwright Runner:**
+> Playwright browser execution runs exclusively inside the Render Docker container on Linux under an unprivileged user (`agtrunner`, UID 1001) with internal egress proxy network barriers. Playwright never runs on Vercel and never executes inside the user's browser.
+
+---
+
+## Code Workflow
+
+The end-to-end execution path maps directly through the following architectural layers:
+
+```mermaid
+flowchart LR
+  Routes["routes.ts<br/>(Validation & Admission)"] --> RunQueue["jobRunner.ts<br/>(Run Queue)"]
+  RunQueue --> Pipeline["pipeline.ts<br/>(Orchestrator)"]
+  Pipeline --> Crawl["pageCrawler.ts<br/>(DOM Catalog)"]
+  Crawl --> Observe["observe.ts<br/>(Action Grounding)"]
+  Observe --> Planner["planner.ts<br/>(Dual-Call Plan)"]
+  Planner --> Compiler["compiler.ts<br/>(Deterministic AST)"]
+  Compiler -.->|on CompileError| Generator["generator.ts<br/>(LLM Fallback)"]
+  Compiler --> SafetyGate["codeSafety.ts & validator.ts<br/>(AST Check & tsc)"]
+  Generator --> SafetyGate
+  SafetyGate --> Rounds["rounds.ts<br/>(Execution & Triage)"]
+  Rounds --> Executor["executor.ts<br/>(setpriv / UID 1001)"]
+  Executor --> TraceStore["traceStore.ts<br/>(Ephemeral Traces)"]
+  Rounds --> Corrector["corrector.ts<br/>(Assertion-Guarded Loop)"]
+  Corrector --> SafetyGate
+  Rounds --> Persistence["jobs.ts & jobEvents.ts<br/>(DB & SSE Stream)"]
+  Persistence --> Frontend["Frontend UI<br/>(Replay / Job Detail / Export)"]
+```
+
+| Phase | Core Source File | Primary Responsibility |
+|---|---|---|
+| **1. Routes & Admission** | [`backend/src/api/routes.ts`](backend/src/api/routes.ts) | Request validation with Zod schemas, ALTCHA proof-of-work verification, IP & visitor rate-limiting, edge secret verification. |
+| **2. Queue Management** | [`backend/src/agent/jobRunner.ts`](backend/src/agent/jobRunner.ts) | In-memory `runQueue` concurrency control, run-group lifecycle, non-blocking job detachment. |
+| **3. Pipeline Orchestration** | [`backend/src/agent/pipeline.ts`](backend/src/agent/pipeline.ts) | Step sequencing, status transitions, phase announcements, trace owner resolution, confidence scoring. |
+| **4. DOM Crawl** | [`backend/src/crawler/pageCrawler.ts`](backend/src/crawler/pageCrawler.ts) | Headless Chromium navigation, interactive element indexing, role computation, AppMap generation. |
+| **5. Action Grounding** | [`backend/src/crawler/observe.ts`](backend/src/crawler/observe.ts) | Empirical observation of navigation targets, popups, form submissions, and repeated elements without failing the job. |
+| **6. Scenario Planning** | [`backend/src/agent/steps/planner.ts`](backend/src/agent/steps/planner.ts) | In-memory plan cache lookup, dual-call LLM prompt execution (reasoning core + fast negative), schema validation, self-repair. |
+| **7. Code Synthesis** | [`backend/src/agent/steps/compiler.ts`](backend/src/agent/steps/compiler.ts) | Deterministic AST compilation using strict locator preference; falls back to [`generator.ts`](backend/src/agent/steps/generator.ts) on `CompileError`. |
+| **8. Pre-Flight Safety Gate** | [`backend/src/runner/codeSafety.ts`](backend/src/runner/codeSafety.ts) & [`validator.ts`](backend/src/runner/validator.ts) | AST safety check (rejects process, child_process, dangerous filesystem APIs) followed by static type preflight (`tsc --noEmit`). |
+| **9. Guarded Execution Rounds** | [`backend/src/agent/rounds.ts`](backend/src/agent/rounds.ts) | Multi-attempt test execution orchestration; error classification (`finding`, `locator`, `timeout`); bounded correction via [`corrector.ts`](backend/src/agent/steps/corrector.ts) with strict assertion preservation. |
+| **10. Sandboxed Execution** | [`backend/src/runner/executor.ts`](backend/src/runner/executor.ts) | Isolated execution via Linux `setpriv` (unprivileged `agtrunner` UID 1001), netGuard egress enforcement, Playwright JSON report extraction. |
+| **11. Trace Persistence** | [`backend/src/runner/traceStore.ts`](backend/src/runner/traceStore.ts) | Ephemeral zip trace store with 200-trace cap, 256 MiB byte ceiling, FIFO eviction by `createdAt`, and HMAC-signed 10-minute access tokens. |
+| **12. Persistence & Streaming** | [`backend/src/db/jobs.ts`](backend/src/db/jobs.ts) & [`jobEvents.ts`](backend/src/agent/jobEvents.ts) | Transactional database recording to Supabase PostgreSQL and real-time SSE stream events dispatched to the frontend. |
+| **13. UI Delivery & Export** | [`frontend/src/components/ReplayPanel.tsx`](frontend/src/components/ReplayPanel.tsx) & [`projectExporter.ts`](backend/src/agent/projectExporter.ts) | Embedded Playwright Trace Viewer rendering in browser, direct trace zip download, and standalone runnable Playwright project zip download. |
 
 ---
 
@@ -169,18 +247,18 @@ stateDiagram-v2
 ### Decision 1: Observe-First Grounding
 
 - **Context:** LLMs tasked with authoring browser tests from URLs or screenshots routinely hallucinate CSS classes, non-existent button texts, or deprecated IDs.
-- **Decision:** Crawl the real DOM first with headless Chromium before engaging the planner model, then **observe** the crawled page to record grounded facts (navigation targets, popups, empty/filled form submits, repeated-item counts) as implemented in [backend/src/crawler/observe.ts](backend/src/crawler/observe.ts) and invoked at [backend/src/agent/pipeline.ts:200](backend/src/agent/pipeline.ts#L200-L201). Compile locators deterministically using strict preference ordering: `getByTestId` &rarr; `getByRole` &rarr; `getByPlaceholder` &rarr; `getByLabel` &rarr; `getByText` &rarr; CSS selector.
-- **Why:** Deterministic mapping produces Playwright code that adheres to official testing best practices and aligns with actual page elements without model hallucination on the compiled path. Grounding rules force **success** assertions to be derived from observed facts, so a test cannot assert a success outcome (a post-submit URL, a hidden element, a reset field) that the observation run never produced. When `compileTest` throws `CompileError` (such as unresolvable element references), the pipeline falls back to the LLM generator (`generateTest`, origin `'llm'`) as implemented in [backend/src/agent/pipeline.ts:299-308](backend/src/agent/pipeline.ts#L299-L308).
+- **Decision:** Crawl the real DOM first with headless Chromium before engaging the planner model, then **observe** the crawled page to record grounded facts (navigation targets, popups, empty/filled form submits, repeated-item counts) as implemented in [backend/src/crawler/observe.ts](backend/src/crawler/observe.ts) and invoked during `runPipeline` in [backend/src/agent/pipeline.ts](backend/src/agent/pipeline.ts). Compile locators deterministically using strict preference ordering: `getByTestId` &rarr; `getByRole` &rarr; `getByPlaceholder` &rarr; `getByLabel` &rarr; `getByText` &rarr; CSS selector.
+- **Why:** Deterministic mapping produces Playwright code that adheres to official testing best practices and aligns with actual page elements without model hallucination on the compiled path. Grounding rules force **success** assertions to be derived from observed facts, so a test cannot assert a success outcome (a post-submit URL, a hidden element, a reset field) that the observation run never produced. When `compileTest` throws `CompileError` (such as unresolvable element references), the pipeline falls back to the LLM generator (`generateTest`, origin `'llm'`) as implemented in [backend/src/agent/pipeline.ts](backend/src/agent/pipeline.ts).
 - **Trade-off Accepted:** Dynamic elements that appear only after complex multi-step user interactions are not visible during the initial crawl, and paths the observation run did not exercise cannot be asserted as successes. Observing adds a dedicated browser pass (measured median ~11 s per run).
-- **Where in Code:** `backend/src/crawler/pageCrawler.ts`, `backend/src/crawler/observe.ts`, `backend/src/agent/steps/compiler.ts:12`, `backend/src/agent/pipeline.ts:198-205`.
+- **Where in Code:** `backend/src/crawler/pageCrawler.ts`, `backend/src/crawler/observe.ts`, `backend/src/agent/steps/compiler.ts` (`compileTest`), `backend/src/agent/pipeline.ts` (`runPipeline`).
 
 ### Decision 2: Two-Tier Model Separation
 
 - **Context:** Running a high-parameter reasoning model for small locator syntax adjustments is inefficient and exhausts request limits, while a single planning call tends to blur core journeys and negative edge cases.
-- **Decision:** Split LLM responsibilities into two tiers and use both during planning (**dual-call**): the high-reasoning model (`openai/gpt-oss-120b`) plans the **core** cases, and the fast low-latency model (`openai/gpt-oss-20b`) plans the **negative** cases, with the two sides merged and capped at `MAX_AI_TEST_CASES` planned cases inside the `MAX_TEST_CASES` total ([backend/src/agent/run.config.ts](backend/src/agent/run.config.ts)). The fast tier also handles targeted locator repairs during correction. Route all calls through an ordered provider list (`groq,gemini,nvidia`) using standard `fetch` without vendor SDKs. When focus elements are supplied (via the `focus` field on `POST /api/generate`), or the dual-call token budget would be exceeded, the planner falls back to a single constrained call.
+- **Decision:** Split LLM responsibilities into two tiers and use both during planning (**dual-call**): the high-reasoning tier (configured via environment variables `GROQ_REASONING_MODEL` / `GEMINI_REASONING_MODEL`) plans the **core** cases, and the fast low-latency tier (`GROQ_FAST_MODEL` / `GEMINI_FAST_MODEL`) plans the **negative** cases, with the two sides merged and capped at `MAX_AI_TEST_CASES` planned cases inside the `MAX_TEST_CASES` total ([backend/src/agent/run.config.ts](backend/src/agent/run.config.ts)). The fast tier also handles targeted locator repairs during correction. Route all calls through an ordered provider list (`LLM_PROVIDER_ORDER`, defaulting to `groq,gemini`) using standard `fetch` without vendor SDKs. When focus elements are supplied (via the `focus` field on `POST /api/generate`), or the dual-call token budget would be exceeded, the planner falls back to a single constrained call.
 - **Why:** Separating core from negative planning raises journey coverage while keeping each prompt narrow; the fast tier minimizes latency and token consumption during error recovery.
 - **Trade-off Accepted:** Prompts must be maintained and validated across multiple provider implementations, and dual-call planning consumes more tokens than a single planning call (measured: median fresh tokens 3,113 → 10,213 after Phase 12).
-- **Where in Code:** `backend/src/agent/steps/planner.ts:279-291`, `backend/src/agent/run.config.ts`, `backend/src/config.ts:28-34`, `backend/src/llm/client.ts`, `backend/src/llm/providers/openAiCompatible.ts`.
+- **Where in Code:** `backend/src/agent/steps/planner.ts` (`planTests`), `backend/src/agent/run.config.ts`, `backend/src/config.ts`, `backend/src/llm/client.ts` (`callLlm`), `backend/src/llm/providers/openAiCompatible.ts`.
 
 ### Decision 3: Plan Caching
 
@@ -395,7 +473,7 @@ Measurements recorded from a live 12-run verification matrix re-run after Phase 
 - **Node.js:** Node 22 (Docker image `node:22-bookworm-slim`); tested on `v24.14.1`
 - **Package Manager:** `pnpm` (version 12.8.1)
 - **Database:** PostgreSQL database instance (local PostgreSQL or Supabase project)
-- **LLM API Key:** At least one API key from Groq, Google Gemini, or NVIDIA
+- **LLM API Key:** At least one API key from Groq or Google Gemini
 
 ### Setup Instructions (PowerShell)
 
@@ -478,6 +556,7 @@ cd frontend && pnpm dev
 |---|---|---|---|
 | `PORT` | `4000` | No | Port on which the Express server listens |
 | `NODE_ENV` | `development` | Yes (`production`) | Application environment (`development`, `production`, `test`) |
+| `LOG_LEVEL` | `info` (prod) / `debug` (dev) | No | Winston structured logging severity level (`error`, `warn`, `info`, `debug`) |
 | `HEADED_DEBUG` | `false` | No | When true in dev, launches visible browser windows for debugging |
 | `CRAWL_CONCURRENCY` | `1` | No | Concurrent crawler browser contexts (1–4) |
 | `MAX_ELEMENTS_PER_PAGE` | `200` | No | Maximum interactive elements indexed during crawl |
@@ -485,15 +564,17 @@ cd frontend && pnpm dev
 | `NETWORK_IDLE_WAIT_MS` | `3000` | No | Network quiescence wait time after page navigation |
 | `DATABASE_URL` | *(none)* | Yes | Pooled PostgreSQL connection string (PgBouncer port 6543) |
 | `DIRECT_URL` | *(none)* | Yes | Direct PostgreSQL connection string for migrations (port 5432) |
-| `GROQ_API_KEY` | *(none)* | Yes (or Gemini/NVIDIA) | Groq API authentication key |
+| `GROQ_API_KEY` | *(none)* | Yes (or Gemini) | Groq API authentication key |
 | `GEMINI_API_KEY` | *(none)* | Optional fallback | Google Gemini API authentication key |
-| `NVIDIA_API_KEY` | *(none)* | Optional fallback | NVIDIA API authentication key |
-| `GROQ_REASONING_MODEL` | `openai/gpt-oss-120b` | No | Model used for scenario planning on Groq |
-| `GROQ_FAST_MODEL` | `openai/gpt-oss-20b` | No | Model used for test correction on Groq |
-| `GEMINI_REASONING_MODEL` | `gemini-2.5-flash` | No | Fallback reasoning model for planning on Gemini |
-| `GEMINI_FAST_MODEL` | `gemini-2.5-flash-lite` | No | Fallback model for correction on Gemini |
-| `NVIDIA_MODEL` | `openai/gpt-oss-20b` | No | Fallback model used on NVIDIA |
-| `LLM_PROVIDER_ORDER` | `groq,gemini,nvidia` | No | Ordered fallback sequence for LLM provider attempts |
+| `GROQ_REASONING_MODELS` | `openai/gpt-oss-120b,qwen/qwen3.8-27b` | No | Comma-separated fallback chain for Groq reasoning (planner core, expansion, repair) |
+| `GROQ_FAST_MODELS` | `openai/gpt-oss-20b,qwen/qwen3.8-27b` | No | Comma-separated fallback chain for Groq fast tier (planner negative, generator, corrector) |
+| `GEMINI_REASONING_MODELS` | `gemini-3.5-flash,gemini-2.5-flash` | No | Comma-separated fallback chain for Gemini reasoning |
+| `GEMINI_FAST_MODELS` | `gemini-3.5-flash-lite,gemini-3.1-flash-lite` | No | Comma-separated fallback chain for Gemini fast tier |
+| `GROQ_REASONING_MODEL` | `openai/gpt-oss-120b` | No | Primary reasoning model on Groq (backward-compatible override) |
+| `GROQ_FAST_MODEL` | `openai/gpt-oss-20b` | No | Primary fast model on Groq (backward-compatible override) |
+| `GEMINI_REASONING_MODEL` | `gemini-3.5-flash` | No | Primary reasoning model on Gemini (backward-compatible override) |
+| `GEMINI_FAST_MODEL` | `gemini-3.5-flash-lite` | No | Primary fast model on Gemini (backward-compatible override) |
+| `LLM_PROVIDER_ORDER` | `groq,gemini` | No | Ordered fallback sequence for LLM provider attempts |
 | `POW_SECRET` | *(none)* | Yes (&ge;16 chars) | HMAC signing secret for ALTCHA proof-of-work challenges |
 | `VISITOR_SIGNING_SECRET` | *(none)* | Yes (&ge;16 chars) | HMAC signing secret for anonymous visitor session tokens |
 | `ADMIN_SECRET` | *(none)* | Yes (&ge;24 chars) | Shared secret required in `X-Admin-Secret` header for admin routes |
@@ -598,93 +679,131 @@ The SSE connection transmits continuous UTF-8 event text with an automatic 15-se
 
 ---
 
-## Data Model
+## Database Schema
 
-<details>
-<summary><strong>Prisma Entity Relationship Diagram</strong></summary>
+Database entities are managed via Prisma (`backend/prisma/schema.prisma`) and hosted on Supabase PostgreSQL:
 
 ```mermaid
 erDiagram
-  Job ||--o{ AgentStep : "records"
-  Job ||--o{ GeneratedTest : "produces"
-  GeneratedTest ||--o{ ExecutionResult : "attempts"
+  Job ||--o{ AgentStep : "records (Cascade)"
+  Job ||--o{ GeneratedTest : "produces (Cascade)"
+  GeneratedTest ||--o{ ExecutionResult : "attempts (Cascade)"
 
   Job {
     uuid id PK
     string targetUrl
-    enum status "pending|crawling|planning|generating|executing|completed|failed|cancelled"
-    string errorCode
-    string errorMessage
-    json appMap
-    json testPlan
-    datetime createdAt
-    datetime startedAt
-    datetime completedAt
-    string visitorId
-    boolean usedOwnKeys
-    boolean quotaExempt
-    uuid runGroupId
-    string ipHash
-    datetime cancelledAt
+    JobStatus status "pending|crawling|planning|generating|executing|completed|failed|cancelled"
+    string errorCode "nullable"
+    string errorMessage "nullable"
+    json appMap "nullable"
+    json testPlan "nullable"
+    datetime createdAt "default now"
+    datetime startedAt "nullable"
+    datetime completedAt "nullable"
+    string visitorId "nullable"
+    boolean usedOwnKeys "default false"
+    boolean quotaExempt "default false"
+    uuid runGroupId "nullable"
+    string ipHash "nullable"
+    datetime cancelledAt "nullable"
   }
 
   AgentStep {
     uuid id PK
-    uuid jobId FK
-    enum stepType "crawl|observe|plan|generate|validate|execute|correct"
-    string testCaseId
-    int attemptNumber
-    enum status "success|failure"
-    int latencyMs
-    string llmProvider
-    string llmModel
-    int promptTokens
-    int completionTokens
-    string errorDetail
-    datetime createdAt
+    uuid jobId FK "references Job.id"
+    StepType stepType "crawl|observe|plan|generate|validate|execute|correct"
+    string testCaseId "nullable"
+    int attemptNumber "nullable"
+    StepStatus status "success|failure"
+    int latencyMs "nullable"
+    string llmProvider "nullable"
+    string llmModel "nullable"
+    int promptTokens "nullable"
+    int completionTokens "nullable"
+    string errorDetail "nullable"
+    datetime createdAt "default now"
   }
 
   GeneratedTest {
     uuid id PK
-    uuid jobId FK
+    uuid jobId FK "references Job.id"
     string testCaseId
     string filename
     string finalCode
-    enum finalStatus "passed|failed|gave_up|needs_review"
+    TestStatus finalStatus "passed|failed|gave_up|needs_review"
     int totalAttempts
-    datetime createdAt
+    datetime createdAt "default now"
   }
 
   ExecutionResult {
     uuid id PK
-    uuid generatedTestId FK
+    uuid generatedTestId FK "references GeneratedTest.id"
     int attemptNumber
     string code
     boolean validationPassed
-    json validationErrors
-    boolean executionPassed
-    string executionError
-    enum failureClass "finding|locator|timeout|other"
-    json failureContext
-    int durationMs
+    json validationErrors "nullable"
+    boolean executionPassed "nullable"
+    string executionError "nullable"
+    FailureClass failureClass "finding|locator|timeout|other"
+    json failureContext "nullable"
+    int durationMs "nullable"
     boolean corrected
-    datetime createdAt
+    datetime createdAt "default now"
   }
 
   ServerEvent {
     uuid id PK
-    datetime createdAt
+    datetime createdAt "default now"
     string level "warn|error"
     string source
-    string message
-    json context
-    uuid jobId
+    string message "VarChar(500)"
+    json context "nullable"
+    uuid jobId "nullable unconstrained (not a Prisma relation)"
     string fingerprint
-    int count
+    int count "default 1"
   }
 ```
 
-</details>
+### Relations, Cascades & Constraints
+- **Cascade Deletions:** `Job` configures `onDelete: Cascade` to both `AgentStep` and `GeneratedTest`. `GeneratedTest` configures `onDelete: Cascade` to `ExecutionResult`. Expiry sweeps or manual job deletions cleanly purge all child steps and test results.
+- **Unique Constraints:**
+  - `GeneratedTest`: `@@unique([jobId, testCaseId])` and `@@unique([jobId, filename])` prevent duplicate case collisions.
+  - `ExecutionResult`: `@@unique([generatedTestId, attemptNumber])` prevents duplicate attempt records.
+- **Indexes:**
+  - `Job`: `[createdAt, id]`, `[visitorId, createdAt]`, `[ipHash, createdAt]`, `[runGroupId]`.
+  - `AgentStep`: `[jobId]`.
+  - `GeneratedTest`: `[jobId]`.
+  - `ExecutionResult`: `[generatedTestId]`.
+  - `ServerEvent`: `[createdAt]`.
+- **ServerEvent Decoupling:** `ServerEvent.jobId` is an unconstrained UUID column and **not a Prisma relation**. This allows system events and errors to be recorded even when a job is rejected before creation or after a job record is purged.
+
+---
+
+## Storage & State Matrix
+
+| Storage Layer | Technology / Location | State Maintained | Lifecycle / Retention Policy | Security & Isolation Model |
+|---|---|---|---|---|
+| **Persistent Relational DB** | Supabase PostgreSQL (PgBouncer `:6543`) | Jobs, agent steps, test plans, generated test code, execution results, server events | 30-day retention sweep (`expireOldJobs.ts`); `SAMPLE_JOB_IDS` exempt | SSL required; secrets replaced with `__AGT_SECRET_n__` tokens |
+| **Ephemeral Disk Storage** | Render Backend Container (`.traces/`, `tests/run-*`) | Playwright trace zips, temporary execution files and test specs | Max 200 traces, 256 MiB total cap, 25 MiB single trace limit, FIFO eviction by `createdAt`, 1-hour TTL; run dirs deleted on run completion | Traces served only via HMAC-signed 10-minute owner tokens; runner sandboxed under UID 1001 |
+| **In-Memory Backend State** | Node.js Process Memory | In-flight run queue, active SSE connection listeners, plan cache (keyed by normalized URL + element hash), ALTCHA replay cache (10 min TTL), visitor token-bucket budget reservations | Process lifetime; caches have explicit TTLs (plan cache: 6 hours / 100 entries); cleared on container restart | In-memory only; non-shared across instances |
+| **Browser Client Storage** | Browser `localStorage` & `sessionStorage` | Prefill test credentials (30 days in `localStorage`, user-consented), active visitor ID (`agt_visitor_id`), active run history | Client-controlled; deleted on browser clear; never transmitted except in user request payloads | Strictly client-side domain storage |
+| **External Model APIs** | Groq & Google Gemini APIs | Transient LLM inference prompts and completions | No server-side retention; API keys sent via HTTPS authorization headers | Server keys or user BYOK; sensitive data redacted in logging |
+
+---
+
+## Observability & Structured Logging
+
+The backend observability stack combines structured Winston logging for runtime inspection on Render with in-database event deduplication for operational alerts:
+
+1. **Winston Structured Logger ([backend/src/observability/logger.ts](backend/src/observability/logger.ts)):**
+   - **Console Transport Only:** Directly streams logs to container `stdout`/`stderr` without local file overhead.
+   - **Production JSON Formatting:** In production (`NODE_ENV=production`), logs format as single-line JSON structured for Render log search and metric extraction. In development, logs use colorized human-readable tags.
+   - **Configurable Severity:** Governed by `LOG_LEVEL` (defaults to `info` in production, `debug` in development).
+   - **Context Enrichment:** Emits standard context fields including `component`, `jobId`, `provider`, `model`, `latencyMs`, `promptTokens`, `completionTokens`, and `errorCode`.
+   - **Automatic Secret Redaction:** Recursively redacts Bearer tokens, Groq API keys (`gsk_*`), Gemini API keys (`AIzaSy*`), PostgreSQL connection strings, signed trace tokens (`t=*`), and sensitive request body fields before log emission.
+2. **ServerEvent Deduplication ([backend/src/observability/serverEvents.ts](backend/src/observability/serverEvents.ts)):**
+   - Captures unhandled promise rejections, uncaught exceptions, and LLM exhaustion events in the `ServerEvent` table.
+   - Deduplicates identical errors using an SHA-256 fingerprint within a sliding 60-second window, incrementing an event `count` instead of creating redundant rows.
 
 ---
 

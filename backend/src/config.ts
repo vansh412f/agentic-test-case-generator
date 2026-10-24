@@ -27,11 +27,13 @@ export const configSchema = z.object({
   GEMINI_API_KEY: z.string().optional(),
   GROQ_REASONING_MODEL: z.string().default('openai/gpt-oss-120b'),
   GROQ_FAST_MODEL: z.string().default('openai/gpt-oss-20b'),
-  GEMINI_REASONING_MODEL: z.string().default('gemini-2.5-flash'),
-  GEMINI_FAST_MODEL: z.string().default('gemini-2.5-flash-lite'),
-  NVIDIA_API_KEY: z.string().optional(),
-  NVIDIA_MODEL: z.string().default('openai/gpt-oss-20b'),
-  LLM_PROVIDER_ORDER: z.string().default('groq,gemini,nvidia'),
+  GEMINI_REASONING_MODEL: z.string().default('gemini-3.5-flash'),
+  GEMINI_FAST_MODEL: z.string().default('gemini-3.5-flash-lite'),
+  GROQ_REASONING_MODELS: z.string().optional(),
+  GROQ_FAST_MODELS: z.string().optional(),
+  GEMINI_REASONING_MODELS: z.string().optional(),
+  GEMINI_FAST_MODELS: z.string().optional(),
+  LLM_PROVIDER_ORDER: z.string().default('groq,gemini'),
   POW_SECRET: z.string().min(16).optional(),
   VISITOR_SIGNING_SECRET: z.string().min(16).optional(),
   ADMIN_SECRET: z.string().optional(),
@@ -129,11 +131,10 @@ const parseConfig = (): Config => {
 
     const hasLlmKey = Boolean(
       (result.data.GROQ_API_KEY && result.data.GROQ_API_KEY.trim().length > 0) ||
-      (result.data.GEMINI_API_KEY && result.data.GEMINI_API_KEY.trim().length > 0) ||
-      (result.data.NVIDIA_API_KEY && result.data.NVIDIA_API_KEY.trim().length > 0),
+      (result.data.GEMINI_API_KEY && result.data.GEMINI_API_KEY.trim().length > 0),
     );
     if (!hasLlmKey) {
-      missing.push('At least one LLM key (GROQ_API_KEY, GEMINI_API_KEY, or NVIDIA_API_KEY)');
+      missing.push('At least one LLM key (GROQ_API_KEY or GEMINI_API_KEY)');
     }
 
     if (missing.length > 0) {
@@ -162,7 +163,6 @@ export const VIEWPORT = { width: 1280, height: 720 } as const;
 export const PROVIDER_ENV_KEYS: Record<LlmProviderName, keyof Config> = {
   groq: 'GROQ_API_KEY',
   gemini: 'GEMINI_API_KEY',
-  nvidia: 'NVIDIA_API_KEY',
 };
 
 const activeProviders: LlmProviderName[] = [];

@@ -9,7 +9,6 @@ import { publishJobEvent } from './jobEvents.ts';
 const PROVIDER_MODELS: Record<LlmProviderName, string> = {
   groq: GROQ_DEFAULT_MODEL,
   gemini: GEMINI_DEFAULT_MODEL,
-  nvidia: 'openai/gpt-oss-20b',
 };
 
 interface StepContext {

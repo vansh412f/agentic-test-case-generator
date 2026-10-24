@@ -13,8 +13,8 @@ export const groqProvider: LlmProvider = {
       throw new LlmError('AUTH_FAILED', 'Groq API key is missing from configuration (server or request).');
     }
     const tier = request.tier ?? 'reasoning';
-    const model = modelFor('groq', tier);
-    const reasoningEffort = reasoningEffortFor('groq', tier);
+    const model = request.modelOverride || modelFor('groq', tier);
+    const reasoningEffort = reasoningEffortFor('groq', tier, model);
     return openAiCompatibleChat({
       providerName: 'groq',
       endpointUrl: 'https://api.groq.com/openai/v1/chat/completions',

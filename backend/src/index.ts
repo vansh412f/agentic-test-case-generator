@@ -10,6 +10,7 @@ import { closeAllJobStreams } from './api/jobStream.ts';
 import { reconcileOrphanedJobs } from './maintenance/reconcileJobs.ts';
 import { runRetention } from './maintenance/expireOldJobs.ts';
 import { recordServerEvent } from './observability/serverEvents.ts';
+import { logger } from './observability/logger.ts';
 import { toHttpError } from './api/errors.ts';
 
 import path from 'node:path';
@@ -156,14 +157,14 @@ try {
 }
 if (traceViewerDir) {
   app.use('/trace-viewer', express.static(traceViewerDir, { index: 'index.html', maxAge: '1h', immutable: false }));
-  console.log(`[TraceViewer] serving /trace-viewer from ${traceViewerDir}`);
+  logger.info(`serving /trace-viewer from ${traceViewerDir}`, { component: 'TraceViewer' });
 } else {
-  console.warn('[TraceViewer] bundled viewer not found; /trace-viewer disabled');
+  logger.warn('bundled viewer not found; /trace-viewer disabled', { component: 'TraceViewer' });
 }
 
 // Initialize trace store (boot clean slate, start sweep interval)
 void initTraceStore().catch((err) => {
-  console.warn('[TraceStore] init failed:', err);
+  logger.warn('init failed', { component: 'TraceStore', error: err instanceof Error ? err.message : String(err) });
 });
 
 // API Routes
@@ -197,7 +198,7 @@ app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, r
   const status = typeof err?.status === 'number' ? err.status : (typeof err?.statusCode === 'number' ? err.statusCode : 500);
 
   if (status < 500) {
-    console.warn(`[Request error] ${status}: ${err.message}`);
+    logger.warn(`Request error: ${err.message}`, { component: 'Server', status });
     res.status(status).json({
       error: 'INVALID_REQUEST',
       message: err.message || 'Invalid request body',
@@ -205,7 +206,7 @@ app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, r
     return;
   }
 
-  console.error('[Error]', err);
+  logger.error('Unhandled route error', { component: 'Server', error: err.message, stack: err.stack });
   res.status(500).json({
     error: 'INTERNAL_ERROR',
     message: config.NODE_ENV === 'production' ? 'An internal error occurred.' : err.message,
@@ -216,8 +217,7 @@ let server: ReturnType<typeof app.listen> | undefined;
 
 if (isDirectRun) {
   server = app.listen(config.PORT, () => {
-    console.log(`Server running on http://localhost:${config.PORT}`);
-    console.log(`Environment: ${config.NODE_ENV}`);
+    logger.info(`Server running on http://localhost:${config.PORT}`, { component: 'Server', port: config.PORT, nodeEnv: config.NODE_ENV });
     void reconcileOrphanedJobs(bootedAt);
 
     if (!config.LOCAL_AGENT_MODE) {
@@ -233,12 +233,12 @@ if (isDirectRun) {
   });
 
   process.on('unhandledRejection', (reason) => {
-    console.error('[Fatal] Unhandled promise rejection:', reason instanceof Error ? reason.message : String(reason));
+    logger.error('Unhandled promise rejection', { component: 'Server', reason: reason instanceof Error ? reason.message : String(reason) });
     recordServerEvent('error', 'process:unhandledRejection', reason);
   });
 
   process.on('uncaughtException', (error) => {
-    console.error('[Fatal] Uncaught exception:', error instanceof Error ? error.message : String(error));
+    logger.error('Uncaught exception', { component: 'Server', error: error instanceof Error ? error.message : String(error) });
     recordServerEvent('error', 'process:uncaughtException', error);
     shutdown('uncaughtException');
   });
@@ -254,7 +254,7 @@ async function failInFlightJobs(): Promise<void> {
   try {
     await failNonTerminalJobs({ ids }, 'SERVER_SHUTDOWN', 'The server shut down while this job was running.');
   } catch (error) {
-    console.warn('[Shutdown] Could not mark in-flight jobs failed:', error instanceof Error ? error.message : String(error));
+    logger.warn('Could not mark in-flight jobs failed', { component: 'Shutdown', error: error instanceof Error ? error.message : String(error) });
   }
   for (const id of ids) {
     publishJobEvent(id, { type: 'job_finished', data: { status: 'failed', errorCode: 'SERVER_SHUTDOWN' } });
@@ -264,9 +264,9 @@ async function failInFlightJobs(): Promise<void> {
 function shutdown(signal: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`${signal} received: failing in-flight jobs, closing streams, draining HTTP requests`);
+  logger.info(`${signal} received: draining HTTP requests and closing streams`, { component: 'Shutdown', signal });
   const deadline = setTimeout(() => {
-    console.error('Graceful shutdown deadline exceeded');
+    logger.error('Graceful shutdown deadline exceeded', { component: 'Shutdown' });
     process.exit(1);
   }, 30_000);
   deadline.unref();
@@ -279,7 +279,7 @@ function shutdown(signal: string): void {
         // Detached pipelines + Chromium children keep the event loop alive, so exit explicitly.
         void prisma.$disconnect()
           .catch((cause: unknown) => {
-            console.error('Database disconnect failed:', cause instanceof Error ? cause.message : String(cause));
+            logger.error('Database disconnect failed', { component: 'Shutdown', cause: cause instanceof Error ? cause.message : String(cause) });
           })
           .finally(() => process.exit(error ? 1 : 0));
       });

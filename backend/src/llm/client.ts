@@ -1,15 +1,14 @@
-import fs from 'node:fs/promises';
 import { observeLlmCall } from './telemetry.ts';
-import path from 'node:path';
 import { config, getActiveProviders } from '../config.ts';
 import { LlmError } from './types.ts';
-import type { LlmRequest, LlmResponse, LlmMessage, LlmErrorCode, LlmProvider } from './types.ts';
-import { LLM_MAX_RETRIES_PER_PROVIDER, LLM_REQUEST_TIMEOUT_MS, LLM_PROVIDER_ORDER } from './providers.config.ts';
+import type { LlmRequest, LlmResponse, LlmMessage, LlmModelErrorCode, LlmProvider } from './types.ts';
+import { LLM_MAX_RETRIES_PER_PROVIDER, LLM_REQUEST_TIMEOUT_MS, LLM_PROVIDER_ORDER, getModelsFor } from './providers.config.ts';
 import type { LlmProviderName } from './providers.config.ts';
 import { PROVIDER_REGISTRY } from './providers/index.ts';
 import { hasAnyRequestKey, llmKeyOverride } from './requestKeys.ts';
 import { JobCancelledError } from '../agent/cancellation.ts';
 import { recordServerEvent } from '../observability/serverEvents.ts';
+import { logger } from '../observability/logger.ts';
 
 interface LlmCallLog {
   timestamp: string;
@@ -20,7 +19,8 @@ interface LlmCallLog {
   latencyMs: number;
   usage?: { promptTokens: number; completionTokens: number };
   purpose?: 'plan' | 'repair' | 'expand';
-  errorCode?: LlmErrorCode;
+  task?: string;
+  errorCode?: LlmModelErrorCode;
   errorMessage?: string;
   requestPreview: string;
   responsePreview?: string;
@@ -28,8 +28,9 @@ interface LlmCallLog {
 
 interface CollectedFailure {
   provider: LlmProviderName;
+  model?: string;
   attempt: number;
-  errorCode: LlmErrorCode;
+  errorCode: LlmModelErrorCode;
   errorMessage: string;
 }
 
@@ -62,12 +63,13 @@ async function attemptProviderCall(provider: LlmProvider, request: LlmRequest): 
   }
 }
 
-function shouldRetry(code: LlmErrorCode): boolean {
+function shouldRetry(code: LlmModelErrorCode): boolean {
   switch (code) {
     case 'RATE_LIMITED':
     case 'TIMEOUT':
     case 'PROVIDER_UNAVAILABLE':
       return true;
+    case 'MODEL_UNAVAILABLE':
     case 'AUTH_FAILED':
     case 'BAD_RESPONSE':
     case 'ALL_PROVIDERS_FAILED':
@@ -111,29 +113,35 @@ function buildRequestPreview(messages: LlmMessage[]): string {
 
 async function logCall(entry: LlmCallLog): Promise<void> {
   await observeLlmCall(entry);
-  if (config.NODE_ENV === 'production') {
-    return;
-  }
 
+  const isProd = config.NODE_ENV === 'production';
   if (entry.success) {
     const p = entry.usage?.promptTokens ?? 0;
     const c = entry.usage?.completionTokens ?? 0;
-    console.log(`[LLM] ${entry.provider} | ${entry.model} | ${entry.latencyMs}ms | prompt=${p} completion=${c} | ok`);
+    logger.info(`LLM call succeeded (${entry.provider}/${entry.model})`, {
+      component: 'LLM',
+      provider: entry.provider,
+      model: entry.model,
+      attempt: entry.attempt,
+      latencyMs: entry.latencyMs,
+      promptTokens: p,
+      completionTokens: c,
+      purpose: entry.purpose,
+      task: entry.task,
+      ...(isProd ? {} : { requestPreview: entry.requestPreview, responsePreview: entry.responsePreview }),
+    });
   } else {
-    console.log(`[LLM] ${entry.provider} | FAIL (${entry.errorCode}) | ${entry.errorMessage}`);
-  }
-
-  const logsDir = path.resolve(process.cwd(), 'logs');
-  const safeTimestamp = entry.timestamp.replace(/[:.]/g, '-');
-  const statusStr = entry.success ? 'ok' : 'fail';
-  const filename = `${safeTimestamp}-${entry.provider}-${statusStr}.json`;
-  const filePath = path.join(logsDir, filename);
-
-  try {
-    await fs.mkdir(logsDir, { recursive: true });
-    await fs.writeFile(filePath, JSON.stringify(entry, null, 2), 'utf-8');
-  } catch (err) {
-    console.warn(`[LLM] Failed to write log file to ${filePath}:`, err);
+    logger.warn(`LLM call failed (${entry.provider}/${entry.model}): ${entry.errorMessage}`, {
+      component: 'LLM',
+      provider: entry.provider,
+      model: entry.model,
+      attempt: entry.attempt,
+      latencyMs: entry.latencyMs,
+      errorCode: entry.errorCode,
+      purpose: entry.purpose,
+      task: entry.task,
+      ...(isProd ? {} : { requestPreview: entry.requestPreview }),
+    });
   }
 }
 
@@ -163,81 +171,113 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
     const budget = PROVIDER_TPM_BUDGET[providerName];
 
     if (budget !== undefined && est > budget && remainingProviders.length > 0) {
-      console.log(`[LLM] skip ${providerName}: est ${est} tok > TPM budget`);
+      logger.info(`skip ${providerName}: est ${est} tok > TPM budget`, {
+        component: 'LLM',
+        provider: providerName,
+        estTokens: est,
+      });
       continue;
     }
 
     const provider = PROVIDER_REGISTRY[providerName];
+    const tier = request.tier ?? 'reasoning';
+    const models = request.modelOverride
+      ? [request.modelOverride]
+      : getModelsFor(providerName, tier);
 
-    for (let attempt = 0; attempt <= LLM_MAX_RETRIES_PER_PROVIDER; attempt++) {
-      if (request.signal?.aborted) {
-        throw new JobCancelledError();
-      }
-      const timestamp = new Date().toISOString();
-      try {
-        const response = await attemptProviderCall(provider, request);
+    for (let modelIdx = 0; modelIdx < models.length; modelIdx++) {
+      const currentModel = models[modelIdx];
+      const modelRequest: LlmRequest = { ...request, modelOverride: currentModel };
 
-        await logCall({
-          timestamp,
-          provider: providerName,
-          model: response.model,
-          attempt,
-          purpose: request.purpose,
-          success: true,
-          latencyMs: response.latencyMs ?? 0,
-          usage: response.usage,
-          requestPreview,
-          responsePreview: response.content.slice(0, 200),
-        });
-
-        return response;
-      } catch (err) {
-        if (request.signal?.aborted || err instanceof JobCancelledError) {
+      for (let attempt = 0; attempt <= LLM_MAX_RETRIES_PER_PROVIDER; attempt++) {
+        if (request.signal?.aborted) {
           throw new JobCancelledError();
         }
+        const timestamp = new Date().toISOString();
+        try {
+          const response = await attemptProviderCall(provider, modelRequest);
 
-        const llmErr = err instanceof LlmError
-          ? err
-          : new LlmError('PROVIDER_UNAVAILABLE', 'Unexpected provider error', err);
+          await logCall({
+            timestamp,
+            provider: providerName,
+            model: response.model || currentModel,
+            attempt,
+            purpose: request.purpose,
+            task: request.task,
+            success: true,
+            latencyMs: response.latencyMs ?? 0,
+            usage: response.usage,
+            requestPreview,
+            responsePreview: response.content.slice(0, 200),
+          });
 
-        await logCall({
-          timestamp,
-          provider: providerName,
-          model: 'unknown',
-          attempt,
-          purpose: request.purpose,
-          success: false,
-          latencyMs: Date.now() - Date.parse(timestamp),
-          errorCode: llmErr.code,
-          errorMessage: llmErr.message,
-          requestPreview,
-        });
+          return response;
+        } catch (err) {
+          if (request.signal?.aborted || err instanceof JobCancelledError) {
+            throw new JobCancelledError();
+          }
 
-        collectedFailures.push({
-          provider: providerName,
-          attempt,
-          errorCode: llmErr.code,
-          errorMessage: llmErr.message,
-        });
+          const llmErr = err instanceof LlmError
+            ? err
+            : new LlmError('PROVIDER_UNAVAILABLE', 'Unexpected provider error', err);
 
-        // Do not retry non-retryable errors on this provider
-        if (!shouldRetry(llmErr.code)) {
-          break; // move to next provider
+          await logCall({
+            timestamp,
+            provider: providerName,
+            model: currentModel,
+            attempt,
+            purpose: request.purpose,
+            task: request.task,
+            success: false,
+            latencyMs: Date.now() - Date.parse(timestamp),
+            errorCode: llmErr.code,
+            errorMessage: llmErr.message,
+            requestPreview,
+          });
+
+          collectedFailures.push({
+            provider: providerName,
+            model: currentModel,
+            attempt,
+            errorCode: llmErr.code,
+            errorMessage: llmErr.message,
+          });
+
+          // P7.5: MODEL_UNAVAILABLE error classification for model-advance only.
+          if ((llmErr.code as string) === 'MODEL_UNAVAILABLE') {
+            logger.warn(`Model ${providerName}:${currentModel} unavailable, advancing to fallback model in chain`, {
+              component: 'LLM',
+              provider: providerName,
+              model: currentModel,
+              nextModel: models[modelIdx + 1] ?? 'none',
+            });
+            break; // Stop retrying currentModel, advance to next model in models loop
+          }
+
+          if (llmErr.code === 'AUTH_FAILED') {
+            modelIdx = models.length; // Key invalid; skip trying other models on this provider
+            break;
+          }
+
+          // Do not retry non-retryable errors on this model
+          if (!shouldRetry(llmErr.code)) {
+            break; // move to next model or next provider
+          }
+
+          // P10 / Part 7b: Measured Groq TPM-reservation behavior shows long retry windows (>10s)
+          // are better handled by immediate failover to the next provider than burning retries.
+          if (llmErr.code === 'RATE_LIMITED' && (llmErr.retryAfterMs ?? 0) > 10_000) {
+            break;
+          }
+
+          // Exhausted retries on this model
+          if (attempt === LLM_MAX_RETRIES_PER_PROVIDER) {
+            break;
+          }
+
+          const backoffMs = calculateBackoff(attempt, llmErr.retryAfterMs);
+          await sleep(backoffMs, request.signal);
         }
-
-        // P10 / Part 7b: Measured Groq TPM-reservation behavior shows long retry windows (>10s)
-        // are better handled by immediate failover to the next provider than burning retries.
-        if (llmErr.code === 'RATE_LIMITED' && (llmErr.retryAfterMs ?? 0) > 10_000) {
-          break;
-        }
-
-        // Exhausted retries on this provider
-        if (attempt === LLM_MAX_RETRIES_PER_PROVIDER) {
-          break;
-        }
-
-        const backoffMs = calculateBackoff(attempt, llmErr.retryAfterMs);
-        await sleep(backoffMs, request.signal);
       }
     }
   }
