@@ -236,6 +236,7 @@ export type TestCase = {
   description: string;
   steps: PlanStep[];
   origin?: 'llm' | 'baseline';
+  intent?: 'positive' | 'negative';
 };
 
 export const TestPlanSchema = z.object({
@@ -317,6 +318,8 @@ instead of elementId. name/withinText follow the TEXT PROVENANCE rule (typically
 Example: after filling "Buy milk" and pressing Enter → \
 {"action":"check","elementId":null,"target":{"role":"checkbox","container":"listitem","withinText":"Buy milk"},"value":null,"description":"Check Buy milk"}
 13. assert_count value is a number as a string, e.g. "2".
+14. TEST DATA: TEST DATA values are valid success values. Never use a secret placeholder as the invalid/missing value under test: empty field = fill '' or omit the fill; wrong credential = a non-secret literal such as wrong-password. Use exact test-data only for fields meant to stay valid in that case.
+15. Do not use target role 'alert' unless the App Map or OBSERVED FACTS explicitly indicate an alert role.
 
 GROUNDING IN OBSERVED FACTS: When OBSERVED FACTS are provided:
 - assert_url values must be finalUrl values from OBSERVED FACTS or href values present in the App Map. Never invent paths (e.g. /dashboard) that appear in neither.
