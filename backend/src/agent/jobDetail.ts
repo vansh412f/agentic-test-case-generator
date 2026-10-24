@@ -31,7 +31,6 @@ export interface JobDetail extends Omit<LoadedJob, 'generatedTests' | 'visitorId
   runGroupId: string | null;
   groupRemainingJobs?: number;
   canCancel: boolean;
-  canEdit: boolean;
 }
 
 export interface BuildJobDetailOptions {
@@ -54,20 +53,12 @@ export function buildJobDetail(
       options.viewerVisitorId === visitorId &&
       !terminal,
   );
-  // Editing/re-running only makes sense once the original run has finished.
-  const canEdit = Boolean(
-    options?.viewerVisitorId &&
-      visitorId &&
-      options.viewerVisitorId === visitorId &&
-      terminal,
-  );
 
   return {
     ...rest,
     runGroupId: job.runGroupId ?? null,
     queuePosition: runQueue.positionOf(job.id),
     canCancel,
-    canEdit,
     groupRemainingJobs: options?.groupRemainingJobs,
     usedOwnKeys: Boolean(job.usedOwnKeys),
     tokenUsage: summarizeTokenUsage(job.agentSteps),
@@ -91,11 +82,17 @@ export function buildJobDetail(
       const lastAttempt = sortedAttempts[sortedAttempts.length - 1];
       const failureSummary = lastAttempt?.failureSummary;
 
-      // Add traceExpiresAt for the last attempt (owner-only)
-      const viewerVisitorId = options?.viewerVisitorId ?? '';
-      const traceEntry = traceForAttempt(job.id, test.testCaseId, lastAttempt?.attemptNumber ?? 0, viewerVisitorId);
-      if (traceEntry) {
-        lastAttempt.traceExpiresAt = new Date(traceEntry.expiresAt).toISOString();
+      // Add traceExpiresAt for EVERY attempt with a live trace (owner/local-unclaimed only)
+      const isOwner = Boolean(visitorId && options?.viewerVisitorId && options.viewerVisitorId === visitorId);
+      const isLocalUnclaimed = !visitorId;
+      if (isOwner || isLocalUnclaimed) {
+        const effectiveOwner = visitorId ?? '';
+        for (const attempt of sortedAttempts) {
+          const traceEntry = traceForAttempt(job.id, test.testCaseId, attempt.attemptNumber, effectiveOwner);
+          if (traceEntry) {
+            attempt.traceExpiresAt = new Date(traceEntry.expiresAt).toISOString();
+          }
+        }
       }
 
       return {

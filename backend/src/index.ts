@@ -48,11 +48,15 @@ app.use(express.json());
 // Middleware: Parse URL-encoded request bodies
 app.use(express.urlencoded({ extended: true }));
 
-// Security headers (nosniff, strict-origin-when-cross-origin, DENY frame options)
-app.use((_req: Request, res: Response, next: NextFunction) => {
+// Security headers (nosniff, strict-origin-when-cross-origin, DENY frame options, SAMEORIGIN for trace-viewer)
+app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('X-Frame-Options', 'DENY');
+  if (req.path.startsWith('/trace-viewer')) {
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  } else {
+    res.setHeader('X-Frame-Options', 'DENY');
+  }
   next();
 });
 

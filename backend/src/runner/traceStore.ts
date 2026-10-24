@@ -61,6 +61,24 @@ export async function registerTrace(
     // Ensure trace dir exists
     await fs.mkdir(TRACE_DIR, { recursive: true });
 
+    // Replace duplicate entry for same (jobId, testCaseId, attemptNumber, visitorId)
+    for (const [existingId, existingEntry] of registry) {
+      if (
+        existingEntry.jobId === meta.jobId &&
+        existingEntry.testCaseId === meta.testCaseId &&
+        existingEntry.attemptNumber === meta.attemptNumber &&
+        existingEntry.visitorId === meta.visitorId
+      ) {
+        const oldFile = path.join(TRACE_DIR, `${existingId}.zip`);
+        try {
+          await fs.unlink(oldFile);
+        } catch {
+          // Ignore cleanup errors
+        }
+        registry.delete(existingId);
+      }
+    }
+
     // Copy zip to store
     await fs.copyFile(srcZipPath, destPath);
 

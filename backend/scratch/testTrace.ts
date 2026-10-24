@@ -1,3 +1,7 @@
+// Mock minimal environment for tests
+process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/db';
+process.env.DIRECT_URL = 'postgresql://user:pass@localhost:5432/db';
+
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -136,9 +140,56 @@ async function main(): Promise<void> {
       pass('T4 oversize rejection');
     });
 
+    // T5: duplicate registration replaces old entry and file
+    await run('T5 duplicate-replace registration', async () => {
+      const p1 = path.join(os.tmpdir(), `trace-dup1-${randomUUID()}.zip`);
+      const p2 = path.join(os.tmpdir(), `trace-dup2-${randomUUID()}.zip`);
+      tempFiles.push(p1, p2);
+
+      await fs.writeFile(p1, Buffer.alloc(120, 0x42));
+      await fs.writeFile(p2, Buffer.alloc(240, 0x43));
+
+      const meta = {
+        jobId: 'trace-dup-job',
+        testCaseId: 'tc-dup',
+        attemptNumber: 1,
+        visitorId: 'trace-dup-visitor',
+      };
+
+      const traceId1 = await registerTrace(p1, meta);
+      assert.ok(traceId1, 'first registration must succeed');
+      const found1 = getTrace(traceId1);
+      assert.ok(found1, 'found1 must exist');
+      assert.equal(found1.entry.sizeBytes, 120);
+      const file1Path = found1.filePath;
+      assert.ok(fsSync.existsSync(file1Path), 'file1 must exist on disk');
+
+      // Register same meta with p2
+      const traceId2 = await registerTrace(p2, meta);
+      assert.ok(traceId2, 'second registration must succeed');
+      assert.notEqual(traceId1, traceId2, 'new traceId should be generated');
+
+      // Old trace should be evicted/deleted
+      assert.equal(getTrace(traceId1), null, 'old traceId1 must be gone from registry');
+      assert.equal(fsSync.existsSync(file1Path), false, 'old file1 must be deleted from disk');
+
+      // New trace should be active with new size
+      const found2 = getTrace(traceId2);
+      assert.ok(found2, 'found2 must exist');
+      assert.equal(found2.entry.sizeBytes, 240);
+      assert.ok(fsSync.existsSync(found2.filePath), 'file2 must exist on disk');
+
+      // traceForAttempt should return the new entry
+      const current = traceForAttempt(meta.jobId, meta.testCaseId, meta.attemptNumber, meta.visitorId);
+      assert.ok(current, 'current attempt trace must exist');
+      assert.equal(current.traceId, traceId2, 'current trace must be the new one');
+
+      pass('T5 duplicate-replace registration');
+    });
+
     // T6: LIVE only when env TRACE_LIVE=1
     if (process.env.TRACE_LIVE !== '1') {
-      console.log('[SKIP] T6 live trace capture (set TRACE_LIVE=1 to run)');
+      console.log('[SKIP] T6 & T7 live trace capture (set TRACE_LIVE=1 to run)');
     } else {
       await run('T6 live trace capture', async () => {
         const liveSpec = [
@@ -204,6 +255,86 @@ async function main(): Promise<void> {
         assert.equal(headerBuf[3], 0x04, 'magic byte 3 must be 0x04');
 
         pass('T6 live trace capture');
+      });
+
+      // T7: live two-file onTraceZips mapping case
+      await run('T7 live two-file onTraceZips mapping', async () => {
+        const spec1 = [
+          "import { test, expect } from '@playwright/test';",
+          "test('tc-1 title check', async ({ page }) => {",
+          "  await page.goto('https://example.com');",
+          "  await expect(page).toHaveTitle(/Example/);",
+          '});',
+        ].join('\n');
+        const spec2 = [
+          "import { test, expect } from '@playwright/test';",
+          "test('tc-2 heading check', async ({ page }) => {",
+          "  await page.goto('https://example.com');",
+          "  await expect(page.locator('h1')).toHaveText(/Example Domain/);",
+          '});',
+        ].join('\n');
+
+        const harvestedTraces = new Map<string, string>();
+        const registeredIds = new Map<string, string>();
+        const traceSizes = new Map<string, number>();
+
+        await executeTests(
+          `t7-multitrace-${randomUUID().slice(0, 8)}`,
+          [
+            { filename: 'tc-1.spec.ts', code: spec1 },
+            { filename: 'tc-2.spec.ts', code: spec2 },
+          ],
+          {
+            trace: true,
+            onTraceZips: async (traces) => {
+              for (const [key, val] of traces.entries()) {
+                harvestedTraces.set(key, val);
+                const stat = await fs.stat(val);
+                traceSizes.set(key, stat.size);
+
+                // Verify magic bytes on the live harvest file before cleanup
+                const headerBuf = Buffer.alloc(4);
+                const fh = await fs.open(val, 'r');
+                await fh.read(headerBuf, 0, 4, 0);
+                await fh.close();
+                assert.equal(headerBuf[0], 0x50, 'magic byte 0 must be 0x50');
+                assert.equal(headerBuf[1], 0x4b, 'magic byte 1 must be 0x4b');
+                assert.equal(headerBuf[2], 0x03, 'magic byte 2 must be 0x03');
+                assert.equal(headerBuf[3], 0x04, 'magic byte 3 must be 0x04');
+
+                // Register into traceStore as pipeline does
+                const regId = await registerTrace(val, {
+                  jobId: 't7-multitrace-job',
+                  testCaseId: key,
+                  attemptNumber: 1,
+                  visitorId: 't7-multitrace-visitor',
+                });
+                if (regId) {
+                  registeredIds.set(key, regId);
+                }
+              }
+            },
+          },
+        );
+
+        assert.ok(harvestedTraces.has('tc-1'), 'must have trace for tc-1');
+        assert.ok(harvestedTraces.has('tc-2'), 'must have trace for tc-2');
+
+        const size1 = traceSizes.get('tc-1') ?? 0;
+        const size2 = traceSizes.get('tc-2') ?? 0;
+        console.log(`[Evidence] tc-1 trace size: ${size1} bytes, tc-2 trace size: ${size2} bytes`);
+        assert.ok(size1 > 5 * 1024, `tc-1 zip size must be > 5KB, got ${size1}`);
+        assert.ok(size2 > 5 * 1024, `tc-2 zip size must be > 5KB, got ${size2}`);
+
+        // Verify traces persisted in traceStore
+        const trace1 = getTrace(registeredIds.get('tc-1')!);
+        const trace2 = getTrace(registeredIds.get('tc-2')!);
+        assert.ok(trace1, 'trace1 must exist in traceStore');
+        assert.ok(trace2, 'trace2 must exist in traceStore');
+        assert.equal(trace1.entry.sizeBytes, size1);
+        assert.equal(trace2.entry.sizeBytes, size2);
+
+        pass('T7 live two-file onTraceZips mapping');
       });
     }
   } finally {

@@ -46,13 +46,22 @@ export function pushAttempt(
   return attempt;
 }
 
+export interface RoundExecutionMeta {
+  filename: string;
+  testCaseId: string;
+  attemptNumber: number;
+}
+
 export interface RoundDeps {
   checkSafety: (code: string, filename: string) => string[];
   validateBatch: (files: Array<{ filename: string; code: string }>) => Promise<{
     perFile: Map<string, string[]>;
     batchLatencyMs: number;
   }>;
-  executeBatch: (files: Array<{ filename: string; code: string }>) => Promise<{
+  executeBatch: (
+    files: Array<{ filename: string; code: string }>,
+    executionMeta?: RoundExecutionMeta[],
+  ) => Promise<{
     success: boolean;
     results: TestCaseResult[];
   }>;
@@ -279,8 +288,14 @@ export async function runRounds(
         code: t.code,
       }));
 
+      const executionMeta: RoundExecutionMeta[] = testsToExecute.map((t) => ({
+        filename: t.filename,
+        testCaseId: t.testCase.id,
+        attemptNumber: t.attempts.length + 1,
+      }));
+
       deps.signal?.throwIfAborted();
-      const executionResult = await deps.executeBatch(validFiles);
+      const executionResult = await deps.executeBatch(validFiles, executionMeta);
 
       for (const test of testsToExecute) {
         deps.signal?.throwIfAborted();

@@ -13,14 +13,21 @@ export const LLM_ERROR_CODES = [
 export type LlmErrorCode = (typeof LLM_ERROR_CODES)[number];
 
 export class LlmError extends Error {
+  readonly code: LlmErrorCode;
+  override readonly cause?: unknown;
+  readonly retryAfterMs?: number;
+
   constructor(
-    public readonly code: LlmErrorCode,
+    code: LlmErrorCode,
     message: string,
-    public readonly cause?: unknown,
-    public readonly retryAfterMs?: number,
+    cause?: unknown,
+    retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'LlmError';
+    this.code = code;
+    this.cause = cause;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 

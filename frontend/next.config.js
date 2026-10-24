@@ -12,6 +12,14 @@ const nextConfig = {
         source: '/api/:path*',
         destination: `${backendUrl}/api/:path*`,
       },
+      {
+        source: '/trace-viewer',
+        destination: `${backendUrl}/trace-viewer`,
+      },
+      {
+        source: '/trace-viewer/:path*',
+        destination: `${backendUrl}/trace-viewer/:path*`,
+      },
     ];
   },
   async redirects() {
@@ -40,6 +48,18 @@ const nextConfig = {
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+        ],
+      },
+      {
+        source: '/trace-viewer',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+        ],
+      },
+      {
+        source: '/trace-viewer/:path*',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
         ],
       },
     ];

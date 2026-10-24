@@ -181,13 +181,28 @@ async function findLargestTraceZip(dir: string, depth: number): Promise<string |
   return best?.filePath;
 }
 
+async function findAllTraceZips(dir: string, depth: number): Promise<string[]> {
+  const results: string[] = [];
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory() && depth > 0) {
+      const nested = await findAllTraceZips(entryPath, depth - 1);
+      results.push(...nested);
+    } else if (entry.isFile() && (entry.name === 'trace.zip' || entry.name.endsWith('.zip'))) {
+      results.push(entryPath);
+    }
+  }
+  return results;
+}
+
 export interface ExecuteTestsOptions {
   secrets?: Map<string, string>;
   timeoutMs?: number;
   signal?: AbortSignal;
-  headless?: boolean;
   trace?: boolean;
   onTraceZip?: (zipPath: string) => Promise<void>;
+  onTraceZips?: (traces: Map<string, string>) => Promise<void>;
 }
 
 export async function executeTests(
@@ -273,9 +288,6 @@ export async function executeTests(
       const runnerEnv = playwrightRunnerEnv(resultsPath, {
         HOME: homeDir,
         XDG_CACHE_HOME: cacheDir,
-        ...(options?.headless === false && config.LOCAL_AGENT_MODE
-          ? { HEADLESS: 'false' }
-          : {}),
       });
 
       await new Promise<void>((resolve, reject) => {
@@ -479,10 +491,76 @@ export async function executeTests(
     const success = results.length > 0 && results.every((r) => r.passed);
     // Trace harvest (opt-in): runDir is deleted in the finally below, so the
     // zip must be copied out here. Tracing must never fail the run.
-    if (options?.trace && options.onTraceZip) {
+    if (options?.trace && (options.onTraceZips || options.onTraceZip)) {
       try {
-        const traceZipPath = await findLargestTraceZip(outputDir, 3);
-        if (traceZipPath) await options.onTraceZip(traceZipPath);
+        const traceMap = new Map<string, string>();
+
+        // 1. JSON attachments primary
+        for (const suite of suites) {
+          const fileStem = getTestCaseId(suite.title || '');
+          if (!fileStem) continue;
+          const specs = collectSpecs(suite);
+          for (const spec of specs) {
+            for (const test of spec.tests || []) {
+              for (const res of test.results || []) {
+                if (res.attachments) {
+                  for (const att of res.attachments) {
+                    if (
+                      (att.name === 'trace' || att.path?.endsWith('.zip') || att.contentType === 'application/zip') &&
+                      att.path &&
+                      fsSync.existsSync(att.path)
+                    ) {
+                      traceMap.set(fileStem, att.path);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // 2. outputDir scan fallback
+        const remainingFiles = files.filter((f) => !traceMap.has(getTestCaseId(f.filename)));
+        if (remainingFiles.length > 0) {
+          const allZips = await findAllTraceZips(outputDir, 4);
+          for (const file of remainingFiles) {
+            const stem = getTestCaseId(file.filename);
+            const matchedZip = allZips.find((z) => {
+              const norm = z.replace(/\\/g, '/');
+              return norm.includes(`/${stem}-`) || norm.includes(`/${stem}/`) || norm.includes(stem);
+            });
+            if (matchedZip) {
+              traceMap.set(stem, matchedZip);
+            }
+          }
+          if (files.length === 1 && allZips.length >= 1 && !traceMap.has(getTestCaseId(files[0].filename))) {
+            traceMap.set(getTestCaseId(files[0].filename), allZips[0]);
+          }
+        }
+
+        if (options.onTraceZips) {
+          await options.onTraceZips(traceMap);
+        }
+
+        if (options.onTraceZip) {
+          let largestZip: string | undefined;
+          let largestSize = -1;
+          for (const zipPath of traceMap.values()) {
+            try {
+              const sz = (await fs.stat(zipPath)).size;
+              if (sz > largestSize) {
+                largestSize = sz;
+                largestZip = zipPath;
+              }
+            } catch {}
+          }
+          if (!largestZip) {
+            largestZip = await findLargestTraceZip(outputDir, 3);
+          }
+          if (largestZip) {
+            await options.onTraceZip(largestZip);
+          }
+        }
       } catch (err) {
         console.warn('[Executor] trace capture failed:', err instanceof Error ? err.message : String(err));
       }
