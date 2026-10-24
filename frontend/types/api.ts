@@ -258,7 +258,6 @@ export interface JobDetail {
   queuePosition?: number | null;
   groupRemainingJobs?: number;
   canCancel?: boolean;
-  canEdit?: boolean;
   agentSteps: AgentStep[];
   generatedTests: PersistedGeneratedTest[];
   tokenUsage: TokenUsage;
