@@ -238,6 +238,6 @@ The cost is real: dual-call planning **tripled median fresh tokens** (3,113 → 
 
 ## 7. Raw Output & Harness Notes
 
-- Raw results: `backend/scratch/measure_results.json` (284 KB, untracked). `git check-ignore` returns exit 1 for this path — the file is **NOT git-ignored** and shows as `??` in `git status`. It should not be committed (or an ignore rule should be added by the repo owner).
+- Raw results: `backend/scratch/measure_results.json` (284 KB, untracked). `git check-ignore` returns exit 1 for this path — the file is **NOT git-ignored** and shows as `??` in `git status`. It should not be committed (or an ignore rule should be added by the repo owner). *(Update: since added to `.gitignore` and untracked.)*
 - **Harness compatibility edits** (additive only; the 12-run matrix definitions — sites, order, test data, fresh flags, budgets — are byte-identical): `measure.ts` now also captures the new `observe` phase latency, per-run observation summaries by kind, and an `audit` block (observations, plan test cases, per-test final code + attempts) so the Part B classification is reproducible from the JSON. See the accompanying change log.
 - **Anomalies**: the measurement process exited with code 1 *after* all 12 runs completed and the results JSON was written — a sandbox file-write restriction on Playwright's Chromium `debug.log` / `nvAppTimestamps`, unrelated to the pipeline. No runs were retried; none dropped.
