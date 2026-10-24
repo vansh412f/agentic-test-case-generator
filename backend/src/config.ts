@@ -25,10 +25,7 @@ export const configSchema = z.object({
   DIRECT_URL: z.string().trim().min(1),
   GROQ_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
-  GROQ_REASONING_MODEL: z.string().default('openai/gpt-oss-120b'),
-  GROQ_FAST_MODEL: z.string().default('openai/gpt-oss-20b'),
-  GEMINI_REASONING_MODEL: z.string().default('gemini-3.5-flash'),
-  GEMINI_FAST_MODEL: z.string().default('gemini-3.5-flash-lite'),
+  // Model chains are resolved in providers.config.ts directly from process.env (*_MODELS and backward-compatible singulars)
   GROQ_REASONING_MODELS: z.string().optional(),
   GROQ_FAST_MODELS: z.string().optional(),
   GEMINI_REASONING_MODELS: z.string().optional(),

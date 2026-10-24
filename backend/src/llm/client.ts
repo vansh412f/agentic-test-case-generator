@@ -255,23 +255,26 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
           }
 
           if (llmErr.code === 'AUTH_FAILED') {
-            modelIdx = models.length; // Key invalid; skip trying other models on this provider
+            modelIdx = models.length; // Key invalid; skip remaining models, next provider
             break;
           }
 
-          // Do not retry non-retryable errors on this model
+          // BAD_RESPONSE and every other non-retryable error -> next PROVIDER immediately
           if (!shouldRetry(llmErr.code)) {
-            break; // move to next model or next provider
+            modelIdx = models.length;
+            break;
           }
 
           // P10 / Part 7b: Measured Groq TPM-reservation behavior shows long retry windows (>10s)
-          // are better handled by immediate failover to the next provider than burning retries.
+          // are better handled by immediate failover to the next provider than burning retries or testing secondary models.
           if (llmErr.code === 'RATE_LIMITED' && (llmErr.retryAfterMs ?? 0) > 10_000) {
+            modelIdx = models.length;
             break;
           }
 
-          // Exhausted retries on this model
+          // Exhausted retries on this model -> next PROVIDER immediately
           if (attempt === LLM_MAX_RETRIES_PER_PROVIDER) {
+            modelIdx = models.length;
             break;
           }
 

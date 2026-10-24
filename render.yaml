@@ -39,3 +39,12 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      # Optional LLM Model Chain Overrides (defaults configured in code)
+      - key: GROQ_REASONING_MODELS
+        sync: false
+      - key: GROQ_FAST_MODELS
+        sync: false
+      - key: GEMINI_REASONING_MODELS
+        sync: false
+      - key: GEMINI_FAST_MODELS
+        sync: false

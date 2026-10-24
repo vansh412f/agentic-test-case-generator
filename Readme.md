@@ -566,15 +566,15 @@ cd frontend && pnpm dev
 | `DIRECT_URL` | *(none)* | Yes | Direct PostgreSQL connection string for migrations (port 5432) |
 | `GROQ_API_KEY` | *(none)* | Yes (or Gemini) | Groq API authentication key |
 | `GEMINI_API_KEY` | *(none)* | Optional fallback | Google Gemini API authentication key |
-| `GROQ_REASONING_MODELS` | `openai/gpt-oss-120b,qwen/qwen3.8-27b` | No | Comma-separated fallback chain for Groq reasoning (planner core, expansion, repair) |
+| `GROQ_REASONING_MODELS` | `openai/gpt-oss-120b` | No | Comma-separated fallback chain for Groq reasoning (planner core, expansion, repair) |
 | `GROQ_FAST_MODELS` | `openai/gpt-oss-20b,qwen/qwen3.8-27b` | No | Comma-separated fallback chain for Groq fast tier (planner negative, generator, corrector) |
 | `GEMINI_REASONING_MODELS` | `gemini-3.5-flash,gemini-2.5-flash` | No | Comma-separated fallback chain for Gemini reasoning |
-| `GEMINI_FAST_MODELS` | `gemini-3.5-flash-lite,gemini-3.1-flash-lite` | No | Comma-separated fallback chain for Gemini fast tier |
+| `GEMINI_FAST_MODELS` | `gemini-3.1-flash-lite,gemini-3.5-flash-lite` | No | Comma-separated fallback chain for Gemini fast tier |
 | `GROQ_REASONING_MODEL` | `openai/gpt-oss-120b` | No | Primary reasoning model on Groq (backward-compatible override) |
 | `GROQ_FAST_MODEL` | `openai/gpt-oss-20b` | No | Primary fast model on Groq (backward-compatible override) |
 | `GEMINI_REASONING_MODEL` | `gemini-3.5-flash` | No | Primary reasoning model on Gemini (backward-compatible override) |
-| `GEMINI_FAST_MODEL` | `gemini-3.5-flash-lite` | No | Primary fast model on Gemini (backward-compatible override) |
-| `LLM_PROVIDER_ORDER` | `groq,gemini` | No | Ordered fallback sequence for LLM provider attempts |
+| `GEMINI_FAST_MODEL` | `gemini-3.1-flash-lite` | No | Primary fast model on Gemini (backward-compatible override) |
+| `LLM_PROVIDER_ORDER` | `groq,gemini` | No | Ordered fallback sequence for LLM provider attempts. Traversal rule: Provider order first (`LLM_PROVIDER_ORDER`). Within a provider, fallback to the next model in the chain occurs ONLY on `MODEL_UNAVAILABLE` (404/decommissioned). All other errors (auth failure, bad response, rate limit > 10s, retry exhaustion) immediately advance to the next provider. |
 | `POW_SECRET` | *(none)* | Yes (&ge;16 chars) | HMAC signing secret for ALTCHA proof-of-work challenges |
 | `VISITOR_SIGNING_SECRET` | *(none)* | Yes (&ge;16 chars) | HMAC signing secret for anonymous visitor session tokens |
 | `ADMIN_SECRET` | *(none)* | Yes (&ge;24 chars) | Shared secret required in `X-Admin-Secret` header for admin routes |

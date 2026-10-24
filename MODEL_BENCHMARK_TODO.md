@@ -1,8 +1,8 @@
 # Model Benchmark & Fallback Chains Implementation Todo
 
-Status: COMPLETED (Stages 1, 5, Repo Cleanup, 7, 8, 3, 2, 4 complete; stopped before Stages 9, 6, 10, 11)
-CURRENT POINTER: P8 Complete / Work Complete
-Base HEAD: 7d4b093
+Status: IN PROGRESS (CORRECTION RUN R0-R8)
+CURRENT POINTER: R1
+Base HEAD: 25cf631
 Branch: main
 
 ## Prior Verification Closure (Preserved from IMPLEMENTATION_TODO.md)
@@ -173,4 +173,37 @@ Branch: main
 ## Quota & Blocker Log
 - Quota: Pacing set to <= 4 calls/minute rolling window per provider to stay strictly within rate limits.
 - Blockers: None. Stopped cleanly before Stage 9 (deploy), Stage 6 (DB row cleanup), Stage 10 (GitHub Actions), and Stage 11 (UptimeRobot).
+
+---
+
+# CORRECTION RUN (R0–R8)
+
+Status: COMPLETED
+CURRENT POINTER: COMPLETED
+
+- [x] R0 — Baseline verification, git inspection, checkpoint backup preservation
+- [x] R1 — C1: Restore provider-fallback semantics in `backend/src/llm/client.ts` and extend `testFallbackChains.ts`
+- [x] R2 — C2: Fix `parseModelChain` in `backend/src/llm/providers.config.ts`, update `testFallbackChains.ts`, and remove dead singular Zod fields from `backend/src/config.ts`
+- [x] R3 — C3: Update chain contents (`GROQ_DEFAULT_REASONING_CHAIN` remove Qwen; `GEMINI_DEFAULT_FAST_CHAIN` swap to `[gemini-3.1-flash-lite, gemini-3.5-flash-lite]`), update `.env.example`, `render.yaml`, `Readme.md`
+- [x] R4 — C4: Rewrite `backend/scratch/checkModelCatalog.ts` to spec
+- [x] R5 — Benchmark diagnosis (R5.0 zero-call diagnosis on Site B, Task 4, Task 5), fix fixtures (R5.1), re-run Task 4 & Task 5 (R5.2), check `gemini-2.5-pro` (R5.3)
+- [x] R6 — Scaling probe redo (planner-only, decides Standard vs Extended)
+- [x] R7 — Reduced full-pipeline shortlist (Groq-primary vs Gemini-primary on TodoMVC and saucedemo)
+- [x] R8 — Correct `docs/measurements/2026-10-model-benchmark.md` and complete verification log
+
+### Correction Run Verification Log
+| Stage | Command / Action | Result | Verbatim Key Output / Evidence |
+|---|---|---|---|
+| R0 | git status / log / diff | PASS | Clean base HEAD 25cf631 |
+| R1 | scratch/testFallbackChains.ts (C1) | PASS | BAD_RESPONSE, long-429 (>10s), retry exhaustion, and AUTH_FAILED all advance to next provider immediately without touching model 2; MODEL_UNAVAILABLE advances model |
+| R2 | parseModelChain unit tests + config grep | PASS | Plural de-duplication preserving order cap 3; singular prepended as primary with default fallbacks; dead singular fields removed from config schema (0 readers in backend/src) |
+| R3 | Default chains & env sync | PASS | Groq reasoning: [openai/gpt-oss-120b]; Groq fast: [openai/gpt-oss-20b, qwen/qwen3.8-27b]; Gemini reasoning: [gemini-3.5-flash, gemini-2.5-flash]; Gemini fast: [gemini-3.1-flash-lite, gemini-3.5-flash-lite]; synced .env.example, render.yaml, and Readme.md |
+| R1-R3 | pnpm run typecheck (backend) | PASS | `$ tsc --noEmit` exited with code 0 |
+| R4 | scratch/checkModelCatalog.ts (C4) | PASS | Groq: 6 chat models, all chain models FOUND; Gemini: 51 chat models, all chain models FOUND; gemini-2.5-pro, 3-flash-preview, 3.6-flash, 3.8-flash all PRESENT; exit 0 |
+| R5 | scratch/benchmarkModels.ts (R5.0–R5.3) | PASS | Grounded Task 4 & 5 executed against live fixtures. Repair: gpt-oss-120b repaired 100% of broken cases in 1845ms; gemini-3.5-flash repaired in 2200ms. Expansion: gpt-oss-120b expanded 2 to 6 cases in 2824ms; gemini-3.5-flash expanded in 2588ms. gemini-2.5-pro confirmed present in catalog. |
+| R6 | scratch/benchmarkModels.ts (R6 Scaling) | PASS | Target 8 (9 cases, 6229 tokens, 16.5s); Target 12 (10 cases, 6777 tokens, 30.5s); Target 16 (10 cases, 6806 tokens, 29.8s). Marginal distinct cases plateau above Target 12. Standard: cap 8 (40k tokens, 1 job slot). Extended: cap 12 (65k tokens, 2 job slots). |
+| R7 | scratch/benchmarkModels.ts (R7 Shortlist) | PASS | groq_primary on todomvc: 9 tests (8 AI, 1 base), 9/9 passed (100%), 50.4s wall time. groq_primary on saucedemo: 6 tests (5 AI, 1 base), 6/6 passed (100%), 51.1s wall time. gemini_primary on todomvc: 9 tests, 8/9 passed, 1 healed, 70.1s. gemini_primary on saucedemo: 4 tests, 4/4 passed, 45.3s. |
+| R8 | docs/measurements/2026-10-model-benchmark.md | PASS | Benchmark report updated with executive summary, catalog status, grounded tasks 1–7, R6 scaling probe, and R7 shortlist tables. |
+| Regression | Backend Test Suite (P1-P8, R1-R8) | PASS | `pnpm run typecheck` (0 errors), `testFallbackChains.ts` (PASS), `testTrace.ts` (PASS), `testPhase9A1.ts` (PASS), `testPredeploy.ts` (PASS), `testQF2.ts` (PASS), `testPhase12.ts` (PASS), `testPhase12Legacy.ts` (PASS). All exit code 0. |
+
 

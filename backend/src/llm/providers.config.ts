@@ -17,10 +17,10 @@ export function parseProviderOrder(raw?: string): LlmProviderName[] {
 
 export const LLM_PROVIDER_ORDER: LlmProviderName[] = parseProviderOrder(process.env.LLM_PROVIDER_ORDER);
 
-export const GROQ_DEFAULT_REASONING_CHAIN = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b'];
+export const GROQ_DEFAULT_REASONING_CHAIN = ['openai/gpt-oss-120b'];
 export const GROQ_DEFAULT_FAST_CHAIN = ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b'];
 export const GEMINI_DEFAULT_REASONING_CHAIN = ['gemini-3.5-flash', 'gemini-2.5-flash'];
-export const GEMINI_DEFAULT_FAST_CHAIN = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
+export const GEMINI_DEFAULT_FAST_CHAIN = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
 
 export const GROQ_DEFAULT_MODEL = GROQ_DEFAULT_REASONING_CHAIN[0];
 export const GEMINI_DEFAULT_MODEL = GEMINI_DEFAULT_REASONING_CHAIN[0];
@@ -36,13 +36,14 @@ export function parseModelChain(
       .map((s) => s.trim())
       .filter(Boolean);
     if (list.length > 0) {
-      return list.slice(0, 3); // 1 primary + up to 2 fallbacks
+      return Array.from(new Set(list)).slice(0, 3); // de-duplicate preserving order, cap 3
     }
   }
-  if (singularVal && singularVal.trim() && !defaultChain.includes(singularVal.trim())) {
-    return [singularVal.trim()];
+  if (singularVal && singularVal.trim()) {
+    const combined = [singularVal.trim(), ...defaultChain].filter(Boolean);
+    return Array.from(new Set(combined)).slice(0, 3); // reprioritize singular to primary, de-duplicate, cap 3
   }
-  return defaultChain.slice(0, 3);
+  return Array.from(new Set(defaultChain)).slice(0, 3);
 }
 
 export function getModelsFor(
