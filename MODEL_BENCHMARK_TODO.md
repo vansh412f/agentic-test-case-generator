@@ -1,7 +1,7 @@
 # Model Benchmark & Fallback Chains Implementation Todo
 
-Status: IN PROGRESS (CORRECTION RUN R0-R8)
-CURRENT POINTER: R1
+Status: COMPLETED
+CURRENT POINTER: COMPLETED
 Base HEAD: 25cf631
 Branch: main
 
@@ -204,6 +204,7 @@ CURRENT POINTER: COMPLETED
 | R6 | scratch/benchmarkModels.ts (R6 Scaling) | PASS | Target 8 (9 cases, 6229 tokens, 16.5s); Target 12 (10 cases, 6777 tokens, 30.5s); Target 16 (10 cases, 6806 tokens, 29.8s). Marginal distinct cases plateau above Target 12. Standard: cap 8 (40k tokens, 1 job slot). Extended: cap 12 (65k tokens, 2 job slots). |
 | R7 | scratch/benchmarkModels.ts (R7 Shortlist) | PASS | groq_primary on todomvc: 9 tests (8 AI, 1 base), 9/9 passed (100%), 50.4s wall time. groq_primary on saucedemo: 6 tests (5 AI, 1 base), 6/6 passed (100%), 51.1s wall time. gemini_primary on todomvc: 9 tests, 8/9 passed, 1 healed, 70.1s. gemini_primary on saucedemo: 4 tests, 4/4 passed, 45.3s. |
 | R8 | docs/measurements/2026-10-model-benchmark.md | PASS | Benchmark report updated with executive summary, catalog status, grounded tasks 1–7, R6 scaling probe, and R7 shortlist tables. |
+| D0–D6 | docs/measurements/2026-10-model-benchmark.md & MODEL_BENCHMARK_TODO.md | PASS | Docs-only correction: aligned §1 chains with providers.config.ts at HEAD (traversal rule: MODEL_UNAVAILABLE within provider; all others advance provider); observed-only quota data in §2 (confirmed 1000 OTPM on Qwen, Gemini daily free-tier cap 20 on 3.5-flash alias, RPM/TPM UNKNOWN); repaired leaked error cells in §5.1, §5.2, §5.5, §5.6, §6; §4 error class counts sum to 15; corrected §6 decision (rule NOT MET, Standard cap 8 ships, Extended deferred); completed §7 R7 with job IDs, actual DB AgentStep model counts settling Gemini serving status, tc-5 title, discarded run disclosure, all checkpoint edits listed; added Fixtures inventory (SHA-256 cfeac091...), Baseline recommendation (smoke-1 always, smoke-2 conditional per baseline.ts), Pacing envelope & Quota event log, Threats to validity; fixed header in MODEL_BENCHMARK_TODO.md. |
 | Regression | Backend Test Suite (P1-P8, R1-R8) | PASS | `pnpm run typecheck` (0 errors), `testFallbackChains.ts` (PASS), `testTrace.ts` (PASS), `testPhase9A1.ts` (PASS), `testPredeploy.ts` (PASS), `testQF2.ts` (PASS), `testPhase12.ts` (PASS), `testPhase12Legacy.ts` (PASS). All exit code 0. |
 
 
