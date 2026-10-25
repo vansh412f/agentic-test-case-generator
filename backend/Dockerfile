@@ -62,15 +62,16 @@ RUN node playwright-runner/node_modules/@playwright/test/cli.js install --with-d
 
 # Setup users and permissions
 # Group agt (1002), user agtrunner (1001), node added to agt
-# /app/playwright-runner/tests: owner node, group agt, mode 2770
 RUN groupadd -g 1002 agt && \
     useradd -u 1001 -g 1002 -M -s /usr/sbin/nologin agtrunner && \
     usermod -aG agt node && \
-    mkdir -p /app/playwright-runner/tests /tmp && \
+    mkdir -p /app/playwright-runner/tests /app/playwright-runner/.traces /tmp && \
     chown node:agt /app/playwright-runner/tests && \
-    chmod 2770 /app/playwright-runner/tests
+    chmod 2770 /app/playwright-runner/tests && \
+    chown node:node /app/playwright-runner/.traces && \
+    chmod 0700 /app/playwright-runner/.traces
 
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod 0755 /app/docker-entrypoint.sh && chown root:root /app/docker-entrypoint.sh
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/app/docker-entrypoint.sh"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

@@ -58,7 +58,7 @@ async function readError(response: Response): Promise<ApiError> {
     return new ApiError(
       response.status,
       'UPSTREAM_UNAVAILABLE',
-      'The server is unreachable or still waking up (free-tier servers can take up to a minute). Please retry shortly.',
+      'The server is unreachable or still waking up. This can take up to a minute. Please retry shortly.',
     );
   }
 

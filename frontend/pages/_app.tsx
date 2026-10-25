@@ -86,7 +86,7 @@ function ServerWakeBanner() {
       className="w-full bg-[#fffbeb] border-b border-[#fef3c7] text-[#92400e] px-4 py-2 text-center text-xs font-medium flex items-center justify-center gap-2"
     >
       <span className="inline-block w-2 h-2 rounded-full bg-[#d97706] animate-pulse" />
-      <span>Waking the free server (~1 min)…</span>
+      <span>Waking the server (~1 min)…</span>
     </div>
   );
 }
