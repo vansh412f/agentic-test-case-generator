@@ -3,7 +3,7 @@ process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/db';
 process.env.DIRECT_URL = 'postgresql://user:pass@localhost:5432/db';
 
 import assert from 'node:assert/strict';
-import { serializeObservations, enforceTestData } from '../src/agent/steps/planner.ts';
+import { serializeObservations, enforceTestData, enforceUnprovidedPasswordGuard } from '../src/agent/steps/planner.ts';
 import type { Observation } from '../src/crawler/types.ts';
 import type { TestPlan } from '../src/agent/prompts/plannerPrompt.ts';
 
@@ -200,6 +200,163 @@ async function main(): Promise<void> {
     assert.ok(userStep, 'fill step must exist');
     assert.equal(userStep.value, 'real-user', 'positive case must have test-data substituted');
     pass('P6 positive case still gets test-data substitution');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P7: Case filling unprovided password with literal dropped;
+  //     sibling survives and renumbers to tc-1
+  // ──────────────────────────────────────────────────
+  await run('P7 Case filling unprovided password with literal dropped; sibling survives and renumbers', async () => {
+    const unprovided = new Set(['pwd-field']);
+    const plan: TestPlan = {
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Invented password fill',
+          description: 'Should be dropped',
+          steps: [
+            { action: 'fill', elementId: 'pwd-field', value: 'secret123' },
+            { action: 'click', elementId: 'submit-btn', value: null },
+            { action: 'assert_visible', elementId: 'dashboard', value: null },
+          ],
+        },
+        {
+          id: 'tc-2',
+          title: 'Navigation test sibling',
+          description: 'Should survive and renumber to tc-1',
+          steps: [
+            { action: 'click', elementId: 'nav-link', value: null },
+            { action: 'assert_url', elementId: null, value: 'https://example.com/about' },
+          ],
+        },
+      ],
+    };
+
+    const result = enforceUnprovidedPasswordGuard(plan, unprovided);
+    assert.equal(result.testCases.length, 1, 'case filling unprovided password must be dropped');
+    assert.equal(result.testCases[0].title, 'Navigation test sibling');
+    assert.equal(result.testCases[0].id, 'tc-1', 'surviving sibling must renumber to tc-1');
+    pass('P7 Case filling unprovided password with literal dropped; sibling survives and renumbers');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P8: Case with `fill ''` on unprovided password kept
+  // ──────────────────────────────────────────────────
+  await run('P8 Case with fill empty string on unprovided password kept', async () => {
+    const unprovided = new Set(['pwd-field']);
+    const plan: TestPlan = {
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Empty password validation',
+          description: 'Submitting empty password',
+          steps: [
+            { action: 'fill', elementId: 'pwd-field', value: '' },
+            { action: 'click', elementId: 'submit-btn', value: null },
+            { action: 'assert_visible', elementId: 'error-msg', value: null },
+          ],
+        },
+      ],
+    };
+
+    const result = enforceUnprovidedPasswordGuard(plan, unprovided);
+    assert.equal(result.testCases.length, 1, 'case with empty string fill must be kept');
+    assert.equal(result.testCases[0].steps[0].value, '');
+    pass('P8 Case with fill empty string on unprovided password kept');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P9: Case omitting fill (assert/submit/assert_url) on unprovided password kept
+  // ──────────────────────────────────────────────────
+  await run('P9 Case omitting fill on unprovided password kept', async () => {
+    const unprovided = new Set(['pwd-field']);
+    const plan: TestPlan = {
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Omitted password submission',
+          description: 'Submitting without filling password field',
+          steps: [
+            { action: 'fill', elementId: 'user-field', value: 'alice' },
+            { action: 'click', elementId: 'submit-btn', value: null },
+            { action: 'assert_visible', elementId: 'pwd-required-msg', value: null },
+            { action: 'assert_url', elementId: null, value: 'https://example.com/login' },
+          ],
+        },
+      ],
+    };
+
+    const result = enforceUnprovidedPasswordGuard(plan, unprovided);
+    assert.equal(result.testCases.length, 1, 'case omitting password fill must be kept');
+    pass('P9 Case omitting fill on unprovided password kept');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P10: Provided password unaffected (negative wrong-literal and positive secret placeholder survive)
+  // ──────────────────────────────────────────────────
+  await run('P10 Provided password unaffected (wrong-literal and secret placeholder survive)', async () => {
+    // When password field IS provided, it is NOT in unprovidedPasswordIds set
+    const unprovided = new Set<string>(); // provided password is not in this set
+    const plan: TestPlan = {
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Positive login with secret placeholder',
+          steps: [
+            { action: 'fill', elementId: 'pwd-field', value: '__AGT_SECRET_1__' },
+            { action: 'click', elementId: 'submit-btn', value: null },
+            { action: 'assert_visible', elementId: 'dashboard', value: null },
+          ],
+        },
+        {
+          id: 'tc-2',
+          title: 'Negative login with wrong-password literal',
+          steps: [
+            { action: 'fill', elementId: 'pwd-field', value: 'wrong-password' },
+            { action: 'click', elementId: 'submit-btn', value: null },
+            { action: 'assert_visible', elementId: 'error-banner', value: null },
+          ],
+        },
+      ],
+    };
+
+    const result = enforceUnprovidedPasswordGuard(plan, unprovided);
+    assert.equal(result.testCases.length, 2, 'both provided password cases must survive unaffected');
+    assert.equal(result.testCases[0].steps[0].value, '__AGT_SECRET_1__');
+    assert.equal(result.testCases[1].steps[0].value, 'wrong-password');
+    pass('P10 Provided password unaffected (wrong-literal and secret placeholder survive)');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P11: Plan where every case fills unprovided password returns 0 cases
+  //      (triggers zero-plan guard in finalizePlan)
+  // ──────────────────────────────────────────────────
+  await run('P11 Plan where every case fills unprovided password returns 0 cases', async () => {
+    const unprovided = new Set(['pwd-field']);
+    const plan: TestPlan = {
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Invented password 1',
+          steps: [
+            { action: 'fill', elementId: 'pwd-field', value: 'admin123' },
+            { action: 'assert_visible', elementId: 'dashboard', value: null },
+          ],
+        },
+        {
+          id: 'tc-2',
+          title: 'Invented password 2',
+          steps: [
+            { action: 'fill', elementId: 'pwd-field', value: 'wrong-pass' },
+            { action: 'assert_visible', elementId: 'error-msg', value: null },
+          ],
+        },
+      ],
+    };
+
+    const result = enforceUnprovidedPasswordGuard(plan, unprovided);
+    assert.equal(result.testCases.length, 0, 'all cases must be dropped when all fill unprovided passwords');
+    pass('P11 Plan where every case fills unprovided password returns 0 cases');
   });
 
   // ──────────────────────────────────────────────────

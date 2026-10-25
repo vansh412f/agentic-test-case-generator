@@ -320,6 +320,7 @@ Example: after filling "Buy milk" and pressing Enter → \
 13. assert_count value is a number as a string, e.g. "2".
 14. TEST DATA: TEST DATA values are valid success values. Never use a secret placeholder as the invalid/missing value under test: empty field = fill '' or omit the fill; wrong credential = a non-secret literal such as wrong-password. Use exact test-data only for fields meant to stay valid in that case.
 15. Do not use target role 'alert' unless the App Map or OBSERVED FACTS explicitly indicate an alert role.
+16. PASSWORD FIELDS: Never fill a password field (inputType 'password') with an invented value. If TEST DATA provides a value or __AGT_SECRET_n__ placeholder for it, use exactly that. If no test-data value is provided for a password field, do not type any non-empty value into it: no valid-login cases and no wrong-password literal cases for that field. You may still leave it empty (omit the fill or fill '') and assert validation / no-advance behavior.
 
 GROUNDING IN OBSERVED FACTS: When OBSERVED FACTS are provided:
 - assert_url values must be finalUrl values from OBSERVED FACTS or href values present in the App Map. Never invent paths (e.g. /dashboard) that appear in neither.

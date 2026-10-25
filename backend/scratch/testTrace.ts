@@ -21,6 +21,8 @@ import {
   TraceEntry,
 } from '../src/runner/traceStore.ts';
 import { executeTests } from '../src/runner/executor.ts';
+import { enforceUnprovidedPasswordGuard } from '../src/agent/steps/planner.ts';
+import type { TestPlan } from '../src/agent/types.ts';
 
 let failures = 0;
 
@@ -436,6 +438,113 @@ async function main(): Promise<void> {
       assert.deepEqual(tieEvicted, ['tie-1', 'tie-2'], 'must evict earlier-inserted entries first on createdAt tie');
 
       pass('T8 FIFO/count + byte eviction planning');
+    });
+
+    // T9: enforceUnprovidedPasswordGuard
+    await run('T9 enforceUnprovidedPasswordGuard', async () => {
+      const unprovided = new Set(['pwd-el-1']);
+
+      const plan: TestPlan = {
+        testCases: [
+          {
+            id: 'tc-1',
+            title: 'Fills password with invented value',
+            description: 'Should be dropped',
+            steps: [
+              { action: 'fill', elementId: 'pwd-el-1', value: 'secret123' },
+              { action: 'click', elementId: 'btn-submit' },
+              { action: 'assert_visible', elementId: 'btn-submit' },
+            ],
+          },
+          {
+            id: 'tc-2',
+            title: 'Fills password with empty string',
+            description: 'Should be kept',
+            steps: [
+              { action: 'fill', elementId: 'pwd-el-1', value: '' },
+              { action: 'click', elementId: 'btn-submit' },
+              { action: 'assert_visible', elementId: 'btn-submit' },
+            ],
+          },
+          {
+            id: 'tc-3',
+            title: 'Omits password fill completely',
+            description: 'Should be kept',
+            steps: [
+              { action: 'fill', elementId: 'user-el', value: 'tomsmith' },
+              { action: 'click', elementId: 'btn-submit' },
+              { action: 'assert_visible', elementId: 'btn-submit' },
+            ],
+          },
+          {
+            id: 'tc-4',
+            title: 'Fills wrong password literal into unprovided password',
+            description: 'Should be dropped',
+            steps: [
+              { action: 'fill', elementId: 'pwd-el-1', value: 'wrong-password' },
+              { action: 'click', elementId: 'btn-submit' },
+              { action: 'assert_visible', elementId: 'btn-submit' },
+            ],
+          },
+          {
+            id: 'tc-5',
+            title: 'Fills non-password element with value',
+            description: 'Should be kept',
+            steps: [
+              { action: 'fill', elementId: 'other-el', value: 'some-value' },
+              { action: 'click', elementId: 'btn-submit' },
+              { action: 'assert_visible', elementId: 'btn-submit' },
+            ],
+          },
+        ],
+      };
+
+      const guarded = enforceUnprovidedPasswordGuard(plan, unprovided);
+
+      // Verify dropped vs kept
+      assert.equal(guarded.testCases.length, 3, 'must drop 2 invalid cases and keep 3 valid cases');
+      assert.equal(guarded.testCases[0].title, 'Fills password with empty string');
+      assert.equal(guarded.testCases[0].id, 'tc-1', 'must renumber sequentially');
+      assert.equal(guarded.testCases[1].title, 'Omits password fill completely');
+      assert.equal(guarded.testCases[1].id, 'tc-2', 'must renumber sequentially');
+      assert.equal(guarded.testCases[2].title, 'Fills non-password element with value');
+      assert.equal(guarded.testCases[2].id, 'tc-3', 'must renumber sequentially');
+
+      // Test 2: A plan where an unprovided password field is left empty or omitted survives the guard intact
+      const cleanPlan: TestPlan = {
+        testCases: [
+          {
+            id: 'tc-1',
+            title: 'Empty password test',
+            description: 'Survives',
+            steps: [
+              { action: 'fill', elementId: 'pwd-el-1', value: '' },
+              { action: 'click', elementId: 'btn-submit' },
+              { action: 'assert_visible', elementId: 'btn-submit' },
+            ],
+          },
+          {
+            id: 'tc-2',
+            title: 'Omitted password test',
+            description: 'Survives',
+            steps: [
+              { action: 'click', elementId: 'btn-submit' },
+              { action: 'assert_visible', elementId: 'btn-submit' },
+            ],
+          },
+        ],
+      };
+
+      const cleanResult = enforceUnprovidedPasswordGuard(cleanPlan, unprovided);
+      assert.equal(cleanResult.testCases.length, 2, 'clean plan must survive untouched');
+      assert.equal(cleanResult.testCases[0].id, 'tc-1');
+      assert.equal(cleanResult.testCases[1].id, 'tc-2');
+
+      // When unprovided set is empty, plan returns unmodified
+      const emptyUnprovidedResult = enforceUnprovidedPasswordGuard(cleanPlan, new Set());
+      assert.equal(emptyUnprovidedResult.testCases.length, 2);
+
+      pass('T9 enforceUnprovidedPasswordGuard');
     });
   } finally {
     for (const f of tempFiles) {

@@ -221,6 +221,45 @@ export function enforceTestData(plan: TestPlan, fills: Map<string, string>): Tes
   return plan;
 }
 
+export function enforceUnprovidedPasswordGuard(
+  plan: TestPlan,
+  unprovidedPasswordIds: ReadonlySet<string>,
+): TestPlan {
+  if (unprovidedPasswordIds.size === 0) return plan;
+
+  const keptCases: TestCase[] = [];
+  const droppedTitles: string[] = [];
+
+  for (const tc of plan.testCases) {
+    const fillsUnprovidedPassword = tc.steps.some(
+      (step) =>
+        (step.action === 'fill' || step.action === 'select') &&
+        step.elementId !== null &&
+        step.elementId !== undefined &&
+        unprovidedPasswordIds.has(step.elementId) &&
+        step.value !== null &&
+        step.value !== undefined &&
+        step.value !== '',
+    );
+
+    if (fillsUnprovidedPassword) {
+      droppedTitles.push(tc.title);
+    } else {
+      keptCases.push(tc);
+    }
+  }
+
+  if (droppedTitles.length > 0) {
+    console.warn(
+      `[Planner] Dropped ${droppedTitles.length} test case(s) attempting to fill unprovided password fields: ${droppedTitles.join(', ')}`,
+    );
+  }
+
+  plan.testCases = keptCases;
+  capAndRenumberTestPlan(plan);
+  return plan;
+}
+
 export interface PlanTestsOptions {
   testData?: TestDataEntry[];
   focus?: ElementRef[];
@@ -240,6 +279,16 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   if (options?.testData && options.testData.length > 0) {
     resolvedData = resolveTestData(appMap, options.testData);
   }
+
+  const unprovidedPasswordIds = new Set(
+    appMap.elements
+      .filter(
+        (e) =>
+          (e.inputType ?? '').toLowerCase() === 'password' &&
+          !resolvedData?.fills.has(e.id),
+      )
+      .map((e) => e.id),
+  );
 
   let effectiveKeepHidden = options?.keepHiddenIds;
   const resolvedFocus = (options?.focus ?? [])
@@ -276,6 +325,16 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   }
   if (resolvedData?.promptBlock) {
     userPrompt += `\n\n${resolvedData.promptBlock}`;
+  }
+  if (unprovidedPasswordIds.size > 0) {
+    const unprovidedList = appMap.elements
+      .filter((e) => unprovidedPasswordIds.has(e.id))
+      .map((el) => {
+        const label = el.text ?? el.ariaLabel ?? el.placeholder ?? el.name ?? el.id;
+        return `${el.id} ("${label}")`;
+      })
+      .join(', ');
+    userPrompt += `\n\nPASSWORD FIELDS WITHOUT PROVIDED VALUES: ${unprovidedList}\nDo not fill these password fields with any non-empty value. Leave them empty and cover their forms with empty-submit / validation / no-advance cases only.`;
   }
   if (resolvedFocus.length > 0) {
     const focusList = resolvedFocus
@@ -420,6 +479,10 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
       enforceTestData(plan, resolvedData.fills);
     }
 
+    if (unprovidedPasswordIds.size > 0) {
+      enforceUnprovidedPasswordGuard(plan, unprovidedPasswordIds);
+    }
+
     // S5.1: Strip intent from all cases after enforceTestData and before cache/return
     for (const tc of plan.testCases) {
       delete tc.intent;
@@ -443,7 +506,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
 
   if (useDualCall) {
     const promptA = `${userPrompt}\n\nASSIGNMENT: plan up to 6 core cases — primary happy paths end-to-end, key navigation, main content visibility. Prefer cases grounded in OBSERVED FACTS.`;
-    const promptB = `${userPrompt}\n\nASSIGNMENT: plan up to 5 negative / validation / edge cases — empty submits, invalid input, counts, visibility of secondary elements. Prefer cases grounded in OBSERVED FACTS.\nTEST DATA values are valid success values. Never use a secret placeholder as the invalid/missing value under test: empty field = fill '' or omit the fill; wrong credential = a non-secret literal such as wrong-password. Use exact test-data only for fields meant to stay valid in that case.`;
+    const promptB = `${userPrompt}\n\nASSIGNMENT: plan up to 5 negative / validation / edge cases — empty submits, invalid input, counts, visibility of secondary elements. Prefer cases grounded in OBSERVED FACTS.\nTEST DATA values are valid success values. Never use a secret placeholder as the invalid/missing value under test: empty field = fill '' or omit the fill; wrong credential = a non-secret literal such as wrong-password (only when TEST DATA provides a value for that field; never type invented literals into unprovided password fields). Use exact test-data only for fields meant to stay valid in that case.`;
 
     const [settledA, settledB] = await Promise.allSettled([
       doCallLlm({
