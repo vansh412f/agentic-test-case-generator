@@ -322,7 +322,7 @@ stateDiagram-v2
 - **Decision:** Route runtime application queries through Supabase's transaction pooler (PgBouncer on port 6543) with `connection_limit=1`. Restrict direct connections (port 5432) strictly to administrative migration commands (`prisma migrate deploy`).
 - **Why:** Prevents connection starvation during bursts of crawler or runner queries.
 - **Trade-off Accepted:** Advisory locks and prepared statements cannot be used in runtime application queries.
-- **Where in Code:** `backend/prisma/schema.prisma:7-8`, `docs/DEPLOY.md:9-23`.
+- **Where in Code:** `backend/prisma/schema.prisma:7-8`.
 
 ### Decision 11: Daily Admission Quotas
 
@@ -346,7 +346,7 @@ stateDiagram-v2
 - **Decision:** Deploy backend to Render's free Docker tier (512 MB RAM, 0.1 CPU, `RUNNER_TIMEOUT_SCALE=3`), frontend to Vercel, and database to Supabase. Configure external UptimeRobot monitors to ping `/api/health` every 5 minutes (preventing container sleep) and `/api/health/db` every 12 hours (preventing database pausing).
 - **Why:** Provides continuous availability and full end-to-end functionality without infrastructure spend.
 - **Trade-off Accepted:** Render's free tier provides 750 free hours per month; keeping one service continuously awake consumes 744 hours (leaving 6 hours margin). Concurrency must be pinned to 1.
-- **Where in Code:** `render.yaml`, `backend/Dockerfile`, `docs/DEPLOY.md`, `docs/OPERATIONS.md`.
+- **Where in Code:** `render.yaml`, `backend/Dockerfile`.
 
 ### Decision 14: Multi-Channel Test Export
 
@@ -434,7 +434,7 @@ The AST static analysis check (`codeSafety.ts`) inspects the TypeScript syntax t
 
 ## Measured Results
 
-Measurements recorded from a live 12-run verification matrix re-run after Phase 12 (Observe step + dual-call planning + success-only grounding) — full report: [`docs/measurements/2026-10-phase12-measurement.md`](docs/measurements/2026-10-phase12-measurement.md):
+Measurements recorded from a live 12-run verification matrix re-run after Phase 12 (Observe step + dual-call planning + success-only grounding):
 
 - **Commit:** `2563338`
 - **Date:** October 21, 2026
@@ -455,7 +455,7 @@ Measurements recorded from a live 12-run verification matrix re-run after Phase 
 | Median Wall Time | 70.1s | Across crawl, observe, plan, compile, execution, and triage |
 | Median Observe Step Latency | 11.2s | New Phase 12 phase (per-run range 5.7–22.7s) |
 
-**Previous measurement (`c89620e`, pre-Phase-12):** pass rate 66.7% (56/84), false-finding rate 100% (20/20), median fresh tokens 3,113, median wall time 62.8s — full detail in [`docs/measurements/2026-10-measurement.md`](docs/measurements/2026-10-measurement.md).
+**Previous measurement (`c89620e`, pre-Phase-12):** pass rate 66.7% (56/84), false-finding rate 100% (20/20), median fresh tokens 3,113, median wall time 62.8s.
 
 > [!WARNING]
 > **Known Pipeline Limitations Identified During Measurement**
@@ -859,10 +859,6 @@ The backend observability stack combines structured Winston logging for runtime 
 │           ├── egressProxy.ts      # Connect-time DNS validation HTTP proxy
 │           ├── netPolicy.ts        # IP subnet blocking preventing SSRF attacks
 │           └── pow.ts              # ALTCHA proof-of-work challenge verification
-├── docs/                           # Architecture guides and live measurements
-│   ├── DEPLOY.md                   # Step-by-step production deployment instructions
-│   ├── OPERATIONS.md               # Operations, keep-alive monitoring, and runbook
-│   └── measurements/               # Empirical performance and token reduction audits
 ├── frontend/                       # Next.js 14 Pages Router user interface
 │   ├── components/                 # React UI components (Tailwind CSS)
 │   ├── lib/                        # Client-side API fetchers and localStorage helpers
@@ -907,12 +903,74 @@ npx tsx scratch/testQuickFixes.ts       # Validates error mapping and URL transf
 
 ---
 
+## Deployment
+
+This application is designed to operate continuously across free hosting allocations: Supabase (PostgreSQL), Render (Docker Backend), and Vercel (Next.js Frontend).
+
+### Deployment Order & Setup
+
+1. **Supabase Database**:
+   - Create a project. Obtain the pooled connection string (port 6543 with `?pgbouncer=true&connection_limit=1`) and the direct connection string (port 5432).
+   - Apply Prisma migrations locally via the direct connection URL:
+     ```bash
+     cd backend && DATABASE_URL="postgresql://...:5432/postgres" pnpm exec prisma migrate deploy
+     ```
+2. **Render Backend**:
+   - In Render Dashboard, select **New +** -> **Blueprint**, link the repository (`main` branch), and let Render parse `render.yaml`.
+   - In Render Dashboard -> **Environment Variables**, fill in values for all `sync: false` secrets.
+3. **Vercel Frontend**:
+   - In Vercel Dashboard, import the repository with Root Directory set to `frontend`.
+   - Configure environment variables: `BACKEND_URL` (`https://<service>.onrender.com`), `EDGE_SHARED_SECRET` (matching Render), and `NEXT_PUBLIC_DEPLOYMENT_MODE=production`. Deploy.
+
+### Environment & Secrets Checklist
+
+Secret names must match `render.yaml` exactly. Values are never committed to version control:
+
+| Variable | Target | Purpose / Requirements |
+|---|---|---|
+| `DATABASE_URL` | Render | Pooled connection string (port 6543, `?pgbouncer=true&connection_limit=1`) |
+| `DIRECT_URL` | Render | Direct connection string (port 5432) for migrations |
+| `VISITOR_SIGNING_SECRET` | Render | HMAC key for signed visitor IDs (`openssl rand -hex 32`, min 16 chars) |
+| `POW_SECRET` | Render | ALTCHA proof-of-work secret (`openssl rand -hex 32`, min 16 chars) |
+| `ADMIN_SECRET` | Render | Header key for admin routes (`X-Admin-Secret`, min 24 chars) |
+| `EDGE_SHARED_SECRET` | Render + Vercel | Shared token authenticating Vercel edge rewrite proxy |
+| `FRONTEND_ORIGIN` | Render | Allowed CORS origin (e.g. `https://your-app.vercel.app`) |
+| `GROQ_API_KEY` | Render | Primary LLM provider key (`gsk_...`) |
+| `GEMINI_API_KEY` | Render | Optional fallback LLM provider key (`AIza...`) |
+| `REASONING_MODELS` | Render | Optional comma-separated model chain override for reasoning tier |
+| `FAST_MODELS` | Render | Optional comma-separated model chain override for fast tier |
+
+### Free-Tier Operating Constraints & Keep-Alive
+
+Preset via `render.yaml`: single instance, `PIPELINE_CONCURRENCY=1`, `CRAWL_CONCURRENCY=1`, and `RUNNER_TIMEOUT_SCALE=3`. To prevent cold starts and database pausing within Render's 750 free monthly hours (744 hours in a 31-day month):
+- **Backend Keep-Alive**: Configure UptimeRobot to ping `GET /api/health` every 5 minutes (prevents Render container sleep).
+- **Database Activity Ping**: Configure UptimeRobot to ping `GET /api/health/db` every 12 hours (issues lightweight query preventing 7-day Supabase inactivity pause).
+
+### Post-Deploy Verification
+
+1. Verify `/api/health` returns status `ok` and `/api/health/db` returns database `ok`.
+2. Run one end-to-end generation job on `https://demo.playwright.dev/todomvc` to confirm crawl, plan, compile, and runner execution succeed.
+3. Validate Playwright trace replay and download on the job page.
+4. Verify edge client IP extraction via `curl -s -H "X-Admin-Secret: <SECRET>" <BACKEND>/api/admin/whoami`.
+5. Test BYOK / custom-keys generation path.
+
+### Rollback & Secrets Rotation
+
+- **Rollback**: In Render Dashboard, navigate to **Deploys** and click **Rollback to this deploy** on the last working release. In Vercel, select the previous good deployment and click **Promote to Production**.
+- **Rotation**:
+  - `VISITOR_SIGNING_SECRET`: Rotate in Render (invalidates existing visitor cookies; returning users receive fresh IDs).
+  - `EDGE_SHARED_SECRET`: Update simultaneously in both Render and Vercel environment variables, then redeploy both.
+  - `ADMIN_SECRET`: Rotate anytime in Render (used only for `/api/admin/*` administrative endpoints).
+  - `POW_SECRET`, `GROQ_API_KEY`, `GEMINI_API_KEY`: Rotate anytime in Render environment variables.
+
+---
+
 ## Roadmap
 
 - **Scenario Accuracy & Negative Template Separation:** The dual-call planner split (Phase 12) separates core from negative planning, but the **fast/negative tier is still the driver of false findings** (5 of 10 false expectations in the latest 12-run measurement inject valid test data into a case titled "must fail"). Segregate negative cases from valid credentials in `backend/src/agent/steps/planner.ts` (`enforceTestData`) so a "must fail" case never binds the valid test-data values.
 - **Navigation-Aware Correction Guidance:** Supply post-navigation page URLs and visible interactive element snapshots directly to the correction prompt, preventing locator spin on vanished selectors (measured: correction success 30.0%, all heals on strict-mode locator collisions).
 - **Screenshot Artifacts:** Attach screenshot artifacts directly to test result cards for rapid debugging (owner-only Playwright trace replays already ship for every execution attempt; screenshots do not yet).
-- **Production Infrastructure Rollout:** Execute production deployment to Render and Vercel following the steps outlined in `docs/DEPLOY.md`.
+- **Production Infrastructure Rollout:** Execute production deployment to Render and Vercel following the steps outlined in the [Deployment](#deployment) section.
 
 ---
 
