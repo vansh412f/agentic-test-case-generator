@@ -1,14 +1,15 @@
-# Predeploy Patch: Unprovided Password Guard
+# Predeploy Patch: Unprovided Password Guard & Addendum
 
 ## Status & Current Pointer
-- **CURRENT POINTER**: Complete (All stages W0–W5 implemented and verified)
+- **CURRENT POINTER**: Complete (Stages W0–W5 and Addendum A0–A6 fully implemented and verified)
 - **Status**: Completed
-- **Branch**: main at 3995aaf (with working tree patch)
+- **Branch**: main at 3995aaf (with W0–W5 committed at dc7b6ae + Addendum A0–A6 working tree patch)
 
 ---
 
 ## Stages Checklist
 
+### Core Patch (W0–W5)
 - [x] **W0: Baseline reads & findings**
   - [x] `backend/src/agent/steps/planner.ts`: `enforceTestData`, `planTests` (`resolvedData`, `userPrompt`, `finalizePlan`, zero-plan guard).
   - [x] `backend/src/agent/testData.ts`: `resolveTestData` semantics (`fills` map populated only for non-empty provided entries).
@@ -42,44 +43,78 @@
   - [x] `pnpm exec tsx scratch/testFallbackChains.ts`
   - [x] `git diff --check`, `git diff --stat`, `git status --short --branch`, confirm zero frontend files.
 
+### Addendum (A0–A6)
+- [x] **A0: Baseline reads**
+  - [x] `validateAndNormalizePlan` in `backend/src/agent/steps/planner.ts`.
+  - [x] `PlanStepSchema superRefine` in `backend/src/agent/prompts/plannerPrompt.ts`.
+  - [x] Compiler `assert_visible`/`assert_text` branches in `backend/src/agent/steps/compiler.ts`.
+  - [x] Generator fallback prompt in `backend/src/agent/prompts/generatorPrompt.ts`.
+- [x] **A1: Deterministic normalization in `validateAndNormalizePlan`**
+  - [x] Defensive walk before `safeParse` converting locator-less `assert_text` with non-empty string value to `assert_visible` (`elementId: null`).
+  - [x] Single warning line: `[Planner] Normalized N locator-less assert_text step(s) to assert_visible.`
+- [x] **A2: Prompt instruction**
+  - [x] Add rule 17 (PAGE-LEVEL MESSAGES) to STRICT RULES in `backend/src/agent/prompts/plannerPrompt.ts`.
+- [x] **A3: Interaction checks**
+  - [x] `enforceTestData` secret redaction compatibility verified.
+  - [x] References / salvage error path compatibility verified.
+  - [x] Plan cache pre-storage normalization verified.
+- [x] **A4: Regression tests in `backend/scratch/testPredeploy.ts`**
+  - [x] P12: Locator-less `assert_text` with value normalizes to `assert_visible` (`ok: true`, `elementId: null`).
+  - [x] P13: `assert_text` with known `elementId` remains unchanged (`ok: true`).
+  - [x] P14: `assert_text` with valid `target` remains unchanged (`ok: true`).
+  - [x] P15: Locator-less `assert_text` with empty string or null value is not converted and fails schema (`ok: false, kind: 'schema'`).
+  - [x] P16: `assert_text` with hallucinated `elementId` is not converted and returns references error (`ok: false, kind: 'references'`).
+  - [x] P17: Mixed plan: converted step survives while hallucinated case triggers references kind.
+- [x] **A5: Two doc literal fixes in `docs/measurements/2026-10-model-benchmark.md`**
+  - [x] SQLite database -> Supabase Postgres replacement.
+  - [x] `MAX_TEST_CASES = 8` -> `MAX_AI_TEST_CASES = 8` replacement.
+- [x] **A6: Full verification**
+  - [x] `pnpm run typecheck`
+  - [x] `pnpm exec tsx scratch/testPredeploy.ts`
+  - [x] `pnpm exec tsx scratch/testPhase12.ts`
+  - [x] `pnpm exec tsx scratch/testPhase12Legacy.ts`
+  - [x] `pnpm exec tsx scratch/testQF2.ts`
+  - [x] `pnpm exec tsx scratch/testPhase9A1.ts`
+
 ---
 
 ## Files Touched
-- `PREDEPLOY_PATCH_TODO.md` (new tracking doc)
-- `backend/src/agent/steps/planner.ts` (W1: `enforceUnprovidedPasswordGuard`, unprovided password ID computation, `finalizePlan` wiring; W2: prompt injection and conditioned `promptB`)
-- `backend/src/agent/prompts/plannerPrompt.ts` (W2: added STRICT RULES item 16 for PASSWORD FIELDS)
-- `backend/scratch/testPredeploy.ts` (W3: added regression tests P7–P11)
-- `Readme.md` (W4: added unprovided password explanation sentence to test-data description)
+- `PREDEPLOY_PATCH_TODO.md` (tracking doc)
+- `backend/src/agent/steps/planner.ts` (`normalizeLocatorLessAssertText`, called in `validateAndNormalizePlan`)
+- `backend/src/agent/prompts/plannerPrompt.ts` (Rule 17 in STRICT RULES)
+- `backend/scratch/testPredeploy.ts` (P12–P17 regression tests)
+- `docs/measurements/2026-10-model-benchmark.md` (2 literal string replacements)
 
 ---
 
 ## Verification Log
-- **W0 Findings**:
-  - `backend/src/agent/testData.ts`: `resolveTestData` iterates over entries, skipping any entry where `!entry.value || entry.value.trim().length === 0` or where `resolveElementRef` returns undefined. Thus, an element is provided if and only if `resolvedData.fills.has(elementId)`.
-  - `backend/src/crawler/observe.ts`: `canFill = formFields.length > 0 && formFields.every((f) => resolvedData.fills.has(f.id))`. If any visible input/textarea/select lacks an entry in `resolvedData.fills`, filled submit is skipped entirely. When executed, values are strictly retrieved from `resolvedData.fills.get(f.id)!` (and resolved against `resolvedData.secrets` if secret placeholder). No invented values are generated or typed in `observe.ts`.
-  - `backend/src/agent/steps/planner.ts`: `finalizePlan` executes on all plan paths (dual-call, single-call, repair, expansion, salvage). `enforceTestData` currently filters secret assertions and replaces non-negative fills or non-empty negative fills. The zero-plan guard throws `LlmError('BAD_RESPONSE')` immediately following intent stripping.
-- **W1 Execution**:
-  - Implemented `enforceUnprovidedPasswordGuard(plan: TestPlan, unprovidedPasswordIds: ReadonlySet<string>): TestPlan`.
-  - Drops test cases where any step action is `fill` or `select` targeting an unprovided password element ID with a non-empty string value (`value !== null && value !== undefined && value !== ''`).
-  - Emits console.warn with count and dropped titles: `[Planner] Dropped N test case(s) attempting to fill unprovided password fields: ...`.
-  - Re-indexes and caps plan with `capAndRenumberTestPlan(plan)`.
-  - Wired into `finalizePlan` immediately after `enforceTestData` and before intent stripping / zero-plan guard.
-- **W2 Execution**:
-  - Added STRICT RULES rule 16 to `backend/src/agent/prompts/plannerPrompt.ts`.
-  - Formed and injected `PASSWORD FIELDS WITHOUT PROVIDED VALUES: ...` into `userPrompt` when unprovided password fields exist.
-  - Conditioned `promptB` negative credential guidance on test data availability.
-- **W3 Execution**:
-  - Added test cases P7 through P11 in `backend/scratch/testPredeploy.ts`.
-  - All 11 tests (P1–P11) pass cleanly.
-- **W4 Execution**:
-  - Added sentence to `Readme.md`: *"Password fields without a user-provided value are never filled with invented values — such forms are covered only with empty/validation cases."* under "Accepts per-site test data without persisting secrets server-side".
-- **W5 Verification Results**:
+- **W0–W5**: Completed and committed in `fa755e2` and `dc7b6ae`. All 11 tests (P1–P11) passing.
+- **A0 Baseline Reads**:
+  - `PlanStepSchema superRefine`: confirms `assert_text` requires `elementId` or `target`, plus non-null/non-undefined value. `assert_visible` requires `elementId`, `target`, OR `value`.
+  - `compiler.ts`: confirms `assert_visible` branch with no `elementId`/`target` compiles to `await expect(page.getByText(step.value)).toBeVisible()`.
+  - `generatorPrompt.ts`: confirms example step `{ "action": "assert_visible", "elementId": null, "value": "Buy groceries" }` maps to `await expect(page.getByText("Buy groceries")).toBeVisible()`.
+- **A1 Execution**:
+  - Exported `normalizeLocatorLessAssertText(parsed: unknown): number` in `planner.ts`.
+  - Defensively walks `parsed.testCases[].steps[]`. Converts when `action === 'assert_text'`, `elementId` is null/undefined/'', `target` is null/undefined, and `typeof value === 'string' && value.trim() !== ''`. Sets `action = 'assert_visible'` and `elementId = null` if undefined or empty string.
+  - Emits single warning `[Planner] Normalized N locator-less assert_text step(s) to assert_visible.`
+  - Called immediately after `JSON.parse` and before `TestPlanSchema.safeParse`.
+- **A2 Execution**:
+  - Added Rule 17 under STRICT RULES in `backend/src/agent/prompts/plannerPrompt.ts`.
+- **A3 Interaction Checks**:
+  1. `enforceTestData`: Lines 205–211 strip `__AGT_SECRET_\d+__` assertions for `assert_visible`, `assert_text`, and `assert_url` identically; converted steps remain fully covered.
+  2. References / salvage: Normalization sets `elementId: null`. The references check filters out null `elementId`s, leaving cases with converted steps valid while cases with hallucinated IDs are correctly captured in `badCaseIndexes` with kind `'references'`.
+  3. Cache: Normalization runs inside `validateAndNormalizePlan` before `safeParse` and plan return, so only normalized `assert_visible` plans are cached in `setCachedPlan`.
+- **A4 Tests**:
+  - P12 through P17 added to `testPredeploy.ts`. All 17 tests (P1–P17) pass.
+- **A5 Doc Fixes**:
+  - Replaced SQLite mention with Prisma / Supabase Postgres.
+  - Replaced `MAX_TEST_CASES = 8` with `MAX_AI_TEST_CASES = 8`.
+  - Diff against 3995aaf is exactly 2 changed lines. Zero occurrences of "SQLite".
+- **A6 Verification Results**:
   - `pnpm run typecheck`: PASS (`tsc --noEmit`, exit 0)
-  - `pnpm exec tsx scratch/testPredeploy.ts`: PASS (11/11 tests pass, exit 0)
+  - `pnpm exec tsx scratch/testPredeploy.ts`: PASS (all 17 tests pass, exit 0)
   - `pnpm exec tsx scratch/testPhase12.ts`: PASS (all 10 assertions pass, exit 0)
   - `pnpm exec tsx scratch/testPhase12Legacy.ts`: PASS (all 14 assertions pass, exit 0)
   - `pnpm exec tsx scratch/testQF2.ts`: PASS (all 10 groups pass, exit 0)
   - `pnpm exec tsx scratch/testPhase9A1.ts`: PASS (all 8 suites pass, exit 0)
-  - `pnpm exec tsx scratch/testFallbackChains.ts`: PASS (all 9 test suites pass, exit 0)
-  - `git diff --check`: PASS (no whitespace or git syntax issues)
   - Zero frontend files touched.

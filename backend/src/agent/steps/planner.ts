@@ -46,6 +46,47 @@ export function serializeObservations(observations?: Observation[], maxChars = 6
   return json;
 }
 
+export function normalizeLocatorLessAssertText(parsed: unknown): number {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return 0;
+  }
+  const obj = parsed as Record<string, unknown>;
+  if (!Array.isArray(obj.testCases)) {
+    return 0;
+  }
+
+  let convertedCount = 0;
+  for (const tc of obj.testCases) {
+    if (!tc || typeof tc !== 'object' || Array.isArray(tc)) continue;
+    const tcObj = tc as Record<string, unknown>;
+    if (!Array.isArray(tcObj.steps)) continue;
+
+    for (const step of tcObj.steps) {
+      if (!step || typeof step !== 'object' || Array.isArray(step)) continue;
+      const s = step as Record<string, unknown>;
+
+      const isAssertText = s.action === 'assert_text';
+      const hasNoElementId = s.elementId === null || s.elementId === undefined || s.elementId === '';
+      const hasNoTarget = s.target === null || s.target === undefined;
+      const hasNonEmptyValue = typeof s.value === 'string' && s.value.trim() !== '';
+
+      if (isAssertText && hasNoElementId && hasNoTarget && hasNonEmptyValue) {
+        s.action = 'assert_visible';
+        if (s.elementId === undefined || s.elementId === '') {
+          s.elementId = null;
+        }
+        convertedCount++;
+      }
+    }
+  }
+
+  if (convertedCount > 0) {
+    console.warn(`[Planner] Normalized ${convertedCount} locator-less assert_text step(s) to assert_visible.`);
+  }
+
+  return convertedCount;
+}
+
 export function validateAndNormalizePlan(
   content: string,
   knownIds: Set<string>,
@@ -60,6 +101,8 @@ export function validateAndNormalizePlan(
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, kind: 'syntax', detail: `Invalid JSON syntax: ${msg}` };
   }
+
+  normalizeLocatorLessAssertText(parsed);
 
   // 2. Zod validation (includes superRefine checks)
   const result = TestPlanSchema.safeParse(parsed);

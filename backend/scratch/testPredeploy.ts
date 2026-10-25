@@ -3,7 +3,12 @@ process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/db';
 process.env.DIRECT_URL = 'postgresql://user:pass@localhost:5432/db';
 
 import assert from 'node:assert/strict';
-import { serializeObservations, enforceTestData, enforceUnprovidedPasswordGuard } from '../src/agent/steps/planner.ts';
+import {
+  serializeObservations,
+  enforceTestData,
+  enforceUnprovidedPasswordGuard,
+  validateAndNormalizePlan,
+} from '../src/agent/steps/planner.ts';
 import type { Observation } from '../src/crawler/types.ts';
 import type { TestPlan } from '../src/agent/prompts/plannerPrompt.ts';
 
@@ -357,6 +362,230 @@ async function main(): Promise<void> {
     const result = enforceUnprovidedPasswordGuard(plan, unprovided);
     assert.equal(result.testCases.length, 0, 'all cases must be dropped when all fill unprovided passwords');
     pass('P11 Plan where every case fills unprovided password returns 0 cases');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P12: Locator-less assert_text with a value normalizes to assert_visible
+  // ──────────────────────────────────────────────────
+  await run('P12 Locator-less assert_text with value normalizes to assert_visible', async () => {
+    const raw = JSON.stringify({
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Flash banner check',
+          description: 'Check flash banner visibility',
+          steps: [
+            {
+              action: 'assert_text',
+              elementId: null,
+              value: 'Your username is invalid!',
+              description: 'Verify flash banner message',
+            },
+          ],
+        },
+      ],
+    });
+    const result = validateAndNormalizePlan(raw, new Set(), 'https://example.com/login');
+    assert.equal(result.ok, true, 'normalization should allow schema parse to succeed');
+    if (result.ok) {
+      assert.equal(result.plan.testCases[0].steps[0].action, 'assert_visible');
+      assert.equal(result.plan.testCases[0].steps[0].value, 'Your username is invalid!');
+      assert.equal(result.plan.testCases[0].steps[0].description, 'Verify flash banner message');
+      assert.equal(result.plan.testCases[0].steps[0].elementId, null);
+    }
+    pass('P12 Locator-less assert_text with value normalizes to assert_visible');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P13: assert_text WITH a known elementId -> unchanged assert_text, ok:true
+  // ──────────────────────────────────────────────────
+  await run('P13 assert_text with known elementId remains unchanged', async () => {
+    const raw = JSON.stringify({
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Heading text check',
+          description: 'Check heading text',
+          steps: [
+            {
+              action: 'assert_text',
+              elementId: 'heading-id',
+              value: 'Welcome Back',
+              description: 'Verify heading text',
+            },
+          ],
+        },
+      ],
+    });
+    const result = validateAndNormalizePlan(raw, new Set(['heading-id']), 'https://example.com/login');
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.plan.testCases[0].steps[0].action, 'assert_text');
+      assert.equal(result.plan.testCases[0].steps[0].elementId, 'heading-id');
+      assert.equal(result.plan.testCases[0].steps[0].value, 'Welcome Back');
+    }
+    pass('P13 assert_text with known elementId remains unchanged');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P14: assert_text WITH a valid target -> unchanged
+  // ──────────────────────────────────────────────────
+  await run('P14 assert_text with valid target remains unchanged', async () => {
+    const raw = JSON.stringify({
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Target text check',
+          description: 'Check target text',
+          steps: [
+            {
+              action: 'assert_text',
+              elementId: null,
+              target: { role: 'heading', name: 'Dashboard' },
+              value: 'Dashboard',
+              description: 'Verify heading target text',
+            },
+          ],
+        },
+      ],
+    });
+    const result = validateAndNormalizePlan(raw, new Set(), 'https://example.com/dashboard');
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.plan.testCases[0].steps[0].action, 'assert_text');
+      assert.deepEqual(result.plan.testCases[0].steps[0].target, { role: 'heading', name: 'Dashboard' });
+      assert.equal(result.plan.testCases[0].steps[0].value, 'Dashboard');
+    }
+    pass('P14 assert_text with valid target remains unchanged');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P15: Locator-less assert_text with empty string or null value -> ok:false, kind 'schema'
+  // ──────────────────────────────────────────────────
+  await run('P15 Locator-less assert_text with empty string or null value is not converted and fails schema', async () => {
+    const rawEmpty = JSON.stringify({
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Empty text check',
+          description: 'Check empty text',
+          steps: [
+            {
+              action: 'assert_text',
+              elementId: null,
+              value: '',
+              description: 'Empty value assert_text',
+            },
+          ],
+        },
+      ],
+    });
+    const resultEmpty = validateAndNormalizePlan(rawEmpty, new Set(), 'https://example.com');
+    assert.equal(resultEmpty.ok, false);
+    if (!resultEmpty.ok) {
+      assert.equal(resultEmpty.kind, 'schema');
+    }
+
+    const rawNull = JSON.stringify({
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Null text check',
+          description: 'Check null text',
+          steps: [
+            {
+              action: 'assert_text',
+              elementId: null,
+              value: null,
+              description: 'Null value assert_text',
+            },
+          ],
+        },
+      ],
+    });
+    const resultNull = validateAndNormalizePlan(rawNull, new Set(), 'https://example.com');
+    assert.equal(resultNull.ok, false);
+    if (!resultNull.ok) {
+      assert.equal(resultNull.kind, 'schema');
+    }
+    pass('P15 Locator-less assert_text with empty string or null value is not converted and fails schema');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P16: assert_text with hallucinated elementId -> NOT converted, returns references error
+  // ──────────────────────────────────────────────────
+  await run('P16 assert_text with hallucinated elementId is not converted and returns references error', async () => {
+    const raw = JSON.stringify({
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Hallucinated id check',
+          description: 'Check hallucinated id',
+          steps: [
+            {
+              action: 'assert_text',
+              elementId: 'ghost-elem',
+              value: 'Some text',
+              description: 'Verify text on non-existent element',
+            },
+          ],
+        },
+      ],
+    });
+    const result = validateAndNormalizePlan(raw, new Set(['known-elem']), 'https://example.com');
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.kind, 'references');
+      assert.ok(result.badCaseIndexes.has(0));
+      assert.equal(result.plan.testCases[0].steps[0].action, 'assert_text');
+    }
+    pass('P16 assert_text with hallucinated elementId is not converted and returns references error');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P17: Mixed plan: converted step survives while hallucinated case triggers references kind
+  // ──────────────────────────────────────────────────
+  await run('P17 Mixed plan: converted step survives while hallucinated case triggers references kind', async () => {
+    const raw = JSON.stringify({
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Case 1: Locator-less banner',
+          description: 'Check banner',
+          steps: [
+            {
+              action: 'assert_text',
+              elementId: null,
+              value: 'Logged out successfully',
+              description: 'Flash toast',
+            },
+          ],
+        },
+        {
+          id: 'tc-2',
+          title: 'Case 2: Hallucinated reference',
+          description: 'Check ghost button',
+          steps: [
+            {
+              action: 'click',
+              elementId: 'ghost-button',
+              value: null,
+              description: 'Click ghost button',
+            },
+          ],
+        },
+      ],
+    });
+    const result = validateAndNormalizePlan(raw, new Set(['known-button']), 'https://example.com');
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.kind, 'references');
+      assert.ok(result.badCaseIndexes.has(1), 'case 2 must be in badCaseIndexes');
+      assert.ok(!result.badCaseIndexes.has(0), 'case 1 must not be in badCaseIndexes');
+      assert.equal(result.plan.testCases[0].steps[0].action, 'assert_visible', 'case 1 step must be normalized to assert_visible');
+      assert.equal(result.plan.testCases[0].steps[0].elementId, null);
+    }
+    pass('P17 Mixed plan: converted step survives while hallucinated case triggers references kind');
   });
 
   // ──────────────────────────────────────────────────
