@@ -20,6 +20,8 @@ const PASSTHROUGH = [
 export function childProcessEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HEADLESS: config.HEADLESS ? 'true' : 'false',
+    MALLOC_ARENA_MAX: '2',
+    UV_THREADPOOL_SIZE: '2',
   };
   for (const key of PASSTHROUGH) {
     const value = process.env[key];
@@ -32,6 +34,11 @@ export function playwrightRunnerEnv(
   resultsPath: string,
   extraEnv: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
+  const existingNodeOptions = process.env.NODE_OPTIONS?.trim() ?? '';
+  const withHeapCap = existingNodeOptions.includes('--max-old-space-size')
+    ? existingNodeOptions
+    : [existingNodeOptions, '--max-old-space-size=112'].filter(Boolean).join(' ');
+
   const extra: Record<string, string> = {
     PLAYWRIGHT_JSON_OUTPUT_FILE: resultsPath,
     HEADLESS: config.HEADLESS ? 'true' : 'false', // explicit, from validated config
@@ -41,10 +48,9 @@ export function playwrightRunnerEnv(
 
   if (!config.LOCAL_AGENT_MODE && process.env.AGT_EGRESS_PROXY) {
     extra.AGT_EGRESS_PROXY = process.env.AGT_EGRESS_PROXY;
-    const existingNodeOptions = process.env.NODE_OPTIONS?.trim() ?? '';
-    extra.NODE_OPTIONS = existingNodeOptions
-      ? `${existingNodeOptions} --import=${NET_GUARD_URL}`
-      : `--import=${NET_GUARD_URL}`;
+    extra.NODE_OPTIONS = `${withHeapCap} --import=${NET_GUARD_URL}`.trim();
+  } else {
+    extra.NODE_OPTIONS = withHeapCap;
   }
 
   return childProcessEnv(extra);

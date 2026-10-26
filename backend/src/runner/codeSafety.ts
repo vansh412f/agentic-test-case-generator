@@ -1,4 +1,14 @@
-import ts from 'typescript';
+import type tsType from 'typescript';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+let cachedTs: typeof tsType | undefined;
+function getTs(): typeof tsType {
+  if (!cachedTs) {
+    cachedTs = require('typescript') as typeof tsType;
+  }
+  return cachedTs;
+}
 
 const ALLOWED_MODULES = new Set(['@playwright/test']);
 
@@ -45,7 +55,8 @@ const TEST_RUNNER_METHODS = new Set([
   'only', 'skip', 'fixme', 'fail', 'slow',
 ]);
 
-function isTestRunnerCall(expr: ts.Expression): boolean {
+function isTestRunnerCall(expr: tsType.Expression): boolean {
+  const ts = getTs();
   if (ts.isIdentifier(expr)) {
     return expr.text === 'test';
   }
@@ -57,7 +68,8 @@ function isTestRunnerCall(expr: ts.Expression): boolean {
   return false;
 }
 
-function getFirstSegment(expr: ts.Expression): string | null {
+function getFirstSegment(expr: tsType.Expression): string | null {
+  const ts = getTs();
   if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
     return expr.text;
   }
@@ -71,10 +83,11 @@ function getFirstSegment(expr: ts.Expression): string | null {
 }
 
 export function findUnsafeConstructs(code: string, filename = 'test.spec.ts'): string[] {
+  const ts = getTs();
   const source = ts.createSourceFile(filename, code, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
   const problems = new Set<string>();
 
-  const checkTestCallbackParameters = (fn: ts.FunctionExpression | ts.ArrowFunction): void => {
+  const checkTestCallbackParameters = (fn: tsType.FunctionExpression | tsType.ArrowFunction): void => {
     if (fn.parameters.length === 0) return;
     const firstParam = fn.parameters[0];
     if (!ts.isObjectBindingPattern(firstParam.name)) {
@@ -102,7 +115,7 @@ export function findUnsafeConstructs(code: string, filename = 'test.spec.ts'): s
     }
   };
 
-  const visit = (node: ts.Node): void => {
+  const visit = (node: tsType.Node): void => {
     if (ts.isImportDeclaration(node)) {
       const spec = node.moduleSpecifier;
       if (spec && ts.isStringLiteral(spec)) {

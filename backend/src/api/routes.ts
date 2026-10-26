@@ -24,7 +24,7 @@ import {
   budgetStatus,
   nextUtcMidnight,
 } from '../security/dailyBudget.ts';
-import { crawlSemaphore, QueueFullError } from '../security/concurrencyGate.ts';
+import { QueueFullError } from '../security/concurrencyGate.ts';
 import { runQueue, type ClaimToken } from '../agent/runQueue.ts';
 import { rememberCrawl } from '../crawler/crawlCache.ts';
 import { hasOwnKeys, type RequestLlmKeys } from '../llm/requestKeys.ts';
@@ -160,22 +160,23 @@ router.post('/crawl', crawlIpLimiter, async (req, res) => {
     throw err;
   }
 
-  let release: (() => void) | undefined;
+  const ac = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished) ac.abort();
+  });
+
   try {
-    release = await crawlSemaphore.acquire();
+    const appMap = await crawlPage(parsed.data.url, { signal: ac.signal, gateMode: 'preview' });
+    rememberCrawl(parsed.data.url, appMap);
+    res.json(appMap);
   } catch (err) {
+    if (ac.signal.aborted || res.writableEnded) {
+      return;
+    }
     if (err instanceof QueueFullError) {
       res.status(429).json({ error: 'QUEUE_FULL', message: 'Previews are busy, retry in a moment.' });
       return;
     }
-    throw err;
-  }
-
-  try {
-    const appMap = await crawlPage(parsed.data.url);
-    rememberCrawl(parsed.data.url, appMap);
-    res.json(appMap);
-  } catch (err) {
     const httpErr = toHttpError(err);
     if (httpErr) {
       if (httpErr.headers) {
@@ -187,8 +188,6 @@ router.post('/crawl', crawlIpLimiter, async (req, res) => {
       return;
     }
     throw err;
-  } finally {
-    release?.();
   }
 });
 

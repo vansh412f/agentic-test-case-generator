@@ -8,4 +8,5 @@ export const WEBHOOK_RETRY_DELAY_MS = 2_000;
 export const MAX_AI_TEST_CASES = 8;
 // Total suite cap = up to 8 planned + up to 4 baseline
 export const MAX_TEST_CASES = 12;
+export const EXECUTION_CHUNK_SIZE = 3;
 // Module component implementation.

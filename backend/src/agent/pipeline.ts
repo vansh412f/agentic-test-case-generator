@@ -12,7 +12,7 @@ import { correctTest, correctionPreservesAssertions, correctionPreservesSecrets 
 import { resolveTestData } from './testData.ts';
 import { buildBaselineTests } from './baseline.ts';
 import { observeAppMap } from '../crawler/observe.ts';
-import { MAX_TEST_CASES } from './run.config.ts';
+import { MAX_TEST_CASES, EXECUTION_CHUNK_SIZE } from './run.config.ts';
 import type { ElementRef, TestDataEntry } from '../api/schemas.ts';
 import { validateTestCode } from '../runner/validator.ts';
 import { executeTests, type TestCaseResult } from '../runner/executor.ts';
@@ -116,6 +116,146 @@ export function toJobErrorMessage(error: unknown): string {
     return msg;
   }
   return String(error);
+}
+
+export interface ChunkExecutionMeta {
+  filename: string;
+  testCaseId: string;
+  attemptNumber: number;
+}
+
+export async function executeChunkedBatch(
+  runId: string,
+  validFiles: Array<{ filename: string; code: string }>,
+  options: {
+    secrets?: Map<string, string>;
+    signal?: AbortSignal;
+    trace?: boolean;
+    executionMeta?: ChunkExecutionMeta[];
+    onTraceZips?: (traces: Map<string, string>) => Promise<void>;
+    chunkSize?: number;
+    jobId?: string;
+    traceOwnerId?: string;
+  },
+): Promise<{ success: boolean; results: TestCaseResult[] }> {
+  const chunkSize = options.chunkSize ?? EXECUTION_CHUNK_SIZE;
+  const allResults: TestCaseResult[] = [];
+
+  for (let i = 0; i < validFiles.length; i += chunkSize) {
+    options.signal?.throwIfAborted();
+    const chunkFiles = validFiles.slice(i, i + chunkSize);
+    const chunkMeta = options.executionMeta?.filter((m) =>
+      chunkFiles.some((f) => f.filename === m.filename),
+    );
+    const chunkTimeoutMs = Math.min(30_000 + chunkFiles.length * 25_000, 300_000);
+
+    try {
+      const chunkRes = await executeTests(runId, chunkFiles, {
+        secrets: options.secrets,
+        timeoutMs: chunkTimeoutMs,
+        signal: options.signal,
+        trace: options.trace ?? true,
+        onTraceZips: async (traces) => {
+          if (options.onTraceZips) {
+            await options.onTraceZips(traces);
+          }
+          if (chunkMeta && options.jobId && options.traceOwnerId !== undefined) {
+            for (const meta of chunkMeta) {
+              const stem = meta.filename.replace(/\.spec\.ts$/, '');
+              const zipPath = traces.get(stem) || traces.get(meta.testCaseId);
+              if (zipPath) {
+                await registerTrace(zipPath, {
+                  jobId: options.jobId,
+                  testCaseId: meta.testCaseId,
+                  attemptNumber: meta.attemptNumber,
+                  visitorId: options.traceOwnerId,
+                });
+              }
+            }
+          }
+        },
+      });
+      allResults.push(...chunkRes.results);
+    } catch (err) {
+      if (
+        err instanceof JobCancelledError ||
+        (err instanceof Error && err.name === 'AbortError') ||
+        options.signal?.aborted
+      ) {
+        throw new JobCancelledError();
+      }
+      if (err instanceof RunnerError) {
+        logger.warn(
+          `Chunk execution failed with ${err.code}: ${err.message}. Re-running per test.`,
+          {
+            component: 'Runner',
+            jobId: options.jobId,
+            errorCode: err.code,
+          },
+        );
+        for (const file of chunkFiles) {
+          options.signal?.throwIfAborted();
+          const meta = chunkMeta?.find((m) => m.filename === file.filename);
+          try {
+            const singleRes = await executeTests(
+              runId,
+              [file],
+              {
+                secrets: options.secrets,
+                timeoutMs: Math.min(30_000 + 25_000, 300_000),
+                signal: options.signal,
+                trace: options.trace ?? true,
+                onTraceZips: async (traces) => {
+                  if (options.onTraceZips) {
+                    await options.onTraceZips(traces);
+                  }
+                  if (meta && options.jobId && options.traceOwnerId !== undefined) {
+                    const stem = meta.filename.replace(/\.spec\.ts$/, '');
+                    const zipPath =
+                      traces.get(stem) ||
+                      traces.get(meta.testCaseId) ||
+                      Array.from(traces.values())[0];
+                    if (zipPath) {
+                      await registerTrace(zipPath, {
+                        jobId: options.jobId,
+                        testCaseId: meta.testCaseId,
+                        attemptNumber: meta.attemptNumber,
+                        visitorId: options.traceOwnerId,
+                      });
+                    }
+                  }
+                },
+              },
+            );
+            allResults.push(...singleRes.results);
+          } catch (singleErr) {
+            if (
+              singleErr instanceof JobCancelledError ||
+              (singleErr instanceof Error && singleErr.name === 'AbortError') ||
+              options.signal?.aborted
+            ) {
+              throw new JobCancelledError();
+            }
+            const testCaseId = file.filename.replace(/\.spec\.ts$/, '');
+            allResults.push({
+              testCaseId,
+              passed: false,
+              durationMs: 0,
+              error: singleErr instanceof Error ? singleErr.message : String(singleErr),
+              failureClass: 'other',
+            });
+          }
+        }
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  return {
+    success: allResults.length > 0 && allResults.every((r) => r.passed),
+    results: allResults,
+  };
 }
 
 async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -364,89 +504,14 @@ async function runPersistedPipeline(
         };
       },
       executeBatch: async (validFiles, executionMeta) => {
-        const timeoutMs = Math.min(30_000 + validFiles.length * 25_000, 300_000);
-        try {
-          return await executeTests(runId, validFiles, {
-            secrets: resolvedData?.secrets,
-            timeoutMs,
-            signal,
-            trace: true,
-            onTraceZips: async (traces) => {
-              if (!executionMeta) return;
-              for (const meta of executionMeta) {
-                const stem = meta.filename.replace(/\.spec\.ts$/, '');
-                const zipPath = traces.get(stem) || traces.get(meta.testCaseId);
-                if (zipPath) {
-                  await registerTrace(zipPath, {
-                    jobId,
-                    testCaseId: meta.testCaseId,
-                    attemptNumber: meta.attemptNumber,
-                    visitorId: traceOwnerId,
-                  });
-                }
-              }
-            },
-          });
-        } catch (err) {
-          if (err instanceof JobCancelledError || (err instanceof Error && err.name === 'AbortError') || signal?.aborted) {
-            throw new JobCancelledError();
-          }
-          if (err instanceof RunnerError) {
-            logger.warn(`Batch execution failed with ${err.code}: ${err.message}. Re-running per test.`, {
-              component: 'Runner',
-              jobId,
-              errorCode: err.code,
-            });
-            const fallbackResults: TestCaseResult[] = [];
-            for (const file of validFiles) {
-              signal?.throwIfAborted();
-              const meta = executionMeta?.find((m) => m.filename === file.filename);
-              try {
-                const singleRes = await executeTests(
-                  runId,
-                  [file],
-                  {
-                    secrets: resolvedData?.secrets,
-                    timeoutMs: Math.min(30_000 + 25_000, 300_000),
-                    signal,
-                    trace: true,
-                    onTraceZips: async (traces) => {
-                      if (!meta) return;
-                      const stem = meta.filename.replace(/\.spec\.ts$/, '');
-                      const zipPath = traces.get(stem) || traces.get(meta.testCaseId) || Array.from(traces.values())[0];
-                      if (zipPath) {
-                        await registerTrace(zipPath, {
-                          jobId,
-                          testCaseId: meta.testCaseId,
-                          attemptNumber: meta.attemptNumber,
-                          visitorId: traceOwnerId,
-                        });
-                      }
-                    },
-                  },
-                );
-                fallbackResults.push(...singleRes.results);
-              } catch (singleErr) {
-                if (singleErr instanceof JobCancelledError || (singleErr instanceof Error && singleErr.name === 'AbortError') || signal?.aborted) {
-                  throw new JobCancelledError();
-                }
-                const testCaseId = file.filename.replace(/\.spec\.ts$/, '');
-                fallbackResults.push({
-                  testCaseId,
-                  passed: false,
-                  durationMs: 0,
-                  error: singleErr instanceof Error ? singleErr.message : String(singleErr),
-                  failureClass: 'other',
-                });
-              }
-            }
-            return {
-              success: fallbackResults.length > 0 && fallbackResults.every((r) => r.passed),
-              results: fallbackResults,
-            };
-          }
-          throw err;
-        }
+        return await executeChunkedBatch(runId, validFiles, {
+          secrets: resolvedData?.secrets,
+          signal,
+          trace: true,
+          executionMeta,
+          jobId,
+          traceOwnerId,
+        });
       },
       correct: async ({ test, errorText, attemptNumber, failureContext }) => {
         const context = { jobId, testCaseId: test.testCase.id, attemptNumber };

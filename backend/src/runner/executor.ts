@@ -23,6 +23,8 @@ import {
 } from './isolation.ts';
 import { logger } from '../observability/logger.ts';
 
+import { heavyOpGate } from '../security/concurrencyGate.ts';
+
 export type FailureClass = 'finding' | 'locator' | 'timeout' | 'other';
 
 export interface TestCaseResult {
@@ -211,7 +213,9 @@ export async function executeTests(
   files: Array<{ filename: string; code: string }>,
   options?: ExecuteTestsOptions,
 ): Promise<ExecutionResult> {
-  return withRunnerIsolationLock(async () => {
+  const releaseGate = await heavyOpGate.acquirePipeline({ signal: options?.signal });
+  try {
+    return await withRunnerIsolationLock(async () => {
     if (config.RUNNER_ISOLATION === 'uid' && !isSelfCheckPassed()) {
       throw new RunnerError(
         'RUNNER_UNAVAILABLE',
@@ -296,8 +300,10 @@ export async function executeTests(
 
       await new Promise<void>((resolve, reject) => {
         let childProcess: ReturnType<typeof execFile> | undefined;
+        let timedOut = false;
+        let timeoutTimer: NodeJS.Timeout | undefined;
 
-        const onAbort = () => {
+        const killRunner = () => {
           if (config.RUNNER_ISOLATION === 'uid') {
             void reapRunner();
           } else {
@@ -308,32 +314,52 @@ export async function executeTests(
                 } catch {}
               }
               try {
-                childProcess.kill();
+                childProcess.kill('SIGKILL');
               } catch {}
             }
           }
         };
+
+        const onAbort = () => {
+          killRunner();
+        };
         options?.signal?.addEventListener('abort', onAbort, { once: true });
+
+        timeoutTimer = setTimeout(() => {
+          timedOut = true;
+          killRunner();
+        }, executionTimeout);
 
         childProcess = execFile(
           runnerCmd,
           runnerArgs,
           {
             cwd: RUNNER_DIR,
-            timeout: executionTimeout,
             env: runnerEnv,
             signal: options?.signal,
           },
           async (err) => {
+            if (timeoutTimer) clearTimeout(timeoutTimer);
             options?.signal?.removeEventListener('abort', onAbort);
             if (options?.signal?.aborted) {
               await reapRunner();
               reject(new JobCancelledError());
               return;
             }
+            if (timedOut) {
+              await reapRunner();
+              reject(
+                new RunnerError(
+                  'EXECUTION_TIMEOUT',
+                  `Execution timed out after ${executionTimeout}ms`,
+                  err ?? undefined,
+                ),
+              );
+              return;
+            }
             if (err) {
               const errnoErr = err as NodeJS.ErrnoException;
-              if (err.killed || err.signal === 'SIGTERM') {
+              if (err.killed || err.signal === 'SIGTERM' || err.signal === 'SIGKILL') {
                 await reapRunner();
                 reject(
                   new RunnerError(
@@ -592,4 +618,7 @@ export async function executeTests(
       }
     }
   });
+  } finally {
+    releaseGate();
+  }
 }

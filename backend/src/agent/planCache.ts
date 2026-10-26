@@ -7,7 +7,7 @@ interface CacheEntry {
 }
 
 const TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const MAX_ENTRIES = 100;
+const MAX_ENTRIES = 30;
 
 export const planCache = new Map<string, CacheEntry>();
 

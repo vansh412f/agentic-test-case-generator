@@ -38,6 +38,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV RUNNER_ISOLATION=uid
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV MALLOC_ARENA_MAX=2
+ENV UV_THREADPOOL_SIZE=2
 
 # Enable pnpm via corepack
 RUN corepack enable && corepack prepare pnpm@10 --activate
@@ -62,6 +64,7 @@ RUN node playwright-runner/node_modules/@playwright/test/cli.js install --with-d
 
 # Setup users and permissions
 # Group agt (1002), user agtrunner (1001), node added to agt
+# /app/playwright-runner/tests: owner node, group agt, mode 2770
 RUN groupadd -g 1002 agt && \
     useradd -u 1001 -g 1002 -M -s /usr/sbin/nologin agtrunner && \
     usermod -aG agt node && \

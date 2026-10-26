@@ -1,7 +1,7 @@
 import type { AppMap } from './types.ts';
 
 const TTL_MS = 10 * 60_000;
-const MAX_ENTRIES = 20;
+const MAX_ENTRIES = 8;
 
 export function normalizeCrawlKey(raw: string): string {
   try {

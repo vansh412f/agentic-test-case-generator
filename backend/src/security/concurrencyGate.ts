@@ -109,5 +109,168 @@ export class WaitableSemaphore {
 
 export const crawlSemaphore = new WaitableSemaphore(config.CRAWL_CONCURRENCY, 3, 45_000);
 
+export interface GateWaitItem {
+  resolve: (release: () => void) => void;
+  reject: (err: Error) => void;
+  timer?: NodeJS.Timeout;
+}
 
-// Module component implementation.
+export class HeavyOpGate {
+  private active = 0;
+  private readonly pipelineWaiting: GateWaitItem[] = [];
+  private readonly previewWaiting: GateWaitItem[] = [];
+
+  constructor(private readonly maxActive: number = 1) {}
+
+  get activeCount(): number {
+    return this.active;
+  }
+
+  get pipelineWaitingCount(): number {
+    return this.pipelineWaiting.length;
+  }
+
+  get previewWaitingCount(): number {
+    return this.previewWaiting.length;
+  }
+
+  private createRelease(): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.release();
+    };
+  }
+
+  private release(): void {
+    if (this.pipelineWaiting.length > 0) {
+      const next = this.pipelineWaiting.shift()!;
+      if (next.timer) clearTimeout(next.timer);
+      next.resolve(this.createRelease());
+    } else if (this.previewWaiting.length > 0) {
+      const next = this.previewWaiting.shift()!;
+      if (next.timer) clearTimeout(next.timer);
+      next.resolve(this.createRelease());
+    } else {
+      this.active = Math.max(0, this.active - 1);
+    }
+  }
+
+  async acquirePipeline(options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<() => void> {
+    if (options?.signal?.aborted) {
+      throw (options.signal.reason ?? new Error('Aborted'));
+    }
+
+    if (this.active < this.maxActive) {
+      this.active += 1;
+      return this.createRelease();
+    }
+
+    const timeoutMs = options?.timeoutMs ?? 300_000;
+
+    return new Promise<() => void>((resolve, reject) => {
+      const item: GateWaitItem = {
+        resolve,
+        reject,
+      };
+
+      const timer = setTimeout(() => {
+        const idx = this.pipelineWaiting.indexOf(item);
+        if (idx !== -1) {
+          this.pipelineWaiting.splice(idx, 1);
+        }
+        reject(new QueueFullError('Timed out waiting for browser execution slot.'));
+      }, timeoutMs);
+
+      item.timer = timer;
+
+      let onAbort: (() => void) | undefined;
+      if (options?.signal) {
+        onAbort = () => {
+          if (item.timer) clearTimeout(item.timer);
+          const idx = this.pipelineWaiting.indexOf(item);
+          if (idx !== -1) {
+            this.pipelineWaiting.splice(idx, 1);
+          }
+          reject(options?.signal?.reason ?? new Error('Aborted'));
+        };
+        options.signal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      const origResolve = item.resolve;
+      item.resolve = (rel) => {
+        if (onAbort && options?.signal) {
+          options.signal.removeEventListener('abort', onAbort);
+        }
+        origResolve(rel);
+      };
+
+      this.pipelineWaiting.push(item);
+    });
+  }
+
+  async acquirePreview(options?: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    maxWaiting?: number;
+  }): Promise<() => void> {
+    if (options?.signal?.aborted) {
+      throw (options.signal.reason ?? new Error('Aborted'));
+    }
+
+    if (this.active < this.maxActive) {
+      this.active += 1;
+      return this.createRelease();
+    }
+
+    const maxWaiting = options?.maxWaiting ?? 3;
+    if (this.previewWaiting.length >= maxWaiting) {
+      throw new QueueFullError('Previews are busy, retry in a moment.');
+    }
+
+    const timeoutMs = options?.timeoutMs ?? 15_000;
+
+    return new Promise<() => void>((resolve, reject) => {
+      const item: GateWaitItem = {
+        resolve,
+        reject,
+      };
+
+      const timer = setTimeout(() => {
+        const idx = this.previewWaiting.indexOf(item);
+        if (idx !== -1) {
+          this.previewWaiting.splice(idx, 1);
+        }
+        reject(new QueueFullError('Previews are busy, retry in a moment.'));
+      }, timeoutMs);
+
+      item.timer = timer;
+
+      let onAbort: (() => void) | undefined;
+      if (options?.signal) {
+        onAbort = () => {
+          if (item.timer) clearTimeout(item.timer);
+          const idx = this.previewWaiting.indexOf(item);
+          if (idx !== -1) {
+            this.previewWaiting.splice(idx, 1);
+          }
+          reject(options?.signal?.reason ?? new Error('Aborted'));
+        };
+        options.signal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      const origResolve = item.resolve;
+      item.resolve = (rel) => {
+        if (onAbort && options?.signal) {
+          options.signal.removeEventListener('abort', onAbort);
+        }
+        origResolve(rel);
+      };
+
+      this.previewWaiting.push(item);
+    });
+  }
+}
+
+export const heavyOpGate = new HeavyOpGate(1);

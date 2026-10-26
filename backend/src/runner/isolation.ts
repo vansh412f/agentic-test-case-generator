@@ -44,10 +44,25 @@ export async function reapRunner(): Promise<void> {
   if (config.RUNNER_ISOLATION !== 'uid') {
     return;
   }
-  const shCommand = `kill -KILL -1 2>/dev/null; find /tmp -xdev -mindepth 1 -user ${config.RUNNER_UID} -delete 2>/dev/null; true`;
+  const shCommand = [
+    'kill -KILL -1 2>/dev/null;',
+    'i=0; while [ "$i" -lt 20 ]; do',
+    '  alive=0;',
+    '  for d in /proc/[0-9]*; do',
+    '    p=${d#/proc/};',
+    '    [ "$p" = "$$" ] && continue;',
+    '    if kill -0 "$p" 2>/dev/null; then alive=1; break; fi;',
+    '  done;',
+    '  [ "$alive" -eq 0 ] && break;',
+    '  sleep 0.1;',
+    '  i=$((i + 1));',
+    'done;',
+    `find /tmp -xdev -mindepth 1 -user ${config.RUNNER_UID} -delete 2>/dev/null;`,
+    'true',
+  ].join(' ');
   const { file, args } = buildRunnerArgv('/bin/sh', ['-c', shCommand]);
   await new Promise<void>((resolve) => {
-    execFile(file, args, () => {
+    execFile(file, args, { timeout: 5_000 }, () => {
       resolve();
     });
   });

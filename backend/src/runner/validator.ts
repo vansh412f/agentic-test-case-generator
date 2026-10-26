@@ -8,6 +8,8 @@ import { childProcessEnv } from './childEnv.ts';
 import { findUnsafeConstructs } from './codeSafety.ts';
 import { JobCancelledError } from '../agent/cancellation.ts';
 
+import { heavyOpGate } from '../security/concurrencyGate.ts';
+
 export interface ValidationResult {
   valid: boolean;
   errors: string[];
@@ -57,6 +59,8 @@ export async function validateTestCode(
     return { valid: true, errors: [], perFile };
   }
 
+  const releaseGate = await heavyOpGate.acquirePipeline({ signal: options?.signal });
+
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
   const tsconfigRunPath = path.join(runDir, 'tsconfig.json');
 
@@ -82,7 +86,7 @@ export async function validateTestCode(
 
     let childProcess: ChildProcess | undefined;
 
-    const onAbort = () => {
+    const killChild = () => {
       if (childProcess && !childProcess.killed) {
         if (process.platform === 'win32' && childProcess.pid) {
           try {
@@ -90,16 +94,20 @@ export async function validateTestCode(
           } catch {}
         }
         try {
-          childProcess.kill();
+          childProcess.kill('SIGKILL');
         } catch {}
       }
+    };
+
+    const onAbort = () => {
+      killChild();
     };
     options?.signal?.addEventListener('abort', onAbort, { once: true });
 
     const tscExecution = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
       childProcess = execFile(
         process.execPath,
-        [tscJs, '--noEmit', '--project', tsconfigRunPath],
+        ['--max-old-space-size=160', '--max-semi-space-size=4', tscJs, '--noEmit', '--project', tsconfigRunPath],
         { cwd: RUNNER_DIR, env: childProcessEnv(), signal: options?.signal },
         (error, stdout, stderr) => {
           options?.signal?.removeEventListener('abort', onAbort);
@@ -128,13 +136,7 @@ export async function validateTestCode(
     let timer: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<{ timeout: true }>((resolve) => {
       timer = setTimeout(() => {
-        if (childProcess && !childProcess.killed) {
-          try {
-            childProcess.kill();
-          } catch {
-            // Ignore process kill errors
-          }
-        }
+        killChild();
         resolve({ timeout: true });
       }, STATIC_VALIDATION_TIMEOUT_MS);
     });
@@ -143,6 +145,7 @@ export async function validateTestCode(
     if (timer) clearTimeout(timer);
 
     if ('timeout' in result) {
+      await Promise.race([tscExecution.catch(() => undefined), new Promise((r) => setTimeout(r, 2_000))]);
       const timeoutMsg = 'Static validation timed out';
       for (const file of files) {
         perFile.get(file.filename)!.push(timeoutMsg);
@@ -194,5 +197,6 @@ export async function validateTestCode(
     } catch {
       // Ignore cleanup error
     }
+    releaseGate();
   }
 }

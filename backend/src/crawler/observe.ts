@@ -1,7 +1,8 @@
 import type { Browser } from 'playwright';
 import { VIEWPORT } from '../config.ts';
 import type { AppMap, InteractiveElement, Observation } from './types.ts';
-import { launchBrowser } from './pageCrawler.ts';
+import { launchBrowser, installCrawlResourceFilter, closeBrowserSafely } from './pageCrawler.ts';
+import { heavyOpGate } from '../security/concurrencyGate.ts';
 import { isSkipLink } from './appMapBuilder.ts';
 import { resolveTestData } from '../agent/testData.ts';
 import type { TestDataEntry } from '../api/schemas.ts';
@@ -10,6 +11,7 @@ import { isPrivateOrLoopbackHost } from '../security/targetUrl.ts';
 export interface ObserveOptions {
   testData?: TestDataEntry[];
   signal?: AbortSignal;
+  deadlineMs?: number;
 }
 
 const OVERALL_DEADLINE_MS = 45_000;
@@ -54,20 +56,53 @@ export async function observeAppMap(
 ): Promise<Observation[]> {
   const observations: Observation[] = [];
   const startTime = Date.now();
+  const deadlineMs = options?.deadlineMs ?? OVERALL_DEADLINE_MS;
 
   function isExpired(): boolean {
-    return Date.now() - startTime >= OVERALL_DEADLINE_MS || Boolean(options?.signal?.aborted);
+    return Date.now() - startTime >= deadlineMs || Boolean(options?.signal?.aborted);
   }
 
   if (isExpired()) return [];
 
-  let browser: Browser | null = null;
+  let releaseGate: (() => void) | undefined;
   try {
+    releaseGate = await heavyOpGate.acquirePipeline({ signal: options?.signal });
+  } catch {
+    return [];
+  }
+
+  let browser: Browser | null = null;
+  let context: import('playwright').BrowserContext | null = null;
+  let hardStopped = false;
+  let deadlineTimer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+
+  try {
+    if (isExpired()) return [];
+
+    const remainingBudget = Math.max(1, deadlineMs - (Date.now() - startTime));
+    deadlineTimer = setTimeout(() => {
+      hardStopped = true;
+      if (browser) void browser.close().catch(() => {});
+    }, remainingBudget);
+
+    if (options?.signal) {
+      onAbort = () => {
+        hardStopped = true;
+        if (browser) void browser.close().catch(() => {});
+      };
+      options.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
     browser = await launchBrowser();
-    const context = await browser.newContext({ viewport: VIEWPORT });
+    if (isExpired() || hardStopped) return [];
+
+    context = await browser.newContext({ viewport: VIEWPORT });
+    await installCrawlResourceFilter(context);
     const page = await context.newPage();
 
     async function resetPage(): Promise<void> {
+      if (isExpired() || hardStopped) return;
       await page.goto(appMap.url, { waitUntil: 'domcontentloaded', timeout: ACTION_TIMEOUT_MS });
       try {
         await page.waitForLoadState('networkidle', { timeout: 2000 });
@@ -82,7 +117,7 @@ export async function observeAppMap(
       return [];
     }
 
-    if (isExpired()) return [];
+    if (isExpired() || hardStopped) return [];
 
     // 1. COUNTS: up to 5 repeated-item containers
     try {
@@ -210,20 +245,24 @@ export async function observeAppMap(
             loc.click({ timeout: ACTION_TIMEOUT_MS }),
           ]);
           if (popup) {
-            await popup.waitForLoadState('domcontentloaded').catch(() => {});
-            const finalUrl = popup.url();
-            const title = await popup.title().catch(() => null);
-            observations.push({
-              kind: 'popup',
-              elementId: el.id,
-              fromUrl: appMap.url,
-              finalUrl,
-              title,
-              visibleTexts: [],
-            });
-            await popup.close().catch(() => {});
-            linksProcessed++;
+            try {
+              await popup.waitForLoadState('domcontentloaded').catch(() => {});
+              const finalUrl = popup.url();
+              const title = await popup.title().catch(() => null);
+              observations.push({
+                kind: 'popup',
+                elementId: el.id,
+                fromUrl: appMap.url,
+                finalUrl,
+                title,
+                visibleTexts: [],
+              });
+              linksProcessed++;
+            } finally {
+              await popup.close().catch(() => {});
+            }
           } else {
+            if (isExpired() || hardStopped) break;
             await resetPage().catch(() => {});
           }
         } else {
@@ -252,6 +291,7 @@ export async function observeAppMap(
           await resetPage();
         }
       } catch {
+        if (isExpired() || hardStopped) break;
         await resetPage().catch(() => {});
       }
     }
@@ -327,12 +367,13 @@ export async function observeAppMap(
 
         await resetPage();
       } catch {
+        if (isExpired() || hardStopped) break;
         await resetPage().catch(() => {});
       }
 
       // 3b: FILLED SUBMIT (only if testData fills cover every visible field)
       if (resolvedData && resolvedData.fills.size > 0) {
-        if (isExpired() || observations.length >= MAX_OBSERVATIONS) break;
+        if (isExpired() || hardStopped || observations.length >= MAX_OBSERVATIONS) break;
 
         const formFields = form.fieldIds
           .map((id) => appMap.elements.find((e) => e.id === id))
@@ -428,7 +469,9 @@ export async function observeAppMap(
           } catch {
             // failed fill abandoned
           } finally {
-            await resetPage().catch(() => {});
+            if (!isExpired() && !hardStopped) {
+              await resetPage().catch(() => {});
+            }
           }
         }
       }
@@ -441,9 +484,13 @@ export async function observeAppMap(
       err instanceof Error ? err.message : String(err),
     );
   } finally {
-    if (browser) {
-      await browser.close().catch(() => {});
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+    if (onAbort && options?.signal) {
+      options.signal.removeEventListener('abort', onAbort);
     }
+    await context?.close().catch(() => {});
+    await closeBrowserSafely(browser);
+    releaseGate?.();
   }
 
   // Normalize observed texts uniformly (no newlines, no trailing close glyphs, no dupes).

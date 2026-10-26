@@ -57,8 +57,40 @@ export function isBotWall(title: string, htmlProbe: { hasChallengeDom: boolean }
   return false;
 }
 
+import { heavyOpGate } from '../security/concurrencyGate.ts';
+
+const BLOCKED_CRAWL_RESOURCE_TYPES = new Set(['image', 'media', 'font']);
+
+export async function installCrawlResourceFilter(
+  context: import('playwright').BrowserContext,
+): Promise<void> {
+  await context.route('**/*', (route) => {
+    if (BLOCKED_CRAWL_RESOURCE_TYPES.has(route.request().resourceType())) {
+      void route.abort().catch(() => {});
+    } else {
+      void route.continue().catch(() => {});
+    }
+  });
+}
+
+export async function closeBrowserSafely(browser: Browser | null | undefined, timeoutMs = 5_000): Promise<void> {
+  if (!browser) return;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      browser.close().catch(() => {}),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function crawlInBrowser(browser: Browser, url: string, maxElements: number): Promise<AppMap> {
   const context = await browser.newContext({ viewport: VIEWPORT });
+  await installCrawlResourceFilter(context);
   try {
     const page = await context.newPage();
     await page.addInitScript('window.__name = window.__name || ((target) => target);');
@@ -138,22 +170,31 @@ async function crawlInBrowser(browser: Browser, url: string, maxElements: number
 
 export async function crawlPage(
   url: string,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; gateMode?: 'pipeline' | 'preview' },
 ): Promise<AppMap> {
   assertCrawlableUrl(url);
   await assertPublicTarget(url);
   options?.signal?.throwIfAborted();
-  const browser = await launchBrowser();
+
+  const releaseGate = options?.gateMode === 'preview'
+    ? await heavyOpGate.acquirePreview({ signal: options?.signal })
+    : await heavyOpGate.acquirePipeline({ signal: options?.signal });
+
+  let browser: Browser | undefined;
   const onAbort = () => {
-    void browser.close().catch(() => undefined);
+    if (browser) void browser.close().catch(() => undefined);
   };
   options?.signal?.addEventListener('abort', onAbort, { once: true });
   try {
     options?.signal?.throwIfAborted();
+    browser = await launchBrowser();
     return await crawlInBrowser(browser, url, config.MAX_ELEMENTS_PER_PAGE);
   } finally {
     options?.signal?.removeEventListener('abort', onAbort);
-    await browser.close().catch(() => undefined);
+    if (browser) {
+      await closeBrowserSafely(browser);
+    }
+    releaseGate();
   }
 }
 // Module component implementation.

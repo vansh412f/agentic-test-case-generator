@@ -29,10 +29,11 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   timeout: Math.round(15_000 * scale),
-  expect: { timeout: Math.round(5_000 * scale) },
+  expect: { timeout: Math.round(5_000 * Math.min(scale, 1.4)) },
   reporter: [['json', { outputFile: process.env.PLAYWRIGHT_JSON_OUTPUT_FILE ?? 'results.json' }]],
   use: {
-    actionTimeout: Math.round(10_000 * scale),
+    actionTimeout: Math.round(10_000 * Math.min(scale, 1.2)),
+    navigationTimeout: Math.min(Math.round(15_000 * scale), 25_000),
     headless: process.env.HEADLESS !== 'false',
     viewport: { width: 1280, height: 720 },
     proxy,
