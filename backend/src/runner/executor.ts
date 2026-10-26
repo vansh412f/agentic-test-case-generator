@@ -15,6 +15,7 @@ import { playwrightRunnerEnv } from './childEnv.ts';
 import { JobCancelledError } from '../agent/cancellation.ts';
 import { ensureEgressProxy } from '../security/egressProxy.ts';
 import { config } from '../config.ts';
+import { isRemoteBrowserActive } from '../browser/remoteBrowser.ts';
 import {
   buildRunnerArgv,
   reapRunner,
@@ -235,7 +236,9 @@ export async function executeTests(
         throw new RunnerError('BROWSER_ERROR', `Playwright CLI not found at ${PLAYWRIGHT_CLI}`);
       }
 
-      await ensureEgressProxy();
+      if (!isRemoteBrowserActive()) {
+        await ensureEgressProxy();
+      }
 
       // 1. Write files to disk (replacing secret tokens with escaped real values)
       await fs.mkdir(runDir, { recursive: true });
@@ -371,7 +374,7 @@ export async function executeTests(
                 return;
               }
               if (typeof errnoErr.code === 'string') {
-                const msg = trimError(redactSecrets(err.message, options?.secrets));
+                const msg = sanitizeError(trimError(redactSecrets(err.message, options?.secrets)));
                 reject(
                   new RunnerError(
                     'BROWSER_ERROR',
@@ -395,7 +398,7 @@ export async function executeTests(
     try {
       rawJson = await fs.readFile(resultsPath, 'utf-8');
     } catch (err) {
-      const msg = trimError(redactSecrets(err instanceof Error ? err.message : String(err), options?.secrets));
+      const msg = sanitizeError(trimError(redactSecrets(err instanceof Error ? err.message : String(err), options?.secrets)));
       throw new RunnerError('NO_RESULTS', `Playwright produced no results file: ${msg}`, err);
     }
 
@@ -403,7 +406,7 @@ export async function executeTests(
     try {
       report = JSON.parse(rawJson) as PlaywrightJsonReport;
     } catch (err) {
-      const msg = trimError(redactSecrets(err instanceof Error ? err.message : String(err), options?.secrets));
+      const msg = sanitizeError(trimError(redactSecrets(err instanceof Error ? err.message : String(err), options?.secrets)));
       throw new RunnerError('PARSE_ERROR', `Failed to parse Playwright results: ${msg}`, err);
     }
 
@@ -469,7 +472,7 @@ export async function executeTests(
                 fallback;
               const errorText = sanitizeError(rawError);
 
-              if (errorText.includes('browserType.launch')) {
+              if (errorText.includes('browserType.launch') || errorText.includes('browserType.connect')) {
                 const redactedLaunch = trimError(redactSecrets(errorText, options?.secrets));
                 throw new RunnerError('BROWSER_ERROR', redactedLaunch);
               }

@@ -10,6 +10,7 @@ Generates typed Playwright end-to-end test suites from live web applications usi
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-14.2.5_(Pages_Router)-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js 14.2.5" /></a>
   <a href="https://expressjs.com/"><img src="https://img.shields.io/badge/Express-5.2.1-000000?style=flat-square&logo=express&logoColor=white" alt="Express 5.2.1" /></a>
   <a href="https://playwright.dev/"><img src="https://img.shields.io/badge/Playwright-1.63.0-2EAD33?style=flat-square&logo=playwright&logoColor=white" alt="Playwright 1.63.0" /></a>
+  <a href="https://cloud.google.com/run"><img src="https://img.shields.io/badge/Google_Cloud_Run-Remote_Chromium_WS-4285F4?style=flat-square&logo=googlecloud&logoColor=white" alt="Google Cloud Run - Remote Chromium WS" /></a>
   <a href="https://www.prisma.io/"><img src="https://img.shields.io/badge/Prisma-6.19.3-2D3748?style=flat-square&logo=prisma&logoColor=white" alt="Prisma 6.19.3" /></a>
   <a href="https://supabase.com/"><img src="https://img.shields.io/badge/PostgreSQL-Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=white" alt="Supabase PostgreSQL" /></a>
   <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind_CSS-3.4.17-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind CSS 3.4.17" /></a>
@@ -37,15 +38,15 @@ Generates typed Playwright end-to-end test suites from live web applications usi
 
 ## What It Does
 
-- **Discovers interactive state directly from the DOM:** Navigates the target URL using headless Chromium, cataloging visible buttons, inputs, links, forms, and semantic accessibility roles into a structured AppMap.
+- **Discovers interactive state directly from the DOM:** Navigates the target URL using headless Chromium, cataloging visible buttons, inputs, links, forms, and semantic accessibility roles into a structured AppMap. In hosted production, Chromium execution is offloaded over authenticated `wss://` to Google Cloud Run (`us-west1`), completely shielding the Render container from browser memory spikes.
 - **Plans targeted test scenarios:** Submits the discovered element tree to an LLM reasoning model to design user journeys across validation, navigation, state changes, and negative edge cases.
 - **Includes built-in baseline checks:** Automatically injects deterministic checks alongside AI scenarios: `smoke-1` (no uncaught JavaScript errors on load) and `smoke-2` (linked pages respond).
 - **Compiles Playwright TypeScript deterministically:** Synthesizes typed test files using strict locator priority rules without model hallucination on the compiled path (falling back to generative LLM synthesis only when compilation throws `CompileError`).
 - **Enforces a static compilation gate:** Pre-validates every emitted test via `tsc --noEmit` in a child process before executing any browser code.
-- **Runs tests in isolated Chromium processes:** Executes generated tests in Chromium (Chromium-only execution) inside a sandboxed runner sandbox.
+- **Runs tests in isolated Chromium processes:** Executes generated tests in Chromium (Chromium-only execution) orchestrated by `@playwright/test` runner under `agtrunner` (UID 1001) with `netGuard.mjs`, delegating browser rendering to Google Cloud Run over authenticated WebSocket or running locally on workstations.
 - **Classifies and isolates failures:** Distinguishes assertion discrepancies from mechanical harness failures (missing locators, network timeouts); mechanical failures undergo bounded correction while assertion failures are preserved.
 - **Exports complete test suites:** Packages validated tests into a runnable Playwright project zip complete with `playwright.config.ts`, `.env.example`, and a GitHub Actions workflow.
-- **Serves owner-only Playwright trace replay for every execution attempt:** Every test execution attempt (initial runs and corrector passes) captures a Playwright trace zip retained in ephemeral storage with a 200-trace cap, 256 MiB total retained byte ceiling, 25 MiB single trace limit, FIFO eviction by createdAt, and 1-hour TTL (`backend/src/runner/traceStore.ts`). The job page **Replay** tab provides an embedded trace viewer and direct zip download, gated to the job owner via signed tokens with a 10-minute TTL.
+- **Serves owner-only Playwright trace replay for every execution attempt:** Every test execution attempt (initial runs and corrector passes) captures a Playwright trace zip retained in ephemeral storage with a 200-trace cap, 256 MiB total retained byte ceiling, 25 MiB single trace limit, FIFO eviction by createdAt, and 1-hour TTL (`backend/src/runner/traceStore.ts`). Traces stream from Cloud Run to Render at test teardown. The job page **Replay** tab provides an embedded trace viewer and direct zip download, gated to the job owner via signed tokens with a 10-minute TTL.
 - **Accepts per-site test data without persisting secrets server-side:** Form credentials are supplied per normalized target URL (`TestDataEntrySchema`, `backend/src/api/schemas.ts`) and replaced with `__AGT_SECRET_n__` placeholders before planning or storage; real values are substituted only at execution time on the ephemeral file. Secrets are never stored in the database and never sent to the model. Credentials the user asks to remember are kept only in their own browser `localStorage` (30 days) for prefill. Password fields without a user-provided value are never filled with invented values — such forms are covered only with empty/validation cases.
 
 ---
@@ -59,12 +60,11 @@ sequenceDiagram
   participant Next as Next.js Proxy (:3000)
   participant API as Express API (:4000)
   participant Queue as Run Queue
-  participant Crawler as Page Crawler (Chromium)
-  participant Observer as Observer (Chromium)
+  participant Runner as Playwright Coordinator (agtrunner UID 1001)
+  participant CloudBrowser as Google Cloud Run (us-west1 Chromium WS)
   participant Planner as LLM Planner (dual-call: 120B + 20B / Cache)
   participant Compiler as AST Compiler
   participant TSC as tsc Pre-flight Gate
-  participant Runner as Test Runner (agtrunner UID 1001)
   participant DB as Supabase Postgres
   participant SSE as SSE Stream
 
@@ -75,11 +75,11 @@ sequenceDiagram
   API-->>User: 202 Accepted (jobIds, runGroupId)
   User->>SSE: GET /api/jobs/:id/stream
 
-  Queue->>Crawler: crawlPage(targetUrl)
-  Crawler-->>Queue: AppMap (elements, forms, links)
+  Queue->>CloudBrowser: crawlPage(targetUrl) via wss://
+  CloudBrowser-->>Queue: AppMap (elements, forms, links)
 
-  Queue->>Observer: observeAppMap(appMap)
-  Observer-->>Queue: Observations (navigation / popup / form-submit / count)
+  Queue->>CloudBrowser: observeAppMap(appMap) via wss://
+  CloudBrowser-->>Queue: Observations (navigation / popup / form-submit / count)
   Queue->>SSE: emit phase_change: planning
 
   Queue->>Planner: planTests(appMap, observations)
@@ -95,8 +95,10 @@ sequenceDiagram
     TSC-->>Queue: Validation passed
   end
 
-  Queue->>Runner: executeTests(specFiles) via setpriv
-  Runner-->>Queue: Playwright JSON test report
+  Queue->>Runner: executeTests(specFiles) via setpriv + netGuard
+  Runner->>CloudBrowser: connectOptions.wsEndpoint (wss://)
+  CloudBrowser-->>Runner: Playwright JSON test report & trace.zip streams
+  Runner-->>Queue: Aggregated results & trace registrations
   Queue->>DB: Persist execution results & final status
   Queue->>SSE: emit test_completed & job_finished
 ```
@@ -104,12 +106,12 @@ sequenceDiagram
 ### Execution Walkthrough
 
 1. **Submission & Admission (`backend/src/api/routes.ts`):** Client submits target URLs with an ALTCHA proof-of-work payload. The API enforces public network policy (`assertPublicTarget`), checks daily quotas, verifies the signed visitor ID sent in the `X-Visitor-Id` header, and pushes the run into the in-process queue.
-2. **DOM Crawl (`backend/src/crawler/pageCrawler.ts`):** Headless Chromium navigates to the target, collects interactive elements, computes accessible roles and CSS selectors, and serializes the DOM into an AppMap.
-3. **Grounded Observation (`backend/src/crawler/observe.ts`, invoked during `runPipeline` in `backend/src/agent/pipeline.ts`):** Headless Chromium drives the crawled page to record **grounded facts** before planning: `navigation` (where a link leads), `popup` (popups opened by links), `form_empty_submit` (submit with empty fields), `form_filled_submit` (submit with provided test data), and `count` (repeated-item counts). Observation is bounded (`MAX_OBSERVATIONS=25`, 5 s per action, 45 s overall deadline, up to 6 links and 3 forms) and best-effort — it records what it can and **never fails the job**; if the AppMap already carries observations, the step is skipped.
+2. **DOM Crawl (`backend/src/crawler/pageCrawler.ts`):** In hosted mode (`LOCAL_AGENT_MODE=false`), Chromium connects remotely over authenticated `wss://` to Google Cloud Run (`us-west1`, `2 vCPU / 2 GiB`, `min-instances=0`) via `backend/src/browser/remoteBrowser.ts` with zero local Chromium fallback. Headless Chromium navigates to the target, collects interactive elements, computes accessible roles and CSS selectors, and serializes the DOM into an AppMap. In local mode (`LOCAL_AGENT_MODE=true`), local Chromium is used directly so `localhost` and `127.0.0.1` targets work out of the box.
+3. **Grounded Observation (`backend/src/crawler/observe.ts`, invoked during `runPipeline` in `backend/src/agent/pipeline.ts`):** The remote headless Chromium instance drives the crawled page to record **grounded facts** before planning: `navigation` (where a link leads), `popup` (popups opened by links), `form_empty_submit` (submit with empty fields), `form_filled_submit` (submit with provided test data), and `count` (repeated-item counts). Observation is bounded (`MAX_OBSERVATIONS=25`, 5 s per action, 45 s overall deadline, up to 6 links and 3 forms) and best-effort — it records what it can and **never fails the job**; if the AppMap already carries observations, the step is skipped.
 4. **Plan Synthesis (`backend/src/agent/steps/planner.ts`):** The AppMap and its observations are checked against the in-memory plan cache. On a cache miss, the planner runs in **dual-call** mode: a high-reasoning model plans core cases and a fast model plans negative cases, bounded by `MAX_AI_TEST_CASES` and `MAX_TEST_CASES` (`backend/src/agent/run.config.ts`). When focus elements are supplied (via the optional `focus` field on `POST /api/generate`), the planner runs a single constrained call instead.
 5. **Deterministic Compilation (`backend/src/agent/steps/compiler.ts`):** Scenarios are mapped directly into `@playwright/test` TypeScript files by looking up referenced elements from the AppMap.
 6. **Static Type-Check Gate (`backend/src/runner/validator.ts`):** Emitted test code is written to an ephemeral directory with a scoped `tsconfig.json` and compiled with `tsc --noEmit`.
-7. **Sandboxed Execution (`backend/src/runner/executor.ts`):** Playwright runs the test files in headless Chromium. In production Linux containers, execution runs under an unprivileged user (`agtrunner`, UID 1001) with network access restricted to the internal egress proxy.
+7. **Sandboxed Execution (`backend/src/runner/executor.ts`):** In production Linux containers, `@playwright/test` worker coordinator executes under an unprivileged user (`agtrunner`, UID 1001) governed by `netGuard.mjs`. When `BROWSER_WS_ENDPOINT` is configured, `playwright.config.ts` passes `connectOptions.wsEndpoint` with an authenticated `wss://` URL to Google Cloud Run. Trace zips stream over the WebSocket back into Render's `.traces/` store, and Cloud Run destroys session temporary files immediately on disconnect.
 8. **Triage & Correction Loop (`backend/src/agent/rounds.ts`):** Results are parsed. Passing tests are marked `passed`. Real assertion discrepancies become `failed`. Mechanical locator and timeout issues trigger correction attempts (up to 3 rounds) using a fast model.
 9. **Persistence & Streaming (`backend/src/agent/jobEvents.ts`):** State transitions and test outcomes are saved in Supabase and pushed in real time to the browser UI over Server-Sent Events.
 
@@ -124,26 +126,38 @@ flowchart TD
   Render -->|Supavisor Pooler :6543| Supabase["Supabase PostgreSQL"]
   Render -->|HTTPS API Requests| LlmApis["Groq & Google Gemini APIs"]
   
-  subgraph RenderHost ["Render Backend Linux Container (node:22-bookworm-slim)"]
+  subgraph RenderHost ["Render Free Docker Container (node:22-bookworm-slim, 512 MB RAM / 0.1 CPU, Oregon)"]
     ExpressAPI["Express API Server (:4000)"]
-    CrawlerModule["Chromium DOM Crawler & Observer"]
-    RunnerSandbox["Playwright Runner Sandbox (agtrunner UID 1001)"]
-    TraceStoreEngine["Ephemeral .traces Store (200 traces, 256 MiB cap, FIFO)"]
+    QueueEngine["HeavyOpGate(1) In-Process Run Queue"]
+    TSCGate["tsc --noEmit Static Validator"]
+    RunnerCoordinator["agtrunner (UID 1001) @playwright/test Runner Client + netGuard.mjs"]
+    TraceStoreEngine["Ephemeral .traces Store (200 traces, 256 MiB cap, 1h TTL, FIFO)"]
     
-    ExpressAPI --> CrawlerModule
-    ExpressAPI --> RunnerSandbox
-    RunnerSandbox -->|Trace Zips| TraceStoreEngine
+    ExpressAPI --> QueueEngine
+    QueueEngine --> TSCGate
+    TSCGate --> RunnerCoordinator
+    RunnerCoordinator -->|Trace Streams| TraceStoreEngine
   end
 
-  CrawlerModule -->|Navigate & Inspect DOM| TargetSite["Target Web Application"]
-  RunnerSandbox -->|Execute Specs via Internal Egress Proxy| TargetSite
+  subgraph CloudRunHost ["Google Cloud Run Service (us-west1 Oregon Always Free, 2 vCPU / 2 GiB, min=0, max=1)"]
+    WsServer["server.mjs (timingSafeEqual Token Auth & WebSocket Multiplexer)"]
+    RemoteChromium["chromium-headless-shell (Isolated Per-Connection launchServer)"]
+    EgressSSRF["egressProxy.mjs (Connect-Time DNS Pinning SSRF Proxy)"]
+
+    WsServer --> RemoteChromium
+    RemoteChromium --> EgressSSRF
+  end
+
+  QueueEngine -->|Crawl & Observe over Authenticated wss://| WsServer
+  RunnerCoordinator -->|connectOptions.wsEndpoint over Authenticated wss://| WsServer
+  EgressSSRF -->|Public Egress Only| TargetSite["Target Web Application"]
   TraceStoreEngine -->|Signed Download & /trace-viewer| UserBrowser
   UptimeRobot["UptimeRobot Probe"] -->|Health Checks /api/health & /api/health/db| ExpressAPI
 ```
 
 > [!IMPORTANT]
-> **Containerized Playwright Runner:**
-> Playwright browser execution runs exclusively inside the Render Docker container on Linux under an unprivileged user (`agtrunner`, UID 1001) with internal egress proxy network barriers. Playwright never runs on Vercel and never executes inside the user's browser.
+> **Hosted Two-Tier Browser Offload Architecture:**
+> In hosted production, headless Chromium runs strictly on **Google Cloud Run (`us-west1`, `2 vCPU / 2 GiB`)** over authenticated `wss://` connections. Chromium **never** runs inside Render's 512 MB container, shielding the API process from cgroup OOM crashes while keeping `@playwright/test` process coordination under Linux UID 1001 (`agtrunner`) with `netGuard.mjs` network socket controls. In local development (`LOCAL_AGENT_MODE=true`), local Chromium is used directly.
 
 ---
 
@@ -176,16 +190,16 @@ flowchart LR
 | **1. Routes & Admission** | [`backend/src/api/routes.ts`](backend/src/api/routes.ts) | Request validation with Zod schemas, ALTCHA proof-of-work verification, IP & visitor rate-limiting, edge secret verification. |
 | **2. Queue Management** | [`backend/src/agent/jobRunner.ts`](backend/src/agent/jobRunner.ts) | In-memory `runQueue` concurrency control, run-group lifecycle, non-blocking job detachment. |
 | **3. Pipeline Orchestration** | [`backend/src/agent/pipeline.ts`](backend/src/agent/pipeline.ts) | Step sequencing, status transitions, phase announcements, trace owner resolution, confidence scoring. |
-| **4. DOM Crawl** | [`backend/src/crawler/pageCrawler.ts`](backend/src/crawler/pageCrawler.ts) | Headless Chromium navigation, interactive element indexing, role computation, AppMap generation. |
+| **4. DOM Crawl** | [`backend/src/crawler/pageCrawler.ts`](backend/src/crawler/pageCrawler.ts), [`backend/src/browser/remoteBrowser.ts`](backend/src/browser/remoteBrowser.ts), & [`cloud-browser/`](cloud-browser/) | Headless Chromium navigation, interactive element indexing, role computation, AppMap generation via local Chromium or remote Cloud Run WebSocket. |
 | **5. Action Grounding** | [`backend/src/crawler/observe.ts`](backend/src/crawler/observe.ts) | Empirical observation of navigation targets, popups, form submissions, and repeated elements without failing the job. |
 | **6. Scenario Planning** | [`backend/src/agent/steps/planner.ts`](backend/src/agent/steps/planner.ts) | In-memory plan cache lookup, dual-call LLM prompt execution (reasoning core + fast negative), schema validation, self-repair. |
 | **7. Code Synthesis** | [`backend/src/agent/steps/compiler.ts`](backend/src/agent/steps/compiler.ts) | Deterministic AST compilation using strict locator preference; falls back to [`generator.ts`](backend/src/agent/steps/generator.ts) on `CompileError`. |
 | **8. Pre-Flight Safety Gate** | [`backend/src/runner/codeSafety.ts`](backend/src/runner/codeSafety.ts) & [`validator.ts`](backend/src/runner/validator.ts) | AST safety check (rejects process, child_process, dangerous filesystem APIs) followed by static type preflight (`tsc --noEmit`). |
 | **9. Guarded Execution Rounds** | [`backend/src/agent/rounds.ts`](backend/src/agent/rounds.ts) | Multi-attempt test execution orchestration; error classification (`finding`, `locator`, `timeout`); bounded correction via [`corrector.ts`](backend/src/agent/steps/corrector.ts) with strict assertion preservation. |
-| **10. Sandboxed Execution** | [`backend/src/runner/executor.ts`](backend/src/runner/executor.ts) | Isolated execution via Linux `setpriv` (unprivileged `agtrunner` UID 1001), netGuard egress enforcement, Playwright JSON report extraction. |
+| **10. Sandboxed Execution** | [`backend/src/runner/executor.ts`](backend/src/runner/executor.ts), [`backend/src/browser/remoteBrowser.ts`](backend/src/browser/remoteBrowser.ts), & [`cloud-browser/`](cloud-browser/) | Isolated execution via Linux `setpriv` (unprivileged `agtrunner` UID 1001), netGuard egress enforcement, Playwright remote WebSocket connection to Cloud Run, JSON report extraction. |
 | **11. Trace Persistence** | [`backend/src/runner/traceStore.ts`](backend/src/runner/traceStore.ts) | Ephemeral zip trace store with 200-trace cap, 256 MiB byte ceiling, FIFO eviction by `createdAt`, and HMAC-signed 10-minute access tokens. |
 | **12. Persistence & Streaming** | [`backend/src/db/jobs.ts`](backend/src/db/jobs.ts) & [`jobEvents.ts`](backend/src/agent/jobEvents.ts) | Transactional database recording to Supabase PostgreSQL and real-time SSE stream events dispatched to the frontend. |
-| **13. UI Delivery & Export** | [`frontend/src/components/ReplayPanel.tsx`](frontend/src/components/ReplayPanel.tsx) & [`projectExporter.ts`](backend/src/agent/projectExporter.ts) | Embedded Playwright Trace Viewer rendering in browser, direct trace zip download, and standalone runnable Playwright project zip download. |
+| **13. UI Delivery & Export** | [`frontend/components/job/ReplayPanel.tsx`](frontend/components/job/ReplayPanel.tsx) & [`backend/src/export/projectExporter.ts`](backend/src/export/projectExporter.ts) | Embedded Playwright Trace Viewer rendering in browser, direct trace zip download, and standalone runnable Playwright project zip download. |
 
 ---
 
@@ -238,8 +252,9 @@ stateDiagram-v2
 | [Postgres connection pooling](#decision-10-postgres-connection-pooling) | Operates reliably within Supabase free-tier connection limits using PgBouncer. | Direct connection required separately for migrations due to lack of advisory locks. |
 | [Daily admission quotas](#decision-11-daily-admission-quotas) | Prevents upstream denial-of-service and API depletion on public deployments. | Legitimate heavy users must bring their own API keys once daily limits are reached. |
 | [Target classification and wake handling](#decision-12-target-classification-and-wake-handling) | Handles sleeping free-tier host cold starts without failing the run immediately. | Initial runs on sleeping targets must wait for external spin-up delays. |
-| [Free-tier deployment profile](#decision-13-free-tier-deployment-profile) | Enables hosting across Render, Vercel, and Supabase free allocations. | Constrained to 512 MB RAM, concurrency of 1, and scaled execution timeouts. |
+| [Free-tier deployment profile](#decision-13-free-tier-deployment-profile) | Enables hosting across Render, Vercel, Supabase, and Google Cloud Run free allocations. | Constrained to 512 MB RAM on Render, concurrency of 1, and scaled execution timeouts (`RUNNER_TIMEOUT_SCALE=2`). |
 | [Multi-channel test export](#decision-14-multi-channel-test-export) | Provides immediately executable Playwright suites runnable in developer CI/CD. | Generated suites require installing Playwright dependencies in the target environment. |
+| [Remote Chromium offload on Google Cloud Run](#decision-15-remote-chromium-offload-on-google-cloud-run-us-west1--why-not-render-or-browserless) | Offloads browser rendering to Google Cloud Run Always Free (`us-west1`), eliminating 512 MB cgroup OOMs and avoiding Browserless 120s session cutoffs. | Headless Chromium runs outside Render over WebSocket; outbound network egress capped at 1 GiB/mo free. |
 
 <details>
 <summary><strong>Expand All Architecture Decision Records</strong></summary>
@@ -343,10 +358,10 @@ stateDiagram-v2
 ### Decision 13: Free-Tier Deployment Profile
 
 - **Context:** The application is architected to operate indefinitely across free hosting tiers without incurring server infrastructure fees.
-- **Decision:** Deploy backend to Render's free Docker tier (512 MB RAM, 0.1 CPU, `RUNNER_TIMEOUT_SCALE=3`), frontend to Vercel, and database to Supabase. Configure external UptimeRobot monitors to ping `/api/health` every 5 minutes (preventing container sleep) and `/api/health/db` every 12 hours (preventing database pausing).
+- **Decision:** Deploy Express backend to Render's free Docker tier (512 MB RAM, 0.1 CPU, `RUNNER_TIMEOUT_SCALE=2` matching `render.yaml`), frontend to Vercel, database to Supabase, and remote browser execution to Google Cloud Run (`us-west1` Always Free). Configure external UptimeRobot monitors to ping `/api/health` every 5 minutes (preventing Render container sleep) and `/api/health/db` every 12 hours (preventing database pausing).
 - **Why:** Provides continuous availability and full end-to-end functionality without infrastructure spend.
 - **Trade-off Accepted:** Render's free tier provides 750 free hours per month; keeping one service continuously awake consumes 744 hours (leaving 6 hours margin). Concurrency must be pinned to 1.
-- **Where in Code:** `render.yaml`, `backend/Dockerfile`.
+- **Where in Code:** `render.yaml`, `backend/Dockerfile`, `backend/src/config.ts`.
 
 ### Decision 14: Multi-Channel Test Export
 
@@ -356,6 +371,23 @@ stateDiagram-v2
 - **Trade-off Accepted:** Tests marked `needs_review` are excluded from the zip and listed in its README (`backend/src/export/projectExporter.ts:61-62,190-194`).
 - **Where in Code:** `backend/src/export/projectExporter.ts`, `backend/src/api/jobsRoutes.ts:256`.
 
+### Decision 15: Remote Chromium Offload on Google Cloud Run (`us-west1`) — Why Not Render or Browserless
+
+- **Context:** Headless Chromium rendering full commercial SPAs alongside Node.js, `tsc --noEmit`, and `@playwright/test` runner processes routinely spikes memory consumption to 600–900 MB, far exceeding constrained container RAM limits.
+- **Decision:** In hosted mode (`LOCAL_AGENT_MODE=false`), offload all Chromium browser contexts (Crawl, Observe, and Test Execution) over authenticated `wss://` to a dedicated Google Cloud Run service (`cloud-browser/`, `us-west1` Always Free, `2 vCPU / 2 GiB`, `min-instances=0`, `max-instances=1`, `concurrency=1`, `gen2`), with **zero local Chromium fallback** on failure. In local mode (`LOCAL_AGENT_MODE=true`), continue using local Chromium directly so developer workstation targets (`localhost` / `127.0.0.1`) function out of the box.
+- **Live Flipkart Benchmark & Technical Rationale (`https://www.flipkart.com/`, 200 elements, 10 specs, `--trace on`):**
+  1. **Why NOT Local Chromium on Render Free (`512 MB RAM / 0.1 CPU`) or a Second Render Service:**
+     - **512 MB Cgroup OOM (`SIGKILL`):** Even after Phase 1 container hardening (`--max-old-space-size=144` API, `112` runner, `HeavyOpGate(1)`, `EXECUTION_CHUNK_SIZE=3`, and blocking `image|media|font` during Crawl/Observe), live production testing on `flipkart.com` survived Crawl and Observe (`11.4s`) but triggered a kernel cgroup `SIGKILL` during Stage 4 execution when `chromium-headless-shell` rendered full commercial pages (unblocked CSS/images + `--trace on` DOM/network snapshots) alongside Node.
+     - **Shared 750h/mo Workspace Ceiling:** Render's `750` free monthly hours are shared across the entire account workspace. Keeping the primary Express API awake 24/7 via UptimeRobot consumes `744 hours/month` (31-day month), leaving only `6 hours` margin — a second warm Render browser service would exhaust the quota mid-month while still suffering the same `512 MB` RAM ceiling.
+  2. **Why NOT Browserless.io Free Tier (`1,000 units/month`, `120s` Hard Session Kill):**
+     - Live benchmarked on `https://www.flipkart.com/`: **1 single job consumed `54 / 1,000` monthly units (`5.4%` -> cap of ~18 Flipkart jobs/month)**, took **`855.3s` (`14.25 min`)**, and **failed `8 / 10` specs as `gave_up` (`80%` infra failure)**.
+     - Browserless Free enforces a hard **`120s` WebSocket session guillotine** on shared throttled CPU, severing every 3-spec traced chunk mid-flight, forcing 10 single-spec fallback retries, and timing out during `7.5 MB` `trace.zip` teardown transfers.
+  3. **Why Google Cloud Run Always Free (`us-west1` Gen2, `2 vCPU / 2 GiB`, `min-instances=0`):**
+     - On the identical Flipkart benchmark, `agt-playwright-ws` in `us-west1` (co-located with Render `oregon`) completed **4 / 4 3-spec chunks on the first try** (`77.3s`, `117.2s`, `86.9s`, `16.2s` — zero retries), achieved **`0 / 10` infra `gave_up` failures** (`5` passed + `5` deterministic assertion `finding`s), and consumed **`704.3 vCPU-s` (`0.39%` of the `180,000 vCPU-s/mo` Always Free allowance -> ~255 full Flipkart jobs/month, `14.1x` Browserless Free)** while removing Chromium completely from Render's `512 MB` container.
+     - **Provider-Agnostic Wire Contract:** Both Cloud Run (`cloud-browser/server.mjs`) and Browserless speak native Playwright `1.63.0` over `BROWSER_WS_ENDPOINT` + `BROWSER_WS_TOKEN`; switching providers requires only environment-variable changes.
+- **Trade-off Accepted:** Adds one additional Google Cloud Run deployment (`cloud-browser/`); outbound network egress is capped at GCP's permanent `1 GiB/month` free allowance (governed primarily by one-time `trace.zip` transfers from Cloud Run to Render).
+- **Where in Code:** `backend/src/browser/remoteBrowser.ts`, `cloud-browser/server.mjs`, `cloud-browser/egressProxy.mjs`, `backend/src/runner/executor.ts`, `backend/playwright-runner/playwright.config.ts`.
+
 </details>
 
 ---
@@ -364,28 +396,25 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
-  subgraph Input ["1. Code Inspection"]
-    A["Raw Generated / Corrected Code"] --> B["AST Safety Validator (codeSafety.ts)<br/>Checks imports, AST nodes, and forbidden APIs"]
-  end
-
-  subgraph Compilation ["2. Static Type Checking"]
+  subgraph RenderContainer ["1. Render Coordinator Container (node:22-bookworm-slim)"]
+    A["Raw Generated / Corrected Code"] --> B["AST Safety Validator (codeSafety.ts)<br/>Rejects process, child_process, and forbidden APIs"]
     B -->|Pass| C["Isolated TypeScript Compiler<br/>tsc --noEmit with per-run scoped tsconfig"]
-  end
-
-  subgraph Environment ["3. Process Hardening"]
     C -->|Pass| D["Sanitized Child Environment (childEnv.ts)<br/>DATABASE_URL, secrets, and API keys stripped"]
-    D --> E["Node.js Network Monkeypatch (netGuard.mjs)<br/>Blocks all outbound TCP except egress proxy"]
+    D --> E["Linux UID 1001 Isolation (isolation.ts)<br/>Backend UID 1000 node -> setpriv UID 1001 agtrunner"]
+    E --> F["Node.js Network Guard (netGuard.mjs)<br/>Blocks all outbound TCP except allowlisted host:443"]
   end
 
-  subgraph Execution ["4. Isolated Execution"]
-    E --> F["Chromium Headless Shell<br/>--proxy-server=http://127.0.0.1:proxyPort"]
-    F --> G["Connect-Time Egress Proxy (egressProxy.ts)<br/>Connect-time DNS resolution against NON_PUBLIC"]
-    G --> H["Linux UID Isolation (isolation.ts)<br/>Backend UID 1000 node -> setpriv UID 1001 agtrunner"]
+  subgraph CloudRunContainer ["2. Google Cloud Run Service (cloud-browser/)"]
+    F -->|Authenticated wss://?token=...| G["WebSocket Upgrade Auth (server.mjs)<br/>Constant-time timingSafeEqual SHA-256 token check"]
+    G -->|Pass| H["Isolated chromium.launchServer<br/>Ephemeral profile, MAX_SESSION_MS=285s, reaped on disconnect"]
+    H --> I["Connect-Time Egress Proxy (egressProxy.mjs)<br/>DNS-pinning SSRF protection blocking private & cloud metadata"]
+    I --> J["Target Web Application"]
   end
 
   B -->|Forbidden AST construct| R1["Reject & Re-queue for Correction"]
   C -->|Type or Syntax Error| R2["Reject & Re-queue for Correction"]
-  G -->|Private IP / Cloud Metadata| R3["Reject Connection (403 Forbidden)"]
+  G -->|Invalid Token (401)| R3["Abort Connection Immediately"]
+  I -->|Private IP / 169.254.169.254 (403)| R4["Reject Connection"]
 ```
 
 ### Defense-in-Depth Boundary
@@ -393,9 +422,16 @@ flowchart TD
 The AST static analysis check (`codeSafety.ts`) inspects the TypeScript syntax tree to reject known dangerous constructs: dynamic code evaluation (`eval`, `Function`), sensitive process globals (`process`, `globalThis`), network primitives (`fetch`, `WebSocket`), and access to object prototypes (`constructor`, `__proto__`). 
 
 > [!NOTE]
-> Static AST inspection is defense-in-depth, not an impregnable security boundary. Target web pages can attempt prompt-injection attacks to trick LLMs into generating obfuscated payloads. The true operational boundary is enforced at the OS and network level:
-> 1. The test runner executes as a dedicated unprivileged user (`agtrunner`, UID 1001) with zero Linux capabilities and `no_new_privs` enabled. Linux kernel permissions prevent UID 1001 from accessing backend process memory (`/proc/<pid>/mem`) or environment variables (`/proc/<pid>/environ`).
-> 2. All outbound network traffic is forced through an internal egress proxy that re-resolves hostnames at connection time and blocks private subnets, loopback addresses, and cloud instance metadata endpoints (`169.254.169.254`).
+> Static AST inspection is defense-in-depth, not an impregnable security boundary. Target web pages can attempt prompt-injection attacks to trick LLMs into generating obfuscated payloads. The true operational boundary is enforced at the OS, container, and network levels:
+> 1. **Render Container Hardening:**
+>    - The test runner executes as a dedicated unprivileged user (`agtrunner`, UID 1001) with zero Linux capabilities and `no_new_privs` enabled. Linux kernel permissions prevent UID 1001 from accessing backend process memory (`/proc/<pid>/mem`) or environment variables (`/proc/<pid>/environ`).
+>    - Outbound TCP sockets created by the runner process are strictly intercepted by `netGuard.mjs`, allowing connections **only** to the designated remote browser endpoint (`AGT_REMOTE_BROWSER_ALLOW` `<host>:443`) in hosted mode, or the local egress proxy in local mode.
+>    - All WebSocket tokens and secrets are scrubbed before child process spawning and sanitized from logs and error traces (`remoteBrowser.ts`, `childEnv.ts`, `sanitizeError.ts`, `logger.ts`).
+> 2. **Cloud Run Remote Browser Hardening (`cloud-browser/`):**
+>    - Dedicated non-privileged runtime service account (`agt-browser-sa`) with zero GCP IAM permissions.
+>    - Constant-time SHA-256 `timingSafeEqual` token authentication on every HTTP `Upgrade` request to prevent timing attacks.
+>    - Per-WebSocket isolated `chromium.launchServer` reaped immediately upon disconnect or hard 285s timeout.
+>    - Outbound Chromium traffic is routed strictly through `egressProxy.mjs` with `--proxy-bypass-list=<-loopback>`, `--disable-quic`, and `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`, verifying connect-time resolved IPs against RFC-1918, CGNAT, link-local, loopback (including container `:8080`), and cloud metadata (`169.254.169.254`, `metadata.google.internal`).
 
 ---
 
@@ -420,13 +456,27 @@ The AST static analysis check (`codeSafety.ts`) inspects the TypeScript syntax t
 | `JOB_TOKEN_BUDGET` | `40000` | Total token budget ceiling per test generation job | `backend/src/config.ts:56` |
 | `MAX_ELEMENTS_PER_PAGE` | `200` | Maximum interactive DOM elements indexed per page | `backend/src/config.ts:21` |
 | `NAVIGATION_TIMEOUT_MS` | `30000` | Browser navigation timeout during crawler indexing | `backend/src/config.ts:22` |
-| `RUNNER_TIMEOUT_SCALE` | `1` (Render: `3`) | Multiplier for test execution timeouts on constrained CPUs | `backend/src/config.ts:57` |
+| `RUNNER_TIMEOUT_SCALE` | `1` (Render: `2`) | Multiplier for test execution timeouts on constrained CPUs | `backend/src/config.ts:57` |
+
+### Cloud Infrastructure & Google Cloud Run Always-Free Limits
+
+The remote browser offload operates strictly within Google Cloud Run's permanent (post-90-day trial) Always Free tier:
+
+| Cloud Resource / Quota | Always Free Allowance | Service Configuration & Consumption | Governing Cap & Headroom |
+|---|---|---|---|
+| **Region & Instance Profile** | Tier 1 region (`us-west1` Oregon) | `gen2`, `2 vCPU`, `2 GiB RAM`, `cpu-throttling=true`, `min-instances=0`, `max-instances=1`, `concurrency=1`, `timeout=300s` (`MAX_SESSION_MS=285s`), zero-IAM SA | CPU billed strictly during active WebSocket connections; `$0 / ₹0` at idle. Scale-to-zero occurs ~15s after socket close. |
+| **Compute CPU Time** | `180,000 vCPU-seconds / month` | Billed as `active_seconds * 2 vCPU`. Heavy Flipkart e-commerce benchmark consumed `704.3 vCPU-s` (~`352s` active time). | **~255 heavy e-commerce jobs/month** or **~600–900 typical SPA jobs/month** (~25 active hours of 2 vCPU allocation). |
+| **Compute Memory Allocation** | `360,000 GiB-seconds / month` | Billed as `active_seconds * 2 GiB`. | 50 active hours of 2 GiB RAM allocation, comfortably exceeding CPU headroom. |
+| **Invocations / Requests** | `2,000,000 requests / month` | Each WebSocket connection counts as 1 HTTP upgrade request. | Negligible (~hundreds of requests/month vs 2M allowance). |
+| **Outbound Network Egress** | **`1 GiB` (`1,024 MB`) / month** | North America outbound (`us-west1` -> Render `oregon`). Governed by one-time `trace.zip` streaming at teardown (~`3–5 MB` typical SPA, ~`25–35 MB` media-heavy e-commerce). | **Primary governing cap:** ~`200–300` typical jobs/month or ~`30–40` media-heavy jobs/month. Subsequent trace replays/downloads serve from Render's `.traces/` cache (`100 GB/mo` free bandwidth) at $0 GCP cost. |
+| **Artifact Registry Storage** | **`0.5 GB` (`500 MB`) / month** | Minimal Debian Bookworm image installing `chromium-headless-shell` only: **`~425 MiB` (`445.8 MB`)**. | Strictly keep **1 active image digest** in `us-west1-docker.pkg.dev`; delete superseded digests after redeployment. |
+| **Cloud Build & Source Staging** | `2,500 build-minutes / month`, `5 GB-mo` Standard Cloud Storage | Build takes ~`120 seconds` (~5% of 1 month's free build minutes). Source archive `< 50 KB`. | Staging storage consumes `< 0.001%` of monthly free storage quota. |
 
 ### Execution Modes
 
 | Mode | Target Reachability | Admission Requirements | Intended Environment |
 |---|---|---|---|
-| **Hosted Mode** | Public internet targets only. Private IPs and localhost blocked by `netPolicy.ts`. | ALTCHA proof-of-work required. Daily IP and visitor limits enforced. | Public production deployments (Vercel + Render). |
+| **Hosted Mode** | Public internet targets only. Private IPs and localhost blocked by `netPolicy.ts`. | ALTCHA proof-of-work required. Daily IP and visitor limits enforced. | Public production deployments (Vercel + Render + Cloud Run). |
 | **Tunnel Mode** | Localhost and private targets exposed via secure tunnel (e.g. `ngrok` or `cloudflared`). | Standard hosted mode rules apply; tunnel hostname treated as public target. | Testing local developer servers from hosted deployment. |
 | **Local Agent Mode** | Direct access to `localhost`, `127.0.0.1`, and private intranet subnets. | All admission limits, quotas, and proof-of-work checks disabled. | Local workstation development (`LOCAL_AGENT_MODE=true`). |
 
@@ -471,7 +521,7 @@ Measurements recorded from a live 12-run verification matrix re-run after Phase 
 ### Prerequisites
 
 - **Node.js:** Node 22 (Docker image `node:22-bookworm-slim`); tested on `v24.14.1`
-- **Package Manager:** `pnpm` (version 12.8.1)
+- **Package Manager:** `pnpm` (version 10.x, matching `corepack prepare pnpm@10` in `backend/Dockerfile`)
 - **Database:** PostgreSQL database instance (local PostgreSQL or Supabase project)
 - **LLM API Key:** At least one API key from Groq or Google Gemini
 
@@ -595,10 +645,12 @@ cd frontend && pnpm dev
 | `TRUST_PROXY_HOPS` | `1` | No | Number of upstream reverse proxy hops to trust for IP extraction |
 | `FRONTEND_ORIGIN` | *(none)* | Yes | Allowed frontend origin URLs for CORS (comma-separated) |
 | `JOB_TOKEN_BUDGET` | `40000` | No | Maximum prompt and completion tokens consumed per job |
-| `RUNNER_TIMEOUT_SCALE` | `1` | No (Render: `3`) | Multiplier scaling Playwright timeouts for low-CPU hosts |
+| `RUNNER_TIMEOUT_SCALE` | `1` | No (Render: `2`) | Multiplier scaling Playwright timeouts for low-CPU hosts |
 | `RUNNER_ISOLATION` | `none` | Yes (`uid`) | Runner isolation model (`none` for dev, `uid` for prod) |
 | `RUNNER_UID` | `1001` | No | Linux UID assigned to unprivileged runner process |
 | `RUNNER_GID` | `1002` | No | Linux GID assigned to unprivileged runner process |
+| `BROWSER_WS_ENDPOINT` | *(none)* | Optional (Required for remote Cloud Run) | Remote Playwright WebSocket endpoint (`wss://<service>.a.run.app/chromium/playwright`). Bypassed when `LOCAL_AGENT_MODE=true`. |
+| `BROWSER_WS_TOKEN` | *(none)* | Yes if endpoint set | Authentication token for remote Playwright WebSocket (min 24 chars, 32+ recommended) |
 | `CORS_PREVIEW_ORIGIN_REGEX` | *(none)* | No | Regular expression pattern for dynamically allowed preview origins |
 | `RETENTION_DAYS` | `30` | No | Days after which jobs are deleted by the daily retention sweep (read in `backend/src/maintenance/expireOldJobs.ts`, outside `config.ts`) |
 | `SAMPLE_JOB_IDS` | *(none)* | No | Comma-separated job IDs excluded from the retention sweep and preserved past expiry (read in `backend/src/maintenance/expireOldJobs.ts`, outside `config.ts`) |
@@ -785,6 +837,7 @@ erDiagram
 |---|---|---|---|---|
 | **Persistent Relational DB** | Supabase PostgreSQL (PgBouncer `:6543`) | Jobs, agent steps, test plans, generated test code, execution results, server events | 30-day retention sweep (`expireOldJobs.ts`); `SAMPLE_JOB_IDS` exempt | SSL required; secrets replaced with `__AGT_SECRET_n__` tokens |
 | **Ephemeral Disk Storage** | Render Backend Container (`.traces/`, `tests/run-*`) | Playwright trace zips, temporary execution files and test specs | Max 200 traces, 256 MiB total cap, 25 MiB single trace limit, FIFO eviction by `createdAt`, 1-hour TTL; run dirs deleted on run completion | Traces served only via HMAC-signed 10-minute owner tokens; runner sandboxed under UID 1001 |
+| **Remote Browser Runtime** | Google Cloud Run (`us-west1` Always Free) | Ephemeral Chromium browser contexts, active tabs, `/tmp` session storage | Destroyed immediately on WebSocket disconnect; service scales to zero ~15s after socket teardown | Zero-IAM SA (`agt-browser-sa`), SHA-256 token upgrade authentication, connect-time DNS pinning egress proxy |
 | **In-Memory Backend State** | Node.js Process Memory | In-flight run queue, active SSE connection listeners, plan cache (keyed by normalized URL + element hash), ALTCHA replay cache (10 min TTL), visitor token-bucket budget reservations | Process lifetime; caches have explicit TTLs (plan cache: 6 hours / 100 entries); cleared on container restart | In-memory only; non-shared across instances |
 | **Browser Client Storage** | Browser `localStorage` & `sessionStorage` | Prefill test credentials (30 days in `localStorage`, user-consented), active visitor ID (`agt_visitor_id`), active run history | Client-controlled; deleted on browser clear; never transmitted except in user request payloads | Strictly client-side domain storage |
 | **External Model APIs** | Groq & Google Gemini APIs | Transient LLM inference prompts and completions | No server-side retention; API keys sent via HTTPS authorization headers | Server keys or user BYOK; sensitive data redacted in logging |
@@ -800,7 +853,7 @@ The backend observability stack combines structured Winston logging for runtime 
    - **Production JSON Formatting:** In production (`NODE_ENV=production`), logs format as single-line JSON structured for Render log search and metric extraction. In development, logs use colorized human-readable tags.
    - **Configurable Severity:** Governed by `LOG_LEVEL` (defaults to `info` in production, `debug` in development).
    - **Context Enrichment:** Emits standard context fields including `component`, `jobId`, `provider`, `model`, `latencyMs`, `promptTokens`, `completionTokens`, and `errorCode`.
-   - **Automatic Secret Redaction:** Recursively redacts Bearer tokens, Groq API keys (`gsk_*`), Gemini API keys (`AIzaSy*`), PostgreSQL connection strings, signed trace tokens (`t=*`), and sensitive request body fields before log emission.
+   - **Automatic Secret Redaction:** Recursively redacts Bearer tokens, Groq API keys (`gsk_*`), Gemini API keys (`AIzaSy*`), PostgreSQL connection strings, signed trace tokens (`t=*`), URL token query parameters (`?token=*`), `browser_ws_token`, `edge_shared_secret`, and sensitive request body fields before log emission.
 2. **ServerEvent Deduplication ([backend/src/observability/serverEvents.ts](backend/src/observability/serverEvents.ts)):**
    - Captures unhandled promise rejections, uncaught exceptions, and LLM exhaustion events in the `ServerEvent` table.
    - Deduplicates identical errors using an SHA-256 fingerprint within a sliding 60-second window, incrementing an event `count` instead of creating redundant rows.
@@ -821,6 +874,7 @@ The backend observability stack combines structured Winston logging for runtime 
 │   ├── playwright-runner/          # Sandboxed runner package executed by Playwright CLI
 │   │   ├── agt-capture.ts          # Playwright test fixture capturing page navigations
 │   │   ├── netGuard.mjs            # In-process monkeypatch restricting child TCP egress
+│   │   ├── playwright.config.ts    # Config mapping wsEndpoint to remote Cloud Run browser
 │   │   └── package.json            # Dedicated runner dependencies
 │   ├── prisma/                     # Database schema definition & migration history
 │   │   ├── migrations/             # Timestamped SQL migrations
@@ -831,6 +885,7 @@ The backend observability stack combines structured Winston logging for runtime 
 │       │   ├── assertionGuard.ts   # AST assertion-preservation validator
 │       │   ├── baseline.ts         # Deterministic broken-link baseline tests
 │       │   ├── pipeline.ts         # End-to-end job orchestration loop
+│       │   ├── plannerView.ts      # Element projection with compactHref tracking-URL pruning
 │       │   ├── rounds.ts           # Execution round coordinator and failure classifier
 │       │   ├── runQueue.ts         # In-process FIFO queue with concurrency gates
 │       │   └── steps/              # Pipeline steps: compiler, corrector, planner
@@ -838,6 +893,8 @@ The backend observability stack combines structured Winston logging for runtime 
 │       │   ├── jobsRoutes.ts       # Job status, cancellation, reports, and streaming
 │       │   ├── routes.ts           # Generation admission, crawl previews, and budget
 │       │   └── schemas.ts          # Zod request validation schemas
+│       ├── browser/                # Remote Playwright browser configuration & URL builders
+│       │   └── remoteBrowser.ts    # WebSocket URL formatting, token auth & no-fallback guards
 │       ├── config.ts               # Centralized Zod-validated environment configuration
 │       ├── crawler/                # Playwright DOM scraping and element cataloging
 │       │   ├── gotoErrors.ts       # Navigation error taxonomy mapping
@@ -847,18 +904,25 @@ The backend observability stack combines structured Winston logging for runtime 
 │       ├── db/                     # Prisma database client and query helpers
 │       ├── export/                 # Project zip packing and GitHub Actions generator
 │       ├── llm/                    # Zero-SDK OpenAI-compatible fetch clients and BYOK
-│       ├── observability/          # Deduplicated server event error recording
+│       ├── observability/          # Deduplicated server event error recording & logger
 │       ├── report/                 # Standalone single-file HTML report generator
 │       ├── runner/                 # Playwright execution, tsc validation, and isolation
+│       │   ├── childEnv.ts         # Child process environment sanitizer with token scrubbing
 │       │   ├── codeSafety.ts       # AST inspection rejecting forbidden JavaScript APIs
 │       │   ├── executor.ts         # Playwright test process execution harness
 │       │   ├── isolation.ts        # Linux setpriv UID/GID process sandboxing
+│       │   ├── traceStore.ts       # Ephemeral trace zip storage & access token signer
 │       │   └── validator.ts        # Static TypeScript type-checking gate
 │       └── security/               # Admission control, ALTCHA PoW, and network policy
 │           ├── dailyBudget.ts      # Atomic daily IP and visitor usage tracking
 │           ├── egressProxy.ts      # Connect-time DNS validation HTTP proxy
 │           ├── netPolicy.ts        # IP subnet blocking preventing SSRF attacks
 │           └── pow.ts              # ALTCHA proof-of-work challenge verification
+├── cloud-browser/                  # Google Cloud Run remote browser microservice
+│   ├── Dockerfile                  # Minimal Debian Bookworm container (chromium-headless-shell only, ~425 MiB)
+│   ├── egressProxy.mjs             # Connect-time DNS-pinning SSRF protection HTTP proxy
+│   ├── package.json                # Lightweight dependencies (ws, playwright-core)
+│   └── server.mjs                  # WebSocket auth multiplexer and chromium.launchServer lifecycle
 ├── frontend/                       # Next.js 14 Pages Router user interface
 │   ├── components/                 # React UI components (Tailwind CSS)
 │   ├── lib/                        # Client-side API fetchers and localStorage helpers
@@ -896,16 +960,18 @@ cd ..
 
 # 6. Execute live verification scripts (Backend must be configured)
 cd backend
-npx tsx scratch/testPhase9A1.ts        # Validates code safety AST rules and UID runner sandboxing
-npx tsx scratch/testAssertionGuard.ts  # Validates assertion preservation logic
-npx tsx scratch/testQuickFixes.ts       # Validates error mapping and URL transformation safety
+npx tsx scratch/testPhase9A1.ts            # Validates code safety AST rules and UID runner sandboxing
+npx tsx scratch/testAssertionGuard.ts      # Validates assertion preservation logic
+npx tsx scratch/testQuickFixes.ts           # Validates error mapping and URL transformation safety
+npx tsx scratch/testContainerHardening.ts   # Validates memory limits and HeavyOpGate concurrency
+npx tsx scratch/testRemoteBrowser.ts        # Validates remote Cloud Run browser integration (RB1-RB6)
 ```
 
 ---
 
 ## Deployment
 
-This application is designed to operate continuously across free hosting allocations: Supabase (PostgreSQL), Render (Docker Backend), and Vercel (Next.js Frontend).
+This application is designed to operate continuously across free hosting allocations: Supabase (PostgreSQL), Google Cloud Run (Remote Playwright Browser), Render (Docker Backend), and Vercel (Next.js Frontend).
 
 ### Deployment Order & Setup
 
@@ -915,10 +981,32 @@ This application is designed to operate continuously across free hosting allocat
      ```bash
      cd backend && DATABASE_URL="postgresql://...:5432/postgres" pnpm exec prisma migrate deploy
      ```
-2. **Render Backend**:
+2. **Google Cloud Run Remote Browser (`cloud-browser/`)**:
+   - Create a dedicated zero-IAM service account and deploy the container to `us-west1` (Oregon Always Free):
+     ```bash
+     gcloud iam service-accounts create agt-browser-sa --description="AGT remote browser zero-IAM service account"
+     
+     gcloud run deploy agt-playwright-ws \
+       --source=./cloud-browser \
+       --region=us-west1 \
+       --platform=managed \
+       --execution-environment=gen2 \
+       --cpu=2 \
+       --memory=2Gi \
+       --concurrency=1 \
+       --min-instances=0 \
+       --max-instances=1 \
+       --timeout=300 \
+       --no-cpu-throttling=false \
+       --service-account=agt-browser-sa@<PROJECT_ID>.iam.gserviceaccount.com \
+       --set-env-vars="BROWSER_WS_TOKEN=<MIN_32_CHAR_RANDOM_TOKEN>" \
+       --allow-unauthenticated
+     ```
+   - Note the resulting Service URL (`https://<service>.a.run.app`). Keep strictly 1 active image digest in Artifact Registry to remain under the 500 MB free quota.
+3. **Render Backend**:
    - In Render Dashboard, select **New +** -> **Blueprint**, link the repository (`main` branch), and let Render parse `render.yaml`.
-   - In Render Dashboard -> **Environment Variables**, fill in values for all `sync: false` secrets.
-3. **Vercel Frontend**:
+   - In Render Dashboard -> **Environment Variables**, fill in values for all `sync: false` secrets, including `BROWSER_WS_ENDPOINT` (`wss://<service>.a.run.app/chromium/playwright`) and `BROWSER_WS_TOKEN`.
+4. **Vercel Frontend**:
    - In Vercel Dashboard, import the repository with Root Directory set to `frontend`.
    - Configure environment variables: `BACKEND_URL` (`https://<service>.onrender.com`), `EDGE_SHARED_SECRET` (matching Render), and `NEXT_PUBLIC_DEPLOYMENT_MODE=production`. Deploy.
 
@@ -937,29 +1025,34 @@ Secret names must match `render.yaml` exactly. Values are never committed to ver
 | `FRONTEND_ORIGIN` | Render | Allowed CORS origin (e.g. `https://your-app.vercel.app`) |
 | `GROQ_API_KEY` | Render | Primary LLM provider key (`gsk_...`) |
 | `GEMINI_API_KEY` | Render | Optional fallback LLM provider key (`AIza...`) |
-| `REASONING_MODELS` | Render | Optional comma-separated model chain override for reasoning tier |
-| `FAST_MODELS` | Render | Optional comma-separated model chain override for fast tier |
+| `GROQ_REASONING_MODELS` | Render | Optional comma-separated model chain override for Groq reasoning tier |
+| `GROQ_FAST_MODELS` | Render | Optional comma-separated model chain override for Groq fast tier |
+| `GEMINI_REASONING_MODELS` | Render | Optional comma-separated model chain override for Gemini reasoning tier |
+| `GEMINI_FAST_MODELS` | Render | Optional comma-separated model chain override for Gemini fast tier |
+| `BROWSER_WS_ENDPOINT` | Render | Remote Playwright WebSocket endpoint (`wss://<service>.a.run.app/chromium/playwright`) |
+| `BROWSER_WS_TOKEN` | Render + Cloud Run | Shared authentication token for remote Playwright WebSocket (min 32 chars recommended) |
 
 ### Free-Tier Operating Constraints & Keep-Alive
 
-Preset via `render.yaml`: single instance, `PIPELINE_CONCURRENCY=1`, `CRAWL_CONCURRENCY=1`, and `RUNNER_TIMEOUT_SCALE=3`. To prevent cold starts and database pausing within Render's 750 free monthly hours (744 hours in a 31-day month):
+Preset via `render.yaml`: single instance, `PIPELINE_CONCURRENCY=1`, `CRAWL_CONCURRENCY=1`, and `RUNNER_TIMEOUT_SCALE=2`. To prevent cold starts and database pausing within Render's 750 free monthly hours (744 hours in a 31-day month):
 - **Backend Keep-Alive**: Configure UptimeRobot to ping `GET /api/health` every 5 minutes (prevents Render container sleep).
 - **Database Activity Ping**: Configure UptimeRobot to ping `GET /api/health/db` every 12 hours (issues lightweight query preventing 7-day Supabase inactivity pause).
 
 ### Post-Deploy Verification
 
 1. Verify `/api/health` returns status `ok` and `/api/health/db` returns database `ok`.
-2. Run one end-to-end generation job on `https://demo.playwright.dev/todomvc` to confirm crawl, plan, compile, and runner execution succeed.
+2. Run one end-to-end generation job on `https://demo.playwright.dev/todomvc` to confirm remote crawl, plan, compile, and remote runner execution succeed.
 3. Validate Playwright trace replay and download on the job page.
 4. Verify edge client IP extraction via `curl -s -H "X-Admin-Secret: <SECRET>" <BACKEND>/api/admin/whoami`.
 5. Test BYOK / custom-keys generation path.
 
 ### Rollback & Secrets Rotation
 
-- **Rollback**: In Render Dashboard, navigate to **Deploys** and click **Rollback to this deploy** on the last working release. In Vercel, select the previous good deployment and click **Promote to Production**.
+- **Rollback**: In Render Dashboard, navigate to **Deploys** and click **Rollback to this deploy** on the last working release. In Vercel, select the previous good deployment and click **Promote to Production**. In Cloud Run, adjust traffic revisions via `gcloud run services update-traffic`.
 - **Rotation**:
   - `VISITOR_SIGNING_SECRET`: Rotate in Render (invalidates existing visitor cookies; returning users receive fresh IDs).
   - `EDGE_SHARED_SECRET`: Update simultaneously in both Render and Vercel environment variables, then redeploy both.
+  - `BROWSER_WS_TOKEN`: Update simultaneously in both Cloud Run (`gcloud run services update`) and Render environment variables.
   - `ADMIN_SECRET`: Rotate anytime in Render (used only for `/api/admin/*` administrative endpoints).
   - `POW_SECRET`, `GROQ_API_KEY`, `GEMINI_API_KEY`: Rotate anytime in Render environment variables.
 
@@ -970,7 +1063,7 @@ Preset via `render.yaml`: single instance, `PIPELINE_CONCURRENCY=1`, `CRAWL_CONC
 - **Scenario Accuracy & Negative Template Separation:** The dual-call planner split (Phase 12) separates core from negative planning, but the **fast/negative tier is still the driver of false findings** (5 of 10 false expectations in the latest 12-run measurement inject valid test data into a case titled "must fail"). Segregate negative cases from valid credentials in `backend/src/agent/steps/planner.ts` (`enforceTestData`) so a "must fail" case never binds the valid test-data values.
 - **Navigation-Aware Correction Guidance:** Supply post-navigation page URLs and visible interactive element snapshots directly to the correction prompt, preventing locator spin on vanished selectors (measured: correction success 30.0%, all heals on strict-mode locator collisions).
 - **Screenshot Artifacts:** Attach screenshot artifacts directly to test result cards for rapid debugging (owner-only Playwright trace replays already ship for every execution attempt; screenshots do not yet).
-- **Production Infrastructure Rollout:** Execute production deployment to Render and Vercel following the steps outlined in the [Deployment](#deployment) section.
+- **Production Infrastructure Rollout:** Execute production deployment to Render, Cloud Run, and Vercel following the steps outlined in the [Deployment](#deployment) section.
 
 ---
 
@@ -982,11 +1075,13 @@ Preset via `render.yaml`: single instance, `PIPELINE_CONCURRENCY=1`, `CRAWL_CONC
 | **Python** | Avoided | Kept the entire system in TypeScript to share AST parsers, Playwright runner types, and Zod schemas across crawler, runner, and UI. |
 | **Redux / Zustand** | Avoided | Next.js Pages Router with local React state and SWR caching satisfies all state management needs without state store boilerplate. |
 | **GraphQL / tRPC** | Avoided | Standard REST endpoints with Zod request schemas cleanly support Server-Sent Events, streaming zips, and HTML file downloads. |
-| **WebSockets** | Avoided | Live progress is strictly unidirectional (server to browser). Server-Sent Events work seamlessly over standard HTTP proxies without WebSocket upgrade complexity. |
+| **Client-Facing Live Progress WebSockets** | Avoided | Live progress is strictly unidirectional (server to browser). Server-Sent Events work seamlessly over standard HTTP proxies without WebSocket upgrade complexity. (Playwright's native WebSocket wire protocol is used strictly backend-to-Cloud-Run for remote browser orchestration). |
+| **Local Chromium on 512 MB Render / Second Render Service** | Avoided | Headless Chromium rendering commercial SPAs with `--trace on` triggers cgroup `SIGKILL` (512 MB OOM). A second warm Render service would consume an additional 744 hours/mo, exhausting the account's 750 free monthly hour workspace limit mid-month. |
+| **Browserless.io Free Tier** | Avoided | Live benchmarked on `flipkart.com`: 1 single job consumed 54 of 1,000 monthly units (cap of ~18 jobs/mo), took 14.25 minutes, and failed 8/10 specs (80% failure) due to Browserless Free's rigid 120s session guillotine cutting off traced test chunks. |
 | **Redis** | Avoided | Single-instance deployment runs on an in-memory queue and Postgres. Redis adds unwarranted infrastructure overhead on free-tier deployments. |
 | **Next.js App Router / RSC** | Avoided | Pages Router provides predictable, stable client-side lifecycle management for long-lived Server-Sent Event streams and Monaco editor instances. |
 | **Vector DBs / RAG** | Avoided | The application tests live DOM structures discovered in real time. Historical embeddings are inapplicable for testing fresh DOM layouts. |
-| **Paid Cloud Tiers** | Avoided | Purposefully designed to run continuously on free-tier allocations (Render, Vercel, Supabase, Groq/Gemini free tiers) with zero hosting expenditure. |
+| **Paid Cloud Tiers** | Avoided | Purposefully designed to run continuously on free-tier allocations (Render, Google Cloud Run Always Free, Vercel, Supabase, Groq/Gemini free tiers) with zero hosting expenditure. |
 
 ---
 

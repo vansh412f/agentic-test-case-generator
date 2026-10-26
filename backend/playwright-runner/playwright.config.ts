@@ -24,6 +24,8 @@ const launchOptions = {
 
 const scale = Math.max(1, parseFloat(process.env.RUNNER_TIMEOUT_SCALE ?? '1') || 1);
 
+const wsEndpoint = process.env.AGT_BROWSER_WS_ENDPOINT?.trim() || undefined;
+
 export default defineConfig({
   testDir: './tests',
   workers: 1,
@@ -36,7 +38,15 @@ export default defineConfig({
     navigationTimeout: Math.min(Math.round(15_000 * scale), 25_000),
     headless: process.env.HEADLESS !== 'false',
     viewport: { width: 1280, height: 720 },
-    proxy,
-    launchOptions,
+    ...(wsEndpoint
+      ? {
+          connectOptions: { wsEndpoint, timeout: 30_000 },
+          proxy: undefined,
+          launchOptions: undefined,
+        }
+      : {
+          proxy,
+          launchOptions,
+        }),
   },
 });

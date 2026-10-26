@@ -30,6 +30,12 @@ export function childProcessEnv(extra: Record<string, string> = {}): NodeJS.Proc
   return { ...env, ...extra };
 }
 
+import {
+  isRemoteBrowserActive,
+  buildAuthenticatedBrowserWsUrl,
+  getRemoteBrowserAllowSpec,
+} from '../browser/remoteBrowser.ts';
+
 export function playwrightRunnerEnv(
   resultsPath: string,
   extraEnv: Record<string, string> = {},
@@ -46,7 +52,13 @@ export function playwrightRunnerEnv(
     ...extraEnv,
   };
 
-  if (!config.LOCAL_AGENT_MODE && process.env.AGT_EGRESS_PROXY) {
+  if (isRemoteBrowserActive()) {
+    extra.AGT_BROWSER_WS_ENDPOINT = buildAuthenticatedBrowserWsUrl();
+    const allow = getRemoteBrowserAllowSpec();
+    if (allow) extra.AGT_REMOTE_BROWSER_ALLOW = allow;
+    // Do NOT set AGT_EGRESS_PROXY for remote browser
+    extra.NODE_OPTIONS = `${withHeapCap} --import=${NET_GUARD_URL}`.trim();
+  } else if (!config.LOCAL_AGENT_MODE && process.env.AGT_EGRESS_PROXY) {
     extra.AGT_EGRESS_PROXY = process.env.AGT_EGRESS_PROXY;
     extra.NODE_OPTIONS = `${withHeapCap} --import=${NET_GUARD_URL}`.trim();
   } else {

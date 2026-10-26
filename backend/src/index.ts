@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import { RUNNER_DIR } from './runner/config.ts';
 import { initTraceStore } from './runner/traceStore.ts';
 import { selfCheck } from './runner/isolation.ts';
+import { isRemoteBrowserActive, getRedactedBrowserEndpoint } from './browser/remoteBrowser.ts';
 
 const bootedAt = new Date();
 
@@ -218,6 +219,14 @@ let server: ReturnType<typeof app.listen> | undefined;
 if (isDirectRun) {
   server = app.listen(config.PORT, () => {
     logger.info(`Server running on http://localhost:${config.PORT}`, { component: 'Server', port: config.PORT, nodeEnv: config.NODE_ENV });
+    if (isRemoteBrowserActive()) {
+      logger.info(`Remote browser active: ${getRedactedBrowserEndpoint()}`, {
+        component: 'Server',
+        remoteBrowser: getRedactedBrowserEndpoint(),
+      });
+    } else {
+      logger.info('Browser execution mode: local Chromium', { component: 'Server' });
+    }
     void reconcileOrphanedJobs(bootedAt);
 
     if (!config.LOCAL_AGENT_MODE) {

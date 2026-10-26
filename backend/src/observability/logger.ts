@@ -16,7 +16,9 @@ export function redactString(val: string): string {
     // Signed trace token (epoch.hmac)
     .replace(/\b\d{13}\.[A-Za-z0-9_-]{32,}\b/g, '[TRACE_TOKEN_REDACTED]')
     // Query param trace token: ?t=... or &t=...
-    .replace(/([?&]t=)[A-Za-z0-9_.-]+/gi, '$1[REDACTED]');
+    .replace(/([?&]t=)[A-Za-z0-9_.-]+/gi, '$1[REDACTED]')
+    // WebSocket / URL token query param: ?token=... or &token=...
+    .replace(/([?&]token=)[^&\s"'`<>]+/gi, '$1[REDACTED]');
 }
 
 const SENSITIVE_KEYS = new Set([
@@ -32,6 +34,8 @@ const SENSITIVE_KEYS = new Set([
   'visitor_signing_secret',
   'admin_secret',
   'cookie',
+  'browser_ws_token',
+  'edge_shared_secret',
 ]);
 
 /**

@@ -79,6 +79,8 @@ export const configSchema = z.object({
       },
       { message: 'CORS_PREVIEW_ORIGIN_REGEX must be anchored with ^ and $' },
     ),
+  BROWSER_WS_ENDPOINT: z.string().trim().optional(),
+  BROWSER_WS_TOKEN: z.string().trim().optional(),
 });
 
 export type Config = z.infer<typeof configSchema> & {
@@ -92,6 +94,21 @@ const parseConfig = (): Config => {
     console.error('Invalid environment variables:');
     console.error(JSON.stringify(result.error.format(), null, 2));
     process.exit(1);
+  }
+
+  // Remote browser endpoint format check (all environments when provided)
+  const endpoint = result.data.BROWSER_WS_ENDPOINT;
+  if (endpoint && endpoint.trim().length > 0) {
+    try {
+      const parsed = new URL(endpoint.trim());
+      if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
+        console.error('FATAL: BROWSER_WS_ENDPOINT must use ws:// or wss:// protocol.');
+        process.exit(1);
+      }
+    } catch {
+      console.error('FATAL: BROWSER_WS_ENDPOINT must be a valid URL.');
+      process.exit(1);
+    }
   }
 
   // Production guard: LOCAL_AGENT_MODE cannot be enabled in production
@@ -132,6 +149,18 @@ const parseConfig = (): Config => {
     );
     if (!hasLlmKey) {
       missing.push('At least one LLM key (GROQ_API_KEY or GEMINI_API_KEY)');
+    }
+
+    // Remote browser production validation: if either is non-empty, enforce strict wss:// and token length >= 24
+    const hasEndpoint = Boolean(result.data.BROWSER_WS_ENDPOINT && result.data.BROWSER_WS_ENDPOINT.trim().length > 0);
+    const hasToken = Boolean(result.data.BROWSER_WS_TOKEN && result.data.BROWSER_WS_TOKEN.trim().length > 0);
+    if (hasEndpoint || hasToken) {
+      if (!hasEndpoint || !result.data.BROWSER_WS_ENDPOINT!.trim().startsWith('wss://')) {
+        missing.push('BROWSER_WS_ENDPOINT (must start with wss:// in production)');
+      }
+      if (!hasToken || result.data.BROWSER_WS_TOKEN!.trim().length < 24) {
+        missing.push('BROWSER_WS_TOKEN (must be at least 24 characters in production)');
+      }
     }
 
     if (missing.length > 0) {

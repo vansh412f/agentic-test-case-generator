@@ -19,8 +19,18 @@ function assertCrawlableUrl(url: string): void {
   }
 }
 
+import {
+  isRemoteBrowserActive,
+  buildAuthenticatedBrowserWsUrl,
+  scrubBrowserWsSecrets,
+} from '../browser/remoteBrowser.ts';
+
 export async function launchBrowser(): Promise<Browser> {
   try {
+    if (isRemoteBrowserActive()) {
+      return await chromium.connect(buildAuthenticatedBrowserWsUrl(), { timeout: 30_000 });
+    }
+
     const proxyUrl = await ensureEgressProxy();
     const proxy = proxyUrl ? { server: proxyUrl } : undefined;
     const baseArgs = [
@@ -39,10 +49,13 @@ export async function launchBrowser(): Promise<Browser> {
       args,
     });
   } catch (err) {
-    // Launch errors embed executable paths / missing libs: log, never return.
-    console.error(`[Crawler] Browser launch failed: ${err instanceof Error ? err.message : String(err)}`);
-    recordServerEvent('error', 'crawler:launch', err);
-    throw new CrawlError('BROWSER_LAUNCH_FAILED', 'The crawler browser could not start. Please retry shortly.', err);
+    // Launch errors embed executable paths / tokens / missing libs: log scrubbed, never return raw.
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const scrubbedMsg = scrubBrowserWsSecrets(rawMsg);
+    console.error(`[Crawler] Browser launch failed: ${scrubbedMsg}`);
+    const safeErr = err instanceof Error ? Object.assign(new Error(scrubbedMsg), { stack: scrubBrowserWsSecrets(err.stack || '') }) : new Error(scrubbedMsg);
+    recordServerEvent('error', 'crawler:launch', safeErr);
+    throw new CrawlError('BROWSER_LAUNCH_FAILED', 'The crawler browser could not start. Please retry shortly.', safeErr);
   }
 }
 

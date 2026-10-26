@@ -15,5 +15,15 @@ export function sanitizeError(raw: string | null | undefined): string {
   // Strip runner directory paths to keep just the bare filename, e.g. tc-1.spec.ts:7:79
   sanitized = sanitized.replace(RUNNER_PATH_REGEX, '');
 
+  // Scrub any ?token= query parameter
+  sanitized = sanitized.replace(/([?&]token=)[^&\s"'`<>]+/gi, '$1[REDACTED]');
+
+  // Scrub raw BROWSER_WS_TOKEN if present in process.env (without importing config.ts)
+  const wsToken = process.env.BROWSER_WS_TOKEN?.trim();
+  if (wsToken && wsToken.length >= 4) {
+    sanitized = sanitized.split(wsToken).join('[REDACTED]');
+    sanitized = sanitized.split(encodeURIComponent(wsToken)).join('[REDACTED]');
+  }
+
   return sanitized;
 }
