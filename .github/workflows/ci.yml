@@ -65,6 +65,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      PLAYWRIGHT_BROWSERS_PATH: /tmp/ms-playwright
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agt_ci
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/agt_ci
       NODE_ENV: development

@@ -548,7 +548,10 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
   };
 
   if (useDualCall) {
-    const promptA = `${userPrompt}\n\nASSIGNMENT: plan up to 6 core cases — primary happy paths end-to-end, key navigation, main content visibility. Prefer cases grounded in OBSERVED FACTS.`;
+    let promptA = `${userPrompt}\n\nASSIGNMENT: plan up to 6 core cases — primary happy paths end-to-end, key navigation, main content visibility. Prefer cases grounded in OBSERVED FACTS.`;
+    if (resolvedData && resolvedData.fills.size > 0) {
+      promptA += `\nIMPORTANT: User-supplied TEST DATA is present — tc-1 MUST be the primary end-to-end happy-path login/form submission filling all provided TEST DATA values and asserting the observed post-submit outcome.`;
+    }
     const promptB = `${userPrompt}\n\nASSIGNMENT: plan up to 5 negative / validation / edge cases — empty submits, invalid input, counts, visibility of secondary elements. Prefer cases grounded in OBSERVED FACTS.\nTEST DATA values are valid success values. Never use a secret placeholder as the invalid/missing value under test: empty field = fill '' or omit the fill; wrong credential = a non-secret literal such as wrong-password (only when TEST DATA provides a value for that field; never type invented literals into unprovided password fields). Use exact test-data only for fields meant to stay valid in that case.`;
 
     const [settledA, settledB] = await Promise.allSettled([

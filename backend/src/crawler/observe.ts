@@ -276,8 +276,8 @@ export async function observeAppMap(
             .first()
             .innerText({ timeout: 1000 })
             .catch(() => '');
-          const trimmedH1 = firstH1.trim();
-          const visibleTexts = trimmedH1 ? [trimmedH1.slice(0, 120)] : [];
+          const normalizedH1 = normalizeObservedText(firstH1);
+          const visibleTexts = normalizedH1 ? [normalizedH1] : [];
 
           observations.push({
             kind: 'navigation',
@@ -327,7 +327,7 @@ export async function observeAppMap(
 
         const finalUrl = page.url();
         const title = await page.title().catch(() => null);
-        const visibleTexts = await page
+        const rawVisibleTexts = await page
           .evaluate(() => {
             const selectors = [
               '[role="alert"]',
@@ -341,19 +341,27 @@ export async function observeAppMap(
               if (texts.length >= 5) break;
               const txt = ((node as HTMLElement).innerText || node.textContent || '').trim();
               if (txt && !texts.includes(txt)) {
-                texts.push(txt.length > 120 ? txt.slice(0, 120) : txt);
+                texts.push(txt);
               }
             }
             const h1 = document.querySelector('h1');
             if (h1 && texts.length < 5) {
               const h1Text = (h1.innerText || h1.textContent || '').trim();
               if (h1Text && !texts.includes(h1Text)) {
-                texts.push(h1Text.length > 120 ? h1Text.slice(0, 120) : h1Text);
+                texts.push(h1Text);
               }
             }
             return texts;
           })
           .catch(() => []);
+
+        const visibleTexts: string[] = [];
+        for (const raw of rawVisibleTexts) {
+          const norm = normalizeObservedText(raw);
+          if (norm && !visibleTexts.includes(norm)) {
+            visibleTexts.push(norm);
+          }
+        }
 
         observations.push({
           kind: 'form_empty_submit',
@@ -412,9 +420,35 @@ export async function observeAppMap(
             }
 
             if (filledOk) {
+              const preSubmitUrl = page.url();
               const submitLoc = page.locator(submitEl.selectors.css).first();
               await submitLoc.click({ timeout: ACTION_TIMEOUT_MS });
-              await new Promise((r) => setTimeout(r, 800));
+
+              // Bounded readiness poll up to 3500ms (500ms initial wait, then 250ms polling)
+              await new Promise((r) => setTimeout(r, 500));
+              const waitDeadline = Date.now() + 3000;
+              while (Date.now() < waitDeadline && !isExpired() && !hardStopped) {
+                const currentUrl = page.url();
+                if (currentUrl !== preSubmitUrl) {
+                  break;
+                }
+                const hasAlert = await page
+                  .evaluate(() => {
+                    const sel = '[role="alert"], [class*="error" i], [class*="invalid" i], [class*="flash" i]';
+                    const nodes = Array.from(document.querySelectorAll(sel));
+                    return nodes.some((n) => {
+                      const txt = ((n as HTMLElement).innerText || n.textContent || '').trim();
+                      return txt.length > 0;
+                    });
+                  })
+                  .catch(() => false);
+                if (hasAlert) {
+                  break;
+                }
+                await new Promise((r) => setTimeout(r, 250));
+              }
+
+              await page.waitForLoadState('domcontentloaded', { timeout: 1500 }).catch(() => {});
               try {
                 await page.waitForLoadState('networkidle', { timeout: 2000 });
               } catch {
@@ -425,26 +459,38 @@ export async function observeAppMap(
               const title = await page.title().catch(() => null);
               const rawVisibleTexts = await page
                 .evaluate(() => {
-                  const selectors = [
+                  const alertSelectors = [
                     '[role="alert"]',
                     '[class*="error" i]',
                     '[class*="invalid" i]',
                     '[class*="flash" i]',
                   ];
-                  const nodes = Array.from(document.querySelectorAll(selectors.join(', ')));
+                  const alertNodes = Array.from(document.querySelectorAll(alertSelectors.join(', ')));
                   const texts: string[] = [];
-                  for (const node of nodes) {
+                  for (const node of alertNodes) {
                     if (texts.length >= 5) break;
                     const txt = ((node as HTMLElement).innerText || node.textContent || '').trim();
                     if (txt && !texts.includes(txt)) {
-                      texts.push(txt.length > 120 ? txt.slice(0, 120) : txt);
+                      texts.push(txt);
                     }
                   }
-                  const h1 = document.querySelector('h1');
-                  if (h1 && texts.length < 5) {
-                    const h1Text = (h1.innerText || h1.textContent || '').trim();
-                    if (h1Text && !texts.includes(h1Text)) {
-                      texts.push(h1Text.length > 120 ? h1Text.slice(0, 120) : h1Text);
+
+                  // Also check primary headings/titles for visible non-empty text (<= 80 chars, no newlines)
+                  if (texts.length < 5) {
+                    const headingSelectors = [
+                      'h1',
+                      'h2',
+                      '[role="heading"]',
+                      '[data-test="title"]',
+                      '[class*="title" i]',
+                    ];
+                    const headingNodes = Array.from(document.querySelectorAll(headingSelectors.join(', ')));
+                    for (const node of headingNodes) {
+                      if (texts.length >= 5) break;
+                      const txt = ((node as HTMLElement).innerText || node.textContent || '').trim();
+                      if (txt && txt.length <= 80 && !txt.includes('\n') && !texts.includes(txt)) {
+                        texts.push(txt);
+                      }
                     }
                   }
                   return texts;
@@ -452,9 +498,14 @@ export async function observeAppMap(
                 .catch(() => []);
 
               const finalUrl = scrubSecrets(rawFinalUrl, resolvedData.secrets);
-              const visibleTexts = rawVisibleTexts.map((t) =>
-                scrubSecrets(t, resolvedData.secrets),
-              );
+              const visibleTexts: string[] = [];
+              for (const raw of rawVisibleTexts) {
+                const scrubbed = scrubSecrets(raw, resolvedData.secrets);
+                const norm = normalizeObservedText(scrubbed);
+                if (norm && !visibleTexts.includes(norm)) {
+                  visibleTexts.push(norm);
+                }
+              }
 
               observations.push({
                 kind: 'form_filled_submit',

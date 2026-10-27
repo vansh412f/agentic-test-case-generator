@@ -81,8 +81,7 @@ export function resolveTestData(
     promptBlock = [
       'TEST DATA TO FILL:',
       ...promptLines,
-      '',
-      'Use these exact values for fill/select steps on these elements. Values like __AGT_SECRET_1__ are secret placeholders: copy verbatim, never alter them, never use them in assert steps. Include a case that completes a form with these values ONLY when OBSERVED FACTS contain a form_filled_submit observation for that form, asserting the observed outcome; otherwise cover the form with negative/validation cases.',
+      'Use these exact values for fill/select steps on these elements. Values like __AGT_SECRET_1__ are secret placeholders: copy verbatim, never alter them, never use them in assert steps. MANDATORY HAPPY PATH: Whenever TEST DATA provides values covering all visible inputs of a login or submission form, tc-1 MUST be the end-to-end happy-path submission using these exact TEST DATA values. When OBSERVED FACTS contain a form_filled_submit observation for that form whose URL changed or that produced non-error post-submit text, assert that observed finalUrl (assert_url) and/or visibleText (assert_visible). If form_filled_submit is absent or stayed on the same URL without an error message (e.g., in-place SPA login), assert a grounded post-submit state such as assert_hidden on the password input or assert_visible on observed post-submit text — never invent ungrounded URLs like /dashboard.',
     ].join('\n');
   }
 

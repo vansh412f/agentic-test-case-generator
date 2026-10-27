@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { urlAssertPattern, compileTest } from '../src/agent/steps/compiler.ts';
 import { classifyExecutionError } from '../src/runner/executor.ts';
-import { isSkipLink } from '../src/crawler/appMapBuilder.ts';
+import { isSkipLink, buildAppMap } from '../src/crawler/appMapBuilder.ts';
 import { planTests } from '../src/agent/steps/planner.ts';
 import { buildBaselineTests } from '../src/agent/baseline.ts';
 import { crawlPage } from '../src/crawler/pageCrawler.ts';
 import { observeAppMap, normalizeObservedText, isObservableHref } from '../src/crawler/observe.ts';
+import { resolveTestData } from '../src/agent/testData.ts';
 import type { AppMap, InteractiveElement, Observation } from '../src/crawler/types.ts';
 import type { TestDataEntry } from '../src/api/schemas.ts';
 import type { LlmRequest } from '../src/llm/client.ts';
@@ -450,6 +451,200 @@ async function main() {
     assert.equal(isObservableHref('javascript:void(0)', base), false, 'javascript: → false');
     assert.equal(isObservableHref('mailto:a@b.c', base), false, 'mailto: → false');
     assert.equal(isObservableHref('http://', base), false, 'unparseable garbage → false');
+  });
+
+  // ---------------------------------------------------------------------------
+  // P11: buildAppMap fallback submit button resolution (button[type="button"])
+  // ---------------------------------------------------------------------------
+  await run('P11: buildAppMap button[type="button"] submit button fallback and exclusion', () => {
+    const appMap = buildAppMap({
+      url: 'https://example.com/login',
+      viewport: { width: 1280, height: 720 },
+      extraction: {
+        title: 'Login',
+        elements: [
+          {
+            tagName: 'input',
+            type: 'input',
+            inputType: 'text',
+            text: null,
+            name: 'username',
+            formIndex: 0,
+            isSubmitControl: false,
+            isVisible: true,
+            isEnabled: true,
+            detectedBy: 'native',
+            selectors: { css: '#user' },
+          },
+          {
+            tagName: 'input',
+            type: 'input',
+            inputType: 'password',
+            text: null,
+            name: 'password',
+            formIndex: 0,
+            isSubmitControl: false,
+            isVisible: true,
+            isEnabled: true,
+            detectedBy: 'native',
+            selectors: { css: '#pass' },
+          },
+          {
+            tagName: 'button',
+            type: 'button',
+            text: 'Show password',
+            formIndex: 0,
+            isSubmitControl: false,
+            isVisible: true,
+            isEnabled: true,
+            detectedBy: 'native',
+            selectors: { css: '#show-btn' },
+          },
+          {
+            tagName: 'button',
+            type: 'button',
+            text: 'Continue with Google',
+            formIndex: 0,
+            isSubmitControl: false,
+            isVisible: true,
+            isEnabled: true,
+            detectedBy: 'native',
+            selectors: { css: '#google-btn' },
+          },
+          {
+            tagName: 'button',
+            type: 'button',
+            text: 'Sign In',
+            formIndex: 0,
+            isSubmitControl: false,
+            isVisible: true,
+            isEnabled: true,
+            detectedBy: 'native',
+            selectors: { css: '#signin-btn' },
+          },
+        ],
+        forms: [
+          {
+            name: 'loginForm',
+            action: '/api/login',
+            method: 'post',
+          },
+        ],
+        links: [],
+        totalFound: 5,
+        truncated: false,
+      },
+    });
+
+    assert.equal(appMap.forms.length, 1, 'Exactly 1 form must be built');
+    assert.equal(appMap.forms[0].submitButtonId, 'elem-5', 'Sign In button must be resolved as submit control');
+    assert.equal(appMap.forms[0].purpose, 'login', 'Form purpose must be login');
+  });
+
+  // ---------------------------------------------------------------------------
+  // P12: buildAppMap virtual auth form synthesis for formless React/SPA login cards
+  // ---------------------------------------------------------------------------
+  await run('P12: buildAppMap virtual auth form synthesis for formless login card', () => {
+    const appMap = buildAppMap({
+      url: 'https://example.com/spa-login',
+      viewport: { width: 1280, height: 720 },
+      extraction: {
+        title: 'SPA Login',
+        elements: [
+          {
+            tagName: 'input',
+            type: 'input',
+            inputType: 'text',
+            text: null,
+            name: 'username',
+            formIndex: null,
+            isSubmitControl: false,
+            isVisible: true,
+            isEnabled: true,
+            detectedBy: 'native',
+            selectors: { css: '#user' },
+          },
+          {
+            tagName: 'input',
+            type: 'input',
+            inputType: 'password',
+            text: null,
+            name: 'password',
+            formIndex: null,
+            isSubmitControl: false,
+            isVisible: true,
+            isEnabled: true,
+            detectedBy: 'native',
+            selectors: { css: '#pass' },
+          },
+          {
+            tagName: 'button',
+            type: 'button',
+            text: 'Log In',
+            formIndex: null,
+            isSubmitControl: false,
+            isVisible: true,
+            isEnabled: true,
+            detectedBy: 'native',
+            selectors: { css: '#login-btn' },
+          },
+        ],
+        forms: [],
+        links: [],
+        totalFound: 3,
+        truncated: false,
+      },
+    });
+
+    assert.equal(appMap.forms.length, 1, 'Virtual auth form must be synthesized');
+    assert.equal(appMap.forms[0].purpose, 'login', 'Virtual form purpose must be login');
+    assert.deepEqual(appMap.forms[0].fieldIds, ['elem-1', 'elem-2'], 'Must capture username and password fields');
+    assert.equal(appMap.forms[0].submitButtonId, 'elem-3', 'Must assign Log In button as submitButtonId');
+  });
+
+  // ---------------------------------------------------------------------------
+  // P13: resolveTestData mandatory happy-path promptBlock rules
+  // ---------------------------------------------------------------------------
+  await run('P13: resolveTestData includes MANDATORY HAPPY PATH tc-1 rule', () => {
+    const usernameEl = makeElement('elem-1', {
+      type: 'input',
+      text: null,
+      name: 'username',
+      selectors: { css: '#username' },
+    });
+    const passwordEl = makeElement('elem-2', {
+      type: 'input',
+      text: null,
+      name: 'password',
+      selectors: { css: '#password' },
+    });
+
+    const appMap = makeAppMap({
+      elements: [usernameEl, passwordEl],
+      forms: [
+        {
+          id: 'form-1',
+          name: 'loginForm',
+          action: '/login',
+          method: 'post',
+          purpose: 'login',
+          fieldIds: ['elem-1', 'elem-2'],
+          submitButtonId: 'elem-3',
+        },
+      ],
+      totalElementsFound: 2,
+    });
+
+    const entries: TestDataEntry[] = [
+      { elementId: 'elem-1', css: '#username', value: 'tomsmith', sensitive: false },
+      { elementId: 'elem-2', css: '#password', value: 'SuperSecret!', sensitive: true },
+    ];
+
+    const resolved = resolveTestData(appMap, entries);
+    assert.ok(resolved.promptBlock.includes('MANDATORY HAPPY PATH'), 'Must contain MANDATORY HAPPY PATH header');
+    assert.ok(resolved.promptBlock.includes('tc-1 MUST be the end-to-end happy-path submission'), 'Must instruct tc-1 happy path');
+    assert.ok(resolved.fills.has('elem-1'), 'Must have fill for username');
+    assert.ok(resolved.fills.has('elem-2'), 'Must have fill for password');
   });
 
   // ---------------------------------------------------------------------------

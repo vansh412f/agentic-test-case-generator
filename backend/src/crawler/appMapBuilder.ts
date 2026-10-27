@@ -36,6 +36,8 @@ interface IdentifiedElement {
 const FORM_FIELD_TYPES = new Set<ElementType>(['input', 'textarea', 'select', 'checkbox', 'radio']);
 
 const SIGNUP_SUBMIT_TEXT = /sign\s?up|register|create (an )?account|join/i;
+const AUTH_SUBMIT_BUTTON_TEXT = /\b(log\s*in|sign\s*in|submit|continue|enter|next|verify|sign\s*up|register|create\s*(an\s*)?account)\b/i;
+const NON_SUBMIT_BUTTON_TEXT = /\b(google|github|apple|facebook|microsoft|gitlab|sso|oauth|passkey|forgot|reset|cancel|clear|close|back|show|hide|toggle|visibility|eye)\b/i;
 
 const ASSET_PATH_REGEX = /\.(pdf|jpe?g|png|gif|svg|webp|ico|zip|mp4|mp3|css|js|xml|json|txt)$/i;
 
@@ -140,10 +142,28 @@ export function classifyFormPurpose(
 }
 
 function buildForms(rawForms: RawForm[], elements: IdentifiedElement[]): Form[] {
-  return rawForms.map((rawForm, formIndex) => {
+  const forms: Form[] = rawForms.map((rawForm, formIndex) => {
     const members = elements.filter(({ raw }) => raw.formIndex === formIndex);
     const fields = members.filter(({ raw }) => FORM_FIELD_TYPES.has(raw.type));
-    const submitControl = members.find(({ raw }) => raw.isSubmitControl);
+    let submitControl = members.find(({ raw }) => raw.isSubmitControl);
+
+    // 1. Fallback submit button inside <form> when type="button" was used instead of type="submit"
+    if (!submitControl) {
+      const candidateButtons = members.filter(
+        ({ raw }) =>
+          raw.isVisible &&
+          raw.type === 'button' &&
+          !NON_SUBMIT_BUTTON_TEXT.test((raw.text ?? raw.ariaLabel ?? '').trim()),
+      );
+      const authMatch = candidateButtons.find(({ raw }) =>
+        AUTH_SUBMIT_BUTTON_TEXT.test((raw.text ?? raw.ariaLabel ?? '').trim()),
+      );
+      if (authMatch) {
+        submitControl = authMatch;
+      } else if (fields.length > 0 && candidateButtons.length === 1) {
+        submitControl = candidateButtons[0];
+      }
+    }
 
     return {
       id: rawForm.domId ?? `form-${formIndex + 1}`,
@@ -155,6 +175,71 @@ function buildForms(rawForms: RawForm[], elements: IdentifiedElement[]): Form[] 
       submitButtonId: submitControl?.id ?? null,
     };
   });
+
+  // 2. Synthesize a virtual auth Form for formless React/SPA login cards (raw.formIndex === null)
+  const existingFieldIds = new Set<string>();
+  for (const f of forms) {
+    for (const fid of f.fieldIds) {
+      existingFieldIds.add(fid);
+    }
+  }
+
+  const ungroupedPasswordEls = elements
+    .map((el, index) => ({ el, index }))
+    .filter(
+      ({ el }) =>
+        el.raw.formIndex === null &&
+        el.raw.isVisible &&
+        el.raw.type === 'input' &&
+        (el.raw.inputType ?? '').toLowerCase() === 'password' &&
+        !existingFieldIds.has(el.id),
+    );
+
+  if (ungroupedPasswordEls.length >= 1) {
+    const firstPwIdx = ungroupedPasswordEls[0].index;
+    const lastPwIdx = ungroupedPasswordEls[ungroupedPasswordEls.length - 1].index;
+
+    // Nearby text-entry fields within [Math.max(0, firstPwIdx - 4), lastPwIdx]
+    const minIdx = Math.max(0, firstPwIdx - 4);
+    const textEntryTypes = ['text', 'email', 'tel', 'number', 'password'];
+    const nearbyFields = elements
+      .slice(minIdx, lastPwIdx + 1)
+      .filter(
+        (el) =>
+          el.raw.formIndex === null &&
+          el.raw.isVisible &&
+          el.raw.type === 'input' &&
+          textEntryTypes.includes((el.raw.inputType ?? 'text').toLowerCase()) &&
+          (el.raw.inputType ?? 'text').toLowerCase() !== 'search' &&
+          !existingFieldIds.has(el.id),
+      );
+
+    // Nearby submit button at index > lastPwIdx (within lastPwIdx + 6)
+    const submitButton = elements.slice(lastPwIdx + 1, lastPwIdx + 7).find((el) => {
+      if (el.raw.formIndex !== null || !el.raw.isVisible) return false;
+      const isButton = el.raw.type === 'button' || el.raw.isSubmitControl;
+      if (!isButton) return false;
+      const label = (el.raw.text ?? el.raw.ariaLabel ?? '').trim();
+      return AUTH_SUBMIT_BUTTON_TEXT.test(label) && !NON_SUBMIT_BUTTON_TEXT.test(label);
+    });
+
+    if (nearbyFields.length >= 1 && submitButton) {
+      forms.push({
+        id: `form-auth-${forms.length + 1}`,
+        name: null,
+        action: null,
+        method: 'post',
+        purpose:
+          ungroupedPasswordEls.length >= 2 || SIGNUP_SUBMIT_TEXT.test(submitButton.raw.text ?? '')
+            ? 'signup'
+            : 'login',
+        fieldIds: nearbyFields.map((f) => f.id),
+        submitButtonId: submitButton.id,
+      });
+    }
+  }
+
+  return forms;
 }
 
 export function filterInternalLinks(
