@@ -652,8 +652,6 @@ cd frontend && pnpm dev
 | `BROWSER_WS_ENDPOINT` | *(none)* | Optional (Required for remote Cloud Run) | Remote Playwright WebSocket endpoint (`wss://<service>.a.run.app/chromium/playwright`). Bypassed when `LOCAL_AGENT_MODE=true`. |
 | `BROWSER_WS_TOKEN` | *(none)* | Yes if endpoint set | Authentication token for remote Playwright WebSocket (min 24 chars, 32+ recommended) |
 | `CORS_PREVIEW_ORIGIN_REGEX` | *(none)* | No | Regular expression pattern for dynamically allowed preview origins |
-| `RETENTION_DAYS` | `30` | No | Days after which jobs are deleted by the daily retention sweep (read in `backend/src/maintenance/expireOldJobs.ts`, outside `config.ts`) |
-| `SAMPLE_JOB_IDS` | *(none)* | No | Comma-separated job IDs excluded from the retention sweep and preserved past expiry (read in `backend/src/maintenance/expireOldJobs.ts`, outside `config.ts`) |
 
 </details>
 
@@ -835,7 +833,7 @@ erDiagram
 
 | Storage Layer | Technology / Location | State Maintained | Lifecycle / Retention Policy | Security & Isolation Model |
 |---|---|---|---|---|
-| **Persistent Relational DB** | Supabase PostgreSQL (PgBouncer `:6543`) | Jobs, agent steps, test plans, generated test code, execution results, server events | 30-day retention sweep (`expireOldJobs.ts`); `SAMPLE_JOB_IDS` exempt | SSL required; secrets replaced with `__AGT_SECRET_n__` tokens |
+| **Persistent Relational DB** | Supabase PostgreSQL (PgBouncer `:6543`) | Jobs, agent steps, test plans, generated test code, execution results, server events | Retained indefinitely (no automatic expiry); manual removal on request | SSL required; secrets replaced with `__AGT_SECRET_n__` tokens |
 | **Ephemeral Disk Storage** | Render Backend Container (`.traces/`, `tests/run-*`) | Playwright trace zips, temporary execution files and test specs | Max 200 traces, 256 MiB total cap, 25 MiB single trace limit, FIFO eviction by `createdAt`, 1-hour TTL; run dirs deleted on run completion | Traces served only via HMAC-signed 10-minute owner tokens; runner sandboxed under UID 1001 |
 | **Remote Browser Runtime** | Google Cloud Run (`us-west1` Always Free) | Ephemeral Chromium browser contexts, active tabs, `/tmp` session storage | Destroyed immediately on WebSocket disconnect; service scales to zero ~15s after socket teardown | Zero-IAM SA (`agt-browser-sa`), SHA-256 token upgrade authentication, connect-time DNS pinning egress proxy |
 | **In-Memory Backend State** | Node.js Process Memory | In-flight run queue, active SSE connection listeners, plan cache (keyed by normalized URL + element hash), ALTCHA replay cache (10 min TTL), visitor token-bucket budget reservations | Process lifetime; caches have explicit TTLs (plan cache: 6 hours / 100 entries); cleared on container restart | In-memory only; non-shared across instances |
@@ -958,13 +956,15 @@ pnpm lint
 pnpm build
 cd ..
 
-# 6. Execute live verification scripts (Backend must be configured)
+# 6. Execute verification suites (all 19 suites run automatically in .github/workflows/ci.yml against an ephemeral PostgreSQL instance)
 cd backend
-npx tsx scratch/testPhase9A1.ts            # Validates code safety AST rules and UID runner sandboxing
-npx tsx scratch/testAssertionGuard.ts      # Validates assertion preservation logic
-npx tsx scratch/testQuickFixes.ts           # Validates error mapping and URL transformation safety
-npx tsx scratch/testContainerHardening.ts   # Validates memory limits and HeavyOpGate concurrency
-npx tsx scratch/testRemoteBrowser.ts        # Validates remote Cloud Run browser integration (RB1-RB6)
+npx tsx scratch/sandboxAndCorsHardening.test.ts        # Validates code safety AST rules and UID runner sandboxing
+npx tsx scratch/assertionGuard.test.ts                 # Validates assertion preservation logic
+npx tsx scratch/urlNormalizationAndErrorMapping.test.ts # Validates error mapping and URL transformation safety
+npx tsx scratch/containerHardening.test.ts            # Validates memory limits and HeavyOpGate concurrency
+npx tsx scratch/remoteBrowserWs.test.ts                 # Validates remote Cloud Run browser integration (RB1-RB6)
+npx tsx scratch/plannerGuardsAndNormalization.test.ts   # Validates planner password and locator guards
+npx tsx scratch/providerFallbackChains.test.ts          # Validates LLM provider fallback routing
 ```
 
 ---
@@ -997,7 +997,7 @@ This application is designed to operate continuously across free hosting allocat
        --min-instances=0 \
        --max-instances=1 \
        --timeout=300 \
-       --no-cpu-throttling=false \
+       --cpu-throttling \
        --service-account=agt-browser-sa@<PROJECT_ID>.iam.gserviceaccount.com \
        --set-env-vars="BROWSER_WS_TOKEN=<MIN_32_CHAR_RANDOM_TOKEN>" \
        --allow-unauthenticated

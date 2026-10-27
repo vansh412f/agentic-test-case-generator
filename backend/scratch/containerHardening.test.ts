@@ -385,6 +385,7 @@ test('tc-h2 loads hero', async ({ page }) => {
     process.exit(1);
   } else {
     console.log('\nALL TESTS PASSED');
+    process.exit(0);
   }
 }
 

@@ -10,30 +10,32 @@ const sections = [
     ],
   },
   {
-    title: 'Authentication',
+    title: 'Authentication and page test data',
     body: [
-      'The crawler cannot log in to your application. To generate tests for authenticated journeys, provide a staging or preview URL that is accessible without an active session or credentials.',
+      'Initial DOM discovery crawls the submitted URL directly without pre-existing session cookies. You can supply per-page form inputs and login credentials on the crawl preview screen before generating tests.',
+      'Values marked as secret are replaced with __AGT_SECRET_n__ placeholders before planning or storage and injected only into ephemeral spec files at execution time. Password fields without user-supplied values are never filled with invented passwords and are covered only with empty/validation scenarios.',
     ],
   },
   {
     title: 'How tests run',
     body: [
-      'Tests execute in headless Chromium at a fixed viewport of 1280×720 with a 15-second timeout per test.',
-      'The agent performs at most 2 automatic self-corrections per test. Corrections only adjust selectors, waits, and timing to resolve mechanical flakiness; they never modify or weaken test assertions. Tests that continue to fail after corrections are reported as genuine findings.',
+      'Tests execute in headless Chromium at a fixed viewport of 1280×720. Hosted test executions run inside an isolated Google Cloud Run browser container with a 30-second per-test timeout under RUNNER_TIMEOUT_SCALE=2 (local default is 15 seconds).',
+      'The agent performs at most 2 automatic self-corrections per test (up to 3 total attempts). Corrections only adjust selectors, waits, and timing to resolve mechanical flakiness; AST guards prevent modifications to test assertions, and unresolved assertion discrepancies are reported as findings.',
+      'Every execution attempt captures an owner-only Playwright trace archive retained in ephemeral storage for 1 hour (capped at 200 traces / 256 MiB FIFO eviction).',
     ],
   },
   {
-    title: 'AI-generated output',
+    title: 'Generated test output',
     body: [
-      'Because test plans and code are synthesized by large language models, outputs may vary between runs. Review all generated tests before adding them to continuous integration pipelines.',
+      'Because test plans and fallback specs are synthesized using hosted language models, outputs can vary across runs. Review all generated tests before adding them to continuous integration pipelines.',
       'Tests may submit forms or click interactive buttons that could alter application state.',
     ],
   },
   {
     title: 'Free hosting',
     body: [
-      'On free-tier hosting deployments, the server may sleep when idle; the first request can take up to a minute to wake up. Shared daily quotas apply unless you supply your own Groq or Gemini API key.',
-      'Any test run in progress during a server deployment or restart is marked as failed.',
+      'On hosted deployments, the API server stays warm via health monitoring while the isolated remote Chromium container scales to zero when idle (adding ~1–2 seconds on cold wake). Shared daily limits (8 runs per visitor, 20 per IP, 40 global) apply unless you supply your own Groq or Google Gemini key (held only in your browser sessionStorage for the active tab).',
+      'Any test run in progress during a backend deployment or restart is marked as failed.',
     ],
   },
   {
@@ -44,11 +46,11 @@ const sections = [
     ],
   },
   {
-    title: 'What is sent to free LLM providers',
+    title: 'What is sent to model providers',
     body: [
-      'During planning and self-correction, page structure (elements, attributes, form outlines) and non-sensitive test data are sent to LLM providers.',
-      'Google Gemini free tier and certain third-party LLM providers may use submitted prompts and outputs to train or improve their models.',
-      'Sensitive test values marked as secrets are never sent to any LLM provider. They are replaced by placeholder tokens before prompt generation and only injected into test runners in memory at execution time.',
+      'During automated test planning and repair passes, page element summaries, structural outlines, and non-secret test data are sent to configured model providers (Groq and Google Gemini).',
+      'Free-tier model provider policies may log or retain prompts and outputs unless you use paid BYOK accounts.',
+      'Sensitive values marked as secrets are never sent to model providers. They are masked via __AGT_SECRET_n__ placeholders before any external model call and substituted strictly in memory during execution.',
     ],
   },
 ];
@@ -57,7 +59,7 @@ export default function LimitationsPage() {
   return (
     <>
       <Seo
-        description="Known limitations and operational scope of Agentic Test Case Generator, covering crawling, authentication, test execution, AI generation, and local access."
+        description="Known limitations and operational scope of Agentic Test Case Generator, covering crawling, authentication, test execution, automated test generation, and local access."
         path="/limitations"
         title="Known Limitations — Agentic Test Case Generator"
       />

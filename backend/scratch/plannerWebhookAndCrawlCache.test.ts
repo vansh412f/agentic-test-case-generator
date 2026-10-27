@@ -71,11 +71,15 @@ async function runTests() {
     assert.ok(hit1 !== null);
     assert.equal(hit1.url, map.url);
 
+    // Re-insert to test hit via final URL (since takeFreshCrawl consumes entry)
+    rememberCrawl('https://example.com/page#section', map);
+
     // Hit via final URL
     const hit2 = takeFreshCrawl('https://example.com/page/');
     assert.ok(hit2 !== null);
 
     // Mutating returned map doesn't affect cache
+    rememberCrawl('https://example.com/page#section', map);
     hit1.title = 'Mutated Title';
     const hit3 = takeFreshCrawl('https://example.com/page');
     assert.equal(hit3?.title, map.title);

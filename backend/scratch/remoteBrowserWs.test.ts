@@ -327,6 +327,12 @@ async function main(): Promise<void> {
   // RB5: Live Integrated Production Path -> Cloud Run
   // ──────────────────────────────────────────────────────────
   await run('RB5 Live Integrated Production Path -> Cloud Run agt-playwright-ws', async () => {
+    if (process.env.REMOTE_BROWSER_LIVE !== '1') {
+      console.log('  [SKIP] RB5 live Cloud Run test skipped (set REMOTE_BROWSER_LIVE=1)');
+      pass('RB5 Live Integrated Production Path -> Cloud Run agt-playwright-ws (skipped)');
+      return;
+    }
+
     // Read environment from backend/.env if not present in process.env
     const envPath = path.resolve(import.meta.dirname, '../.env');
     if (fsSync.existsSync(envPath)) {
@@ -583,6 +589,7 @@ async function main(): Promise<void> {
   console.log('\n====================================================');
   if (failures === 0) {
     console.log(' ALL REMOTE BROWSER TESTS (RB1 - RB6) PASSED');
+    process.exit(0);
   } else {
     console.error(` ${failures} TEST(S) FAILED`);
     process.exit(1);

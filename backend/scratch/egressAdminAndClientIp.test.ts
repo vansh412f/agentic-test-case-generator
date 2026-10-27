@@ -323,7 +323,7 @@ async function testProductionConfigValidation() {
   const exitCode = await new Promise<number | null>((resolve) => {
     const child = spawn(
       process.execPath,
-      ['-e', `
+      ['--import', 'tsx', '-e', `
         process.env.NODE_ENV = 'production';
         process.env.LOCAL_AGENT_MODE = 'false';
         delete process.env.VISITOR_SIGNING_SECRET;
@@ -501,9 +501,27 @@ async function runAll() {
   console.log('\n====================================================');
   console.log('  ALL PHASE 9A TESTS PASSED (WP1, WP3, WP4, WP5)');
   console.log('====================================================');
+
+  try {
+    const { stopEgressProxy } = await import('../src/security/egressProxy.ts');
+    await stopEgressProxy();
+  } catch {}
+
+  try {
+    await prisma.$disconnect();
+  } catch {}
+
+  process.exit(0);
 }
 
-runAll().catch((err) => {
+runAll().catch(async (err) => {
   console.error('\n❌ PHASE 9A TEST SUITE FAILED:', err);
+  try {
+    const { stopEgressProxy } = await import('../src/security/egressProxy.ts');
+    await stopEgressProxy();
+  } catch {}
+  try {
+    await prisma.$disconnect();
+  } catch {}
   process.exit(1);
 });

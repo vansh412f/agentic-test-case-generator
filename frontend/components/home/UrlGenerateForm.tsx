@@ -99,12 +99,12 @@ export function UrlGenerateForm({
         <button
           type="button"
           onClick={() =>
-            setValue('url', 'http://localhost:3000', {
+            setValue('url', 'https://www.saucedemo.com/', {
               shouldValidate: true,
             })
           }
         >
-          localhost demo
+          saucedemo
         </button>
       </p>
     </form>

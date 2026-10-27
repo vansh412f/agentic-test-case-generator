@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend — Typecheck, Lint & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm 10
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: Typecheck frontend
+        run: pnpm --dir frontend typecheck
+
+      - name: Lint frontend
+        run: pnpm --dir frontend lint
+
+      - name: Build frontend production bundle
+        run: pnpm --dir frontend build
+
+  backend:
+    name: Backend — Build & Regression Suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agt_ci
+        ports:
+          - '5432:5432'
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agt_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agt_ci
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/agt_ci
+      NODE_ENV: development
+      LOCAL_AGENT_MODE: 'false'
+      RUNNER_ISOLATION: none
+      VISITOR_SIGNING_SECRET: ci-visitor-signing-secret-0123456789
+      POW_SECRET: ci-pow-signing-secret-0123456789
+      ADMIN_SECRET: ci-admin-secret-at-least-24-characters-long
+      EDGE_SHARED_SECRET: ci-edge-shared-secret-at-least-24-chars
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm 10
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Install backend & runner dependencies
+        run: pnpm --dir backend install --frozen-lockfile
+
+      - name: Generate Prisma client & push schema to ephemeral Postgres
+        run: pnpm --dir backend exec prisma generate && pnpm --dir backend exec prisma db push --skip-generate
+
+      - name: Install Playwright headless Chromium
+        run: pnpm --dir backend exec playwright install --with-deps chromium-headless-shell
+
+      - name: Typecheck & build backend
+        run: pnpm --dir backend typecheck && pnpm --dir backend build
+
+      - name: Suite 01 — Assertion Guard
+        working-directory: backend
+        run: npx tsx scratch/assertionGuard.test.ts
+
+      - name: Suite 02 — Token Usage & Confidence Scoring
+        working-directory: backend
+        run: npx tsx scratch/tokenAndConfidenceScoring.test.ts
+
+      - name: Suite 03 — Visitor Token, Daily Budget & ALTCHA PoW
+        working-directory: backend
+        run: npx tsx scratch/visitorBudgetAndPow.test.ts
+
+      - name: Suite 04 — SSE Job Events & Detached Runner
+        working-directory: backend
+        run: npx tsx scratch/jobEventsAndDetachedRunner.test.ts
+
+      - name: Suite 05 — Egress Proxy, Admin Auth & Client IP
+        working-directory: backend
+        run: npx tsx scratch/egressAdminAndClientIp.test.ts
+
+      - name: Suite 06 — Code Safety AST, Runner Isolation & CORS
+        working-directory: backend
+        run: npx tsx scratch/sandboxAndCorsHardening.test.ts
+
+      - name: Suite 07 — Planner Schema, Webhooks & Crawl Cache
+        working-directory: backend
+        run: npx tsx scratch/plannerWebhookAndCrawlCache.test.ts
+
+      - name: Suite 08 — Run Queue, Cancellation, Compiler & ZIP Export
+        working-directory: backend
+        run: npx tsx scratch/queueCancelCompilerAndExport.test.ts
+
+      - name: Suite 09 — Self-Healing Rounds, SSRF & Slim Job DB
+        working-directory: backend
+        run: npx tsx scratch/roundsSsrfAndSlimJobDb.test.ts
+
+      - name: Suite 10 — BYOK Isolation, Plan Cache & Secret Redaction
+        working-directory: backend
+        run: npx tsx scratch/byokCompilerAndPlanCache.test.ts
+
+      - name: Suite 11 — URL Patterns & Form Observation
+        working-directory: backend
+        run: npx tsx scratch/urlPatternAndObservation.test.ts
+
+      - name: Suite 12 — Planner Password & Locator Guards
+        working-directory: backend
+        run: npx tsx scratch/plannerGuardsAndNormalization.test.ts
+
+      - name: Suite 13 — Bot-Wall Detection, Link Filtering & Failure Summary
+        working-directory: backend
+        run: npx tsx scratch/botWallLinksAndFailureSummary.test.ts
+
+      - name: Suite 14 — URL Normalization & Error Mapping
+        working-directory: backend
+        run: npx tsx scratch/urlNormalizationAndErrorMapping.test.ts
+
+      - name: Suite 15 — Provider Model Fallback Chains
+        working-directory: backend
+        run: npx tsx scratch/providerFallbackChains.test.ts
+
+      - name: Suite 16 — Scoped Concurrent Runner Validation
+        working-directory: backend
+        run: npx tsx scratch/runnerScopedValidation.test.ts
+
+      - name: Suite 17 — Trace Store TTL, Byte Caps & Ownership
+        working-directory: backend
+        run: npx tsx scratch/traceStoreRetention.test.ts
+
+      - name: Suite 18 — Container Memory & HeavyOpGate Hardening
+        working-directory: backend
+        env:
+          LOCAL_AGENT_MODE: 'true'
+        run: npx tsx scratch/containerHardening.test.ts
+
+      - name: Suite 19 — Remote Browser WebSocket & Href Compaction
+        working-directory: backend
+        env:
+          LOCAL_AGENT_MODE: 'true'
+        run: npx tsx scratch/remoteBrowserWs.test.ts

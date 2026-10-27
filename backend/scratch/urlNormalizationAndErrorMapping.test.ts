@@ -406,7 +406,17 @@ async function main() {
   console.log('\n=== ALL QUICK-FIX SUITE TESTS PASSED ===');
 }
 
-main().catch((err) => {
-  console.error('\n❌ Quick-fix suite failed:', err);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('\n❌ Quick-fix suite failed:', err);
+    process.exit(1);
+  })
+  .finally(async () => {
+    try {
+      const { prisma } = await import('../src/db/client.ts');
+      await prisma.$disconnect();
+    } catch {}
+  });

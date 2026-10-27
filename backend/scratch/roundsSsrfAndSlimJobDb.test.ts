@@ -626,7 +626,6 @@ async function testCostAndEgressWP7() {
   const { config } = await import('../src/config.ts');
   const { prisma } = await import('../src/db/client.ts');
   const { getJobDetailView, getJobById } = await import('../src/db/jobs.ts');
-  const { runRetention } = await import('../src/maintenance/expireOldJobs.ts');
 
   // 1. Config default
   assert.equal(config.JOB_TOKEN_BUDGET, 40000, 'JOB_TOKEN_BUDGET default should be 40000');
@@ -673,12 +672,6 @@ async function testCostAndEgressWP7() {
   assert.ok(fullJob?.appMap, 'getJobById must retain appMap for export/reports');
   assert.equal(fullJob?.generatedTests[0]?.executionResults[1]?.code, '// attempt 2 code', 'getJobById retains all code');
   console.log('✓ getJobDetailView strips appMap and intermediate attempt code while preserving attempt 1 diff');
-
-  // 3. Retention run
-  const retentionRes = await runRetention();
-  assert.ok(typeof retentionRes.deletedJobs === 'number');
-  assert.ok(typeof retentionRes.truncatedAttempts === 'number');
-  console.log(`✓ runRetention ran successfully (deleted: ${retentionRes.deletedJobs}, truncated: ${retentionRes.truncatedAttempts})`);
 
   await prisma.job.delete({ where: { id: testJobId } });
   console.log('\n✓ Test 10 passed\n');
@@ -823,8 +816,18 @@ async function main() {
   console.log('All WP1 to WP7 and 11.1C.2 follow-up tests passed successfully!');
 }
 
-main().catch((err) => {
-  console.error('Test Failed:', err);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('Test Failed:', err);
+    process.exit(1);
+  })
+  .finally(async () => {
+    try {
+      const { prisma } = await import('../src/db/client.ts');
+      await prisma.$disconnect();
+    } catch {}
+  });
 

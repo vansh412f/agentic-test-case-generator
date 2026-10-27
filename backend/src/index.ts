@@ -8,7 +8,6 @@ import { inFlightJobs } from './agent/jobRunner.ts';
 import { publishJobEvent } from './agent/jobEvents.ts';
 import { closeAllJobStreams } from './api/jobStream.ts';
 import { reconcileOrphanedJobs } from './maintenance/reconcileJobs.ts';
-import { runRetention } from './maintenance/expireOldJobs.ts';
 import { recordServerEvent } from './observability/serverEvents.ts';
 import { logger } from './observability/logger.ts';
 import { toHttpError } from './api/errors.ts';
@@ -228,17 +227,6 @@ if (isDirectRun) {
       logger.info('Browser execution mode: local Chromium', { component: 'Server' });
     }
     void reconcileOrphanedJobs(bootedAt);
-
-    if (!config.LOCAL_AGENT_MODE) {
-      const retentionTimer = setTimeout(() => {
-        void runRetention();
-        const dailyTimer = setInterval(() => {
-          void runRetention();
-        }, 24 * 60 * 60 * 1000);
-        dailyTimer.unref();
-      }, 60_000);
-      retentionTimer.unref();
-    }
   });
 
   process.on('unhandledRejection', (reason) => {

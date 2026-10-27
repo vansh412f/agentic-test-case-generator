@@ -18,9 +18,10 @@ const sections = [
     ],
   },
   {
-    title: 'AI processing',
+    title: 'External model and browser processing',
     body: [
-      'Structured application maps and test plans are sent to configured large-language-model providers so the service can plan, generate, and correct test code. Provider handling may vary by deployment configuration.',
+      'Structured application maps, observations, and test plans are sent over HTTPS to configured model providers (Groq and Google Gemini) so the service can plan, generate, and correct test code.',
+      'Hosted browser sessions run inside an isolated, zero-privilege Google Cloud Run container whose temporary browser directory is destroyed immediately when each WebSocket session closes.',
       'Do not use the service with applications containing regulated, confidential, or personal data unless your deployment and provider agreements permit that processing.',
     ],
   },
@@ -34,8 +35,11 @@ const sections = [
   {
     title: 'Retention and deletion',
     body: [
-      'Job records may be retained so you can review historical results, compare corrections, and download deliverables. Retention periods depend on the operator of the deployment you are using.',
-      'To request deletion of job data, contact the operator of this deployment and provide the relevant job IDs and target URLs.',
+      'Job records, test plans, generated test code, execution results, and redacted operational server events are retained indefinitely in PostgreSQL with no automatic expiry. Users may contact the project maintainer to request manual removal of specific target URL job records.',
+      'Playwright trace zip archives are stored only on ephemeral backend disk for 1 hour (200 traces / 256 MiB total FIFO cap) and gated by short-lived signed owner tokens.',
+      'Remote Cloud Run browser instances retain zero persistent files after session teardown and scale to zero when idle.',
+      'Remembered form inputs stay strictly in your own browser localStorage for up to 30 days and can be wiped immediately using the button on this page.',
+      'To request manual deletion of job data, contact the operator of this deployment and provide the relevant job IDs and target URLs.',
     ],
   },
   {
@@ -57,7 +61,7 @@ export default function PrivacyPage() {
   return (
     <>
       <Seo
-        description="How Agentic Test Case Generator processes target URLs, application maps, generated tests, reports, and AI requests."
+        description="How Agentic Test Case Generator processes target URLs, application maps, generated tests, reports, and external model requests."
         path="/privacy"
         title="Privacy Policy — Agentic Test Case Generator"
       />
@@ -70,7 +74,7 @@ export default function PrivacyPage() {
         <h1 className="mt-4 text-heading-1 font-bold">Privacy Policy</h1>
 
         <p className="mt-4 text-body text-muted-foreground">
-          Last updated: 16 October 2026
+          Last updated: 27 October 2026
         </p>
 
         <p className="mt-6 text-body text-muted-foreground">
