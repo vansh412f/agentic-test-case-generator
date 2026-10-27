@@ -43,6 +43,50 @@ try {
   process.exit(1);
 }
 
+async function launchIsolatedBrowserServer() {
+  return await chromium.launchServer({
+    headless: true,
+    host: '127.0.0.1',
+    chromiumSandbox: false,
+    proxy: { server: egressProxyUrl },
+    args: [
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--proxy-bypass-list=<-loopback>',
+      '--disable-quic',
+      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+    ],
+  });
+}
+
+let warmBrowserPromise = null;
+let isShuttingDown = false;
+
+function ensureWarmBrowser() {
+  if (!isShuttingDown && activeSessions < MAX_CONCURRENT_SESSIONS && !warmBrowserPromise) {
+    warmBrowserPromise = launchIsolatedBrowserServer().catch((err) => {
+      warmBrowserPromise = null;
+      console.warn('[WarmPool] pre-warm failed:', err instanceof Error ? err.message : String(err));
+      return null;
+    });
+  }
+}
+
+async function acquireBrowserServer() {
+  if (warmBrowserPromise) {
+    const claimed = warmBrowserPromise;
+    warmBrowserPromise = null;
+    if (activeSessions < MAX_CONCURRENT_SESSIONS) {
+      ensureWarmBrowser();
+    }
+    const srv = await claimed;
+    if (srv) {
+      return srv;
+    }
+  }
+  return await launchIsolatedBrowserServer();
+}
+
 const server = http.createServer((req, res) => {
   const reqUrl = new URL(req.url ?? '/', 'http://localhost');
   if ((reqUrl.pathname === '/healthz' || reqUrl.pathname === '/health') && req.method === 'GET') {
@@ -128,6 +172,7 @@ server.on('upgrade', async (req, clientSocket, head) => {
     }
 
     activeSessions = Math.max(0, activeSessions - 1);
+    ensureWarmBrowser();
     const durationMs = Date.now() - sessionStartTime;
     console.log(`[Session] closed reason=${reason} durationMs=${durationMs}`);
   }
@@ -144,19 +189,7 @@ server.on('upgrade', async (req, clientSocket, head) => {
   });
 
   try {
-    browserServer = await chromium.launchServer({
-      headless: true,
-      host: '127.0.0.1',
-      chromiumSandbox: false,
-      proxy: { server: egressProxyUrl },
-      args: [
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--proxy-bypass-list=<-loopback>',
-        '--disable-quic',
-        '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-      ],
-    });
+    browserServer = await acquireBrowserServer();
 
     if (clientSocket.destroyed) {
       await cleanup('client_disconnected_during_launch');
@@ -228,11 +261,22 @@ server.listen(PORT, '0.0.0.0', () => {
   const addr = server.address();
   const actualPort = addr && typeof addr === 'object' ? addr.port : PORT;
   console.log(`[CloudBrowser] listening on 0.0.0.0:${actualPort}`);
+  ensureWarmBrowser();
 });
 
 async function shutdown(sig) {
   console.log(`[CloudBrowser] shutting down on ${sig}`);
+  isShuttingDown = true;
   server.close();
+  if (warmBrowserPromise) {
+    try {
+      const srv = await warmBrowserPromise;
+      if (srv) {
+        await srv.close().catch(() => {});
+      }
+    } catch {}
+    warmBrowserPromise = null;
+  }
   await stopEgressProxy();
   process.exit(0);
 }

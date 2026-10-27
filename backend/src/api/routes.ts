@@ -32,6 +32,7 @@ import { z } from 'zod';
 import { config } from '../config.ts';
 import { createPendingJobs, getLifetimeStats } from '../db/jobs.ts';
 import { prisma } from '../db/client.ts';
+import { warmRemoteBrowser } from '../browser/remoteBrowser.ts';
 
 const router = Router();
 router.use(visitorMiddleware);
@@ -116,6 +117,7 @@ router.get('/stats', async (_req, res) => {
 router.get('/pow/challenge', powChallengeLimiter, async (_req, res) => {
   try {
     const challenge = await powService.createChallenge();
+    warmRemoteBrowser();
     res.json(challenge);
   } catch (error) {
     res.status(500).json({
@@ -159,6 +161,8 @@ router.post('/crawl', crawlIpLimiter, async (req, res) => {
     }
     throw err;
   }
+
+  warmRemoteBrowser();
 
   const ac = new AbortController();
   res.on('close', () => {
@@ -291,6 +295,7 @@ router.post('/generate', async (req, res) => {
       throw err;
     }
   }
+  warmRemoteBrowser();
   const requested = urls.length;
 
   const webhookProblem = parsed.data.webhookUrl ? webhookUrlProblem(parsed.data.webhookUrl) : null;

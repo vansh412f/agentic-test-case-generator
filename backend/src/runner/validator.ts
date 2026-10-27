@@ -30,6 +30,8 @@ function parseFilenameFromDiagnostic(
   return null;
 }
 
+const SEED_BUILDINFO_PATH = path.join(RUNNER_TESTS_DIR, '.tsbuildinfo.seed');
+
 export async function validateTestCode(
   runId: string,
   files: Array<{ filename: string; code: string }>,
@@ -62,11 +64,15 @@ export async function validateTestCode(
   const releaseGate = await heavyOpGate.acquirePipeline({ signal: options?.signal });
 
   const runDir = path.join(RUNNER_TESTS_DIR, runId);
+  const runBuildInfoPath = path.join(runDir, '.tsbuildinfo');
   const tsconfigRunPath = path.join(runDir, 'tsconfig.json');
 
   try {
     // 1. Write files to disk
     await fs.mkdir(runDir, { recursive: true });
+    if (fsSync.existsSync(SEED_BUILDINFO_PATH)) {
+      await fs.copyFile(SEED_BUILDINFO_PATH, runBuildInfoPath).catch(() => {});
+    }
     for (const file of files) {
       const filePath = path.join(runDir, file.filename);
       await fs.writeFile(filePath, file.code, 'utf-8');
@@ -107,7 +113,17 @@ export async function validateTestCode(
     const tscExecution = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
       childProcess = execFile(
         process.execPath,
-        ['--max-old-space-size=160', '--max-semi-space-size=4', tscJs, '--noEmit', '--project', tsconfigRunPath],
+        [
+          '--max-old-space-size=160',
+          '--max-semi-space-size=4',
+          tscJs,
+          '--incremental',
+          '--tsBuildInfoFile',
+          runBuildInfoPath,
+          '--noEmit',
+          '--project',
+          tsconfigRunPath,
+        ],
         { cwd: RUNNER_DIR, env: childProcessEnv(), signal: options?.signal },
         (error, stdout, stderr) => {
           options?.signal?.removeEventListener('abort', onAbort);
@@ -176,6 +192,16 @@ export async function validateTestCode(
         }
       }
       return { valid: false, errors: allErrors, perFile };
+    }
+
+    if (!fsSync.existsSync(SEED_BUILDINFO_PATH)) {
+      const tmpSeedPath = path.join(RUNNER_TESTS_DIR, `.tsbuildinfo.seed.${runId}.tmp`);
+      try {
+        await fs.copyFile(runBuildInfoPath, tmpSeedPath);
+        await fs.rename(tmpSeedPath, SEED_BUILDINFO_PATH);
+      } catch {
+        await fs.rm(tmpSeedPath, { force: true }).catch(() => {});
+      }
     }
 
     return { valid: true, errors: [], perFile };

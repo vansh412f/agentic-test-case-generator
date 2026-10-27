@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises';
 import { crawlPage } from '../crawler/pageCrawler.ts';
 import { assertPublicTarget } from '../security/netPolicy.ts';
 import { config } from '../config.ts';
-import { takeFreshCrawl } from '../crawler/crawlCache.ts';
+import { takeFreshCrawl, rememberCrawl } from '../crawler/crawlCache.ts';
 import { planTests, serializeObservations } from './steps/planner.ts';
 import { generateTest } from './steps/generator.ts';
 import type { GeneratedTest } from './steps/generator.ts';
@@ -282,6 +282,9 @@ async function crawlForJob(
       const maxAgeMs = fresh ? 60_000 : 10 * 60_000;
       const cached = takeFreshCrawl(url, maxAgeMs);
       if (cached) {
+        if (fresh) {
+          delete cached.observations;
+        }
         logger.info(`Crawl cache hit for ${url}`, { component: 'Pipeline', jobId });
         return cached;
       }
@@ -360,6 +363,10 @@ async function runPersistedPipeline(
     if (observations.length > 0 && observations !== appMap.observations) {
       appMap = { ...appMap, observations };
       await safeWrite('setAppMap', () => setAppMap(jobId, appMap));
+    }
+
+    if (appMap.observations && !fresh && (!testData || testData.length === 0)) {
+      rememberCrawl(url, appMap);
     }
 
     signal?.throwIfAborted();

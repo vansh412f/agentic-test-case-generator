@@ -26,6 +26,9 @@ import {
   getRemoteBrowserAllowSpec,
   getRedactedBrowserEndpoint,
   scrubBrowserWsSecrets,
+  buildRemoteBrowserHealthUrl,
+  warmRemoteBrowser,
+  resetWarmRemoteBrowserForTests,
 } from '../src/browser/remoteBrowser.ts';
 import { sanitizeError } from '../src/runner/sanitizeError.ts';
 import { launchBrowser, crawlPage } from '../src/crawler/pageCrawler.ts';
@@ -586,9 +589,75 @@ async function main(): Promise<void> {
     pass('RB6 compactHref + plannerView compaction & browserType.connect classification');
   });
 
+  // ──────────────────────────────────────────────────────────
+  // RB7: buildRemoteBrowserHealthUrl & cooldown wake ping
+  // ──────────────────────────────────────────────────────────
+  await run('RB7 buildRemoteBrowserHealthUrl & cooldown wake ping', async () => {
+    // 1. Returns null when LOCAL_AGENT_MODE=true
+    (config as any).LOCAL_AGENT_MODE = true;
+    (config as any).BROWSER_WS_ENDPOINT = 'wss://agt-playwright.a.run.app/chromium/playwright?foo=bar';
+    assert.equal(buildRemoteBrowserHealthUrl(), null);
+
+    // 2. Maps wss: -> https:, pathname to /healthz, strips search and hash (zero token leak)
+    (config as any).LOCAL_AGENT_MODE = false;
+    (config as any).BROWSER_WS_ENDPOINT = 'wss://agt-playwright.a.run.app/chromium/playwright?foo=bar#frag';
+    (config as any).BROWSER_WS_TOKEN = 'secret-token-do-not-leak';
+    const healthUrl = buildRemoteBrowserHealthUrl();
+    assert.equal(healthUrl, 'https://agt-playwright.a.run.app/healthz');
+    assert(!healthUrl.includes('foo=bar'));
+    assert(!healthUrl.includes('secret-token'));
+    assert(!healthUrl.includes('frag'));
+
+    // 3. warmRemoteBrowser() hits ephemeral HTTP listener at most once within cooldown window
+    let pingCount = 0;
+    const testServer = http.createServer((req, res) => {
+      if (req.url === '/healthz' && req.method === 'GET') {
+        pingCount++;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+
+    await new Promise<void>((resolve) => testServer.listen(0, '127.0.0.1', resolve));
+    const testPort = (testServer.address() as net.AddressInfo).port;
+
+    try {
+      (config as any).BROWSER_WS_ENDPOINT = `ws://127.0.0.1:${testPort}/chromium/playwright?token=tok123`;
+      resetWarmRemoteBrowserForTests();
+
+      // First call should fire
+      warmRemoteBrowser();
+      // Wait shortly for detached fetch to hit server
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(pingCount, 1);
+
+      // Second call immediately within cooldown window should be throttled
+      warmRemoteBrowser();
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(pingCount, 1);
+
+      // After resetWarmRemoteBrowserForTests(), should fire again
+      resetWarmRemoteBrowserForTests();
+      warmRemoteBrowser();
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(pingCount, 2);
+    } finally {
+      await new Promise<void>((resolve) => testServer.close(() => resolve()));
+      (config as any).LOCAL_AGENT_MODE = true;
+      (config as any).BROWSER_WS_ENDPOINT = undefined;
+      (config as any).BROWSER_WS_TOKEN = undefined;
+      resetWarmRemoteBrowserForTests();
+    }
+
+    pass('RB7 buildRemoteBrowserHealthUrl & cooldown wake ping');
+  });
+
   console.log('\n====================================================');
   if (failures === 0) {
-    console.log(' ALL REMOTE BROWSER TESTS (RB1 - RB6) PASSED');
+    console.log(' ALL REMOTE BROWSER TESTS (RB1 - RB7) PASSED');
     process.exit(0);
   } else {
     console.error(` ${failures} TEST(S) FAILED`);

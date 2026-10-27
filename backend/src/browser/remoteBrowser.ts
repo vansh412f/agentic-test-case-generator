@@ -76,3 +76,56 @@ export function scrubBrowserWsSecrets(input: string): string {
   }
   return res;
 }
+
+/**
+ * Builds the /healthz probe URL from BROWSER_WS_ENDPOINT without any auth token or query/hash.
+ * Returns null if remote browser is not active or URL cannot be parsed.
+ */
+export function buildRemoteBrowserHealthUrl(): string | null {
+  if (!isRemoteBrowserActive()) {
+    return null;
+  }
+  try {
+    const raw = config.BROWSER_WS_ENDPOINT!.trim();
+    const u = new URL(raw);
+    if (u.protocol === 'wss:') {
+      u.protocol = 'https:';
+    } else if (u.protocol === 'ws:') {
+      u.protocol = 'http:';
+    } else {
+      return null;
+    }
+    u.pathname = '/healthz';
+    u.search = '';
+    u.hash = '';
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+const WARM_COOLDOWN_MS = 45_000;
+let lastWarmAt = 0;
+
+export function resetWarmRemoteBrowserForTests(): void {
+  lastWarmAt = 0;
+}
+
+/**
+ * Detached non-blocking warm-up ping to wake Cloud Run from scale-to-zero.
+ * Throttled to at most once every 45s. Never blocks or throws.
+ */
+export function warmRemoteBrowser(): void {
+  if (!isRemoteBrowserActive()) {
+    return;
+  }
+  if (Date.now() - lastWarmAt < WARM_COOLDOWN_MS) {
+    return;
+  }
+  const healthUrl = buildRemoteBrowserHealthUrl();
+  if (!healthUrl) {
+    return;
+  }
+  lastWarmAt = Date.now();
+  void fetch(healthUrl, { method: 'GET', signal: AbortSignal.timeout(5_000) }).catch(() => {});
+}
