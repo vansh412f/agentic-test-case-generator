@@ -373,6 +373,7 @@ export async function ensureEgressProxy(): Promise<string | null> {
         reject(new Error('Failed to obtain egress proxy address'));
       }
     });
+    server.unref();
 
     server.on('error', (err) => {
       reject(err);

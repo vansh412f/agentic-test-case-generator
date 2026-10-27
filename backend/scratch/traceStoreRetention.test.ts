@@ -21,6 +21,7 @@ import {
   TraceEntry,
 } from '../src/runner/traceStore.ts';
 import { executeTests } from '../src/runner/executor.ts';
+import { stopEgressProxy } from '../src/security/egressProxy.ts';
 
 let failures = 0;
 
@@ -445,17 +446,19 @@ async function main(): Promise<void> {
         // ignore
       }
     }
+    await stopEgressProxy();
   }
 
   if (failures > 0) {
     console.error(`\n=== ${failures} TRACE TEST(S) FAILED ===`);
-    process.exitCode = 1;
+    process.exit(1);
   } else {
     console.log('\n=== ALL TRACE TESTS PASSED ===');
+    process.exit(0);
   }
 }
 
 main().catch((err) => {
   console.error('testTrace crashed:', err);
-  process.exitCode = 1;
+  process.exit(1);
 });
