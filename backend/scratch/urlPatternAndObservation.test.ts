@@ -55,7 +55,7 @@ function makeAppMap(overrides: Partial<AppMap> = {}): AppMap {
 }
 
 async function main() {
-  console.log('=== Phase 12 Verification Suite ===\n');
+  console.log('=== URL Pattern & Form Observation Suite ===\n');
 
   // ---------------------------------------------------------------------------
   // P1: urlAssertPattern
@@ -453,9 +453,9 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // P7: LIVE (gated on PHASE12_LIVE=1)
+  // P7: LIVE (gated on OBSERVATION_LIVE=1)
   // ---------------------------------------------------------------------------
-  if (process.env.PHASE12_LIVE === '1') {
+  if (process.env.OBSERVATION_LIVE === '1') {
     await run('P7: LIVE the-internet login without and with test data', async () => {
       console.log('   Crawling https://the-internet.herokuapp.com/login...');
       const appMap = await crawlPage('https://the-internet.herokuapp.com/login');
@@ -531,7 +531,7 @@ async function main() {
       }
     });
   } else {
-    console.log('[SKIP] P7 live test skipped (set PHASE12_LIVE=1)');
+    console.log('[SKIP] P7 live test skipped (set OBSERVATION_LIVE=1)');
   }
 
   console.log(`\n=== Verification Finished with exitCode=${exitCode} ===`);

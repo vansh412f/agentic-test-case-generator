@@ -64,8 +64,8 @@ router.get('/health/db', async (_req, res) => {
     dbHealthCache = { result, cachedAt: now };
     res.json(result);
   } catch (err) {
+    dbHealthCache = null;
     const result = { ok: false, db: 'error' as const, checkedAt: new Date().toISOString() };
-    dbHealthCache = { result, cachedAt: now };
     res.status(503).json(result);
   }
 });

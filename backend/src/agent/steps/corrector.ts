@@ -12,7 +12,9 @@ export interface CorrectionResult {
   provider: string;
 }
 
-const FENCE_REGEX = /```(?:typescript|ts)?\s*\n([\s\S]*?)\n```/;
+import { extractPlaywrightSpec } from './generator.ts';
+import { LlmError } from '../../llm/types.ts';
+import { JobCancelledError } from '../cancellation.ts';
 
 export { correctionPreservesAssertions, correctionPreservesSecrets } from '../assertionGuard.ts';
 
@@ -42,29 +44,37 @@ export async function correctTest(
     },
   ];
 
-  const response = await callLlm({
-    messages,
-    jsonMode: false,
-    maxTokens: 2000,
-    temperature: 0.1,
-    tier: 'fast',
-    task: 'correct',
-    signal: options?.signal,
-  });
+  try {
+    const response = await callLlm({
+      messages,
+      jsonMode: false,
+      maxTokens: 2000,
+      temperature: 0.1,
+      tier: 'fast',
+      task: 'correct',
+      signal: options?.signal,
+      validateContent: (content) => {
+        if (!extractPlaywrightSpec(content)) {
+          throw new LlmError('BAD_RESPONSE', 'Corrector output missing Playwright TypeScript spec');
+        }
+      },
+    });
 
-  const match = FENCE_REGEX.exec(response.content);
-  if (!match?.[1]) {
+    const code = extractPlaywrightSpec(response.content);
     return {
-      code: null,
+      code,
       model: response.model,
       provider: response.provider,
     };
+  } catch (err) {
+    if (err instanceof JobCancelledError || options?.signal?.aborted) {
+      throw err;
+    }
+    return {
+      code: null,
+      model: '',
+      provider: '',
+    };
   }
-
-  return {
-    code: match[1].trim(),
-    model: response.model,
-    provider: response.provider,
-  };
 }
 // Module component implementation.

@@ -151,4 +151,4 @@ console.log('[PASS] corrector prompt: smart correction context formatting');
 // preventing long TPM rate limit hangs. This is asserted by implementation construction.
 console.log('[PASS] client failover: fast provider failover on retryAfterMs > 10s (asserted by construction)');
 
-console.log('Phase 7A verification passed.');
+console.log('Visitor Token, Daily Budget & PoW verification passed.');

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { summarizeTokenUsage } from '../src/agent/tokenUsage.ts';
 import { scoreTestConfidence } from '../src/agent/confidence.ts';
 
-// --- 6A: token usage summarization ---------------------------------------
+// --- Token usage summarization -------------------------------------------
 const usage = summarizeTokenUsage([
   { llmProvider: 'groq', llmModel: 'openai/gpt-oss-120b', promptTokens: 1_000_000, completionTokens: 500_000 },
   { llmProvider: 'groq', llmModel: 'openai/gpt-oss-120b', promptTokens: null, completionTokens: null },
@@ -24,9 +24,9 @@ assert.deepEqual(summarizeTokenUsage([]), {
   completionTokens: 0,
   rows: [],
 });
-console.log('[PASS] 6A token usage summarization');
+console.log('[PASS] Token usage summarization');
 
-// --- 6B: confidence scoring ----------------------------------------------
+// --- Confidence scoring --------------------------------------------------
 const strongCode = `
 import { test, expect } from '@playwright/test';
 test('add todo', async ({ page }) => {
@@ -70,8 +70,8 @@ const finding = scoreTestConfidence({
 });
 assert.ok(finding.score > weak.score);
 assert.ok(finding.factors.every((factor) => Number.isFinite(factor.points)));
-console.log('[PASS] 6B confidence scoring');
+console.log('[PASS] Confidence scoring');
 
-// 6C batch orchestration + request schema moved to testPhase8.ts (run groups replaced runBatch).
+// Batch orchestration + request schema covered in jobEventsAndDetachedRunner.test.ts.
 
-console.log('Phase 6 verification passed.');
+console.log('Token Usage & Confidence Scoring verification passed.');

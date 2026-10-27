@@ -589,7 +589,7 @@ async function testConfigGuard() {
 }
 
 async function runAll() {
-  console.log('=== PHASE 9A.1 TEST SUITE ===\n');
+  console.log('=== Code Safety, Runner Isolation & CORS Suite ===\n');
   testCodeSafety();
   await testNetGuard();
   testChildEnv();
@@ -598,7 +598,7 @@ async function runAll() {
   testIsolationArgv();
   await testValidatorTsconfig();
   await testConfigGuard();
-  console.log('\n=== ALL PHASE 9A.1 TESTS PASSED ===');
+  console.log('\n=== ALL Code Safety, Runner Isolation & CORS Suite TESTS PASSED ===');
 }
 
 runAll().catch((err) => {

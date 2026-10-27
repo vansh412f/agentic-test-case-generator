@@ -29,7 +29,7 @@ const NET_GUARD_PATH = path.resolve(__dirname, '../playwright-runner/netGuard.mj
 const NET_GUARD_URL = pathToFileURL(NET_GUARD_PATH).href;
 
 // ==========================================
-// 1. WP1.1 — codeSafety AST Validation Tests
+// 1. codeSafety AST Validation Tests
 // ==========================================
 function testCodeSafetyBypasses() {
   console.log('--- Test 1.1: codeSafety rejects all bypass constructs ---');
@@ -146,7 +146,7 @@ function testCodeSafetyBypasses() {
 }
 
 // ==========================================
-// 2. WP1.2 — netGuard.mjs Network Barrier
+// 2. netGuard.mjs Network Barrier
 // ==========================================
 async function testNetGuard() {
   console.log('--- Test 1.2: netGuard blocks direct TCP egress to victim ---');
@@ -211,10 +211,10 @@ async function testNetGuard() {
 }
 
 // ==========================================
-// 3. WP1.3 — B25 EgressProxy Retry & Cap
+// 3. EgressProxy Retry & Cap
 // ==========================================
 async function testB25EgressProxy() {
-  console.log('--- Test 1.3: B25 EgressProxy slow upstream keep-alive reuse ---');
+  console.log('--- Test 1.3: EgressProxy slow upstream keep-alive reuse ---');
 
   let upstreamRequests = 0;
   const upstreamServer = http.createServer(async (_req, res) => {
@@ -249,10 +249,10 @@ async function testB25EgressProxy() {
 }
 
 // ==========================================
-// 3b. WP1.4 — B26 Pipeline completeJob count 0
+// 3b. Pipeline completeJob count 0
 // ==========================================
 async function testB26CountZero() {
-  console.log('--- Test 1.4: B26 completeJob count 0 single job_finished publication ---');
+  console.log('--- Test 1.4: completeJob count 0 single job_finished publication ---');
 
   const testJob = await prisma.job.create({
     data: {
@@ -304,7 +304,7 @@ async function testB26CountZero() {
 }
 
 // ==========================================
-// 4. WP3 — Production Fail-Fast Config Tests
+// 4. Production Fail-Fast Config Tests
 // ==========================================
 async function testProductionConfigValidation() {
   console.log('--- Test 3: Production fail-fast validation missing secrets ---');
@@ -350,7 +350,7 @@ async function testProductionConfigValidation() {
 }
 
 // ==========================================
-// 5. WP4 — Server Events & Admin Route
+// 5. Server Events & Admin Route
 // ==========================================
 async function testServerEventsAndAdmin() {
   console.log('--- Test 4: ServerEvent deduplication, redaction, and admin gate ---');
@@ -432,7 +432,7 @@ async function testServerEventsAndAdmin() {
 }
 
 // ==========================================
-// 6. WP5 — Client IP Resolution Tests
+// 6. Client IP Resolution Tests
 // ==========================================
 function testClientIpExtraction() {
   console.log('--- Test 5: clientIp helper with edge secret and spoof protection ---');
@@ -487,7 +487,7 @@ function testClientIpExtraction() {
 // ==========================================
 async function runAll() {
   console.log('====================================================');
-  console.log('      PHASE 9A DEPLOY READINESS TEST SUITE');
+  console.log('    EGRESS PROXY, ADMIN AUTH & CLIENT IP SUITE');
   console.log('====================================================\n');
 
   testCodeSafetyBypasses();
@@ -499,7 +499,7 @@ async function runAll() {
   testClientIpExtraction();
 
   console.log('\n====================================================');
-  console.log('  ALL PHASE 9A TESTS PASSED (WP1, WP3, WP4, WP5)');
+  console.log('  ALL EGRESS PROXY, ADMIN AUTH & CLIENT IP TESTS PASSED');
   console.log('====================================================');
 
   try {
@@ -515,7 +515,7 @@ async function runAll() {
 }
 
 runAll().catch(async (err) => {
-  console.error('\n❌ PHASE 9A TEST SUITE FAILED:', err);
+  console.error('\n❌ EGRESS PROXY, ADMIN AUTH & CLIENT IP SUITE FAILED:', err);
   try {
     const { stopEgressProxy } = await import('../src/security/egressProxy.ts');
     await stopEgressProxy();

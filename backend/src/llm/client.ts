@@ -197,6 +197,10 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
         try {
           const response = await attemptProviderCall(provider, modelRequest);
 
+          if (request.validateContent) {
+            request.validateContent(response.content);
+          }
+
           await logCall({
             timestamp,
             provider: providerName,

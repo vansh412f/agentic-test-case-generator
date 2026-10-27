@@ -278,7 +278,7 @@ async function testSafeWritePersistenceResilience() {
 }
 
 async function testClassifyExecutionErrorTable() {
-  console.log('--- Test 6: classifyExecutionError table-driven test over real fixtures (WP3) ---');
+  console.log('--- Test 6: classifyExecutionError table-driven test over real fixtures ---');
   const fs = await import('node:fs/promises');
   const path = await import('node:path');
   const { classifyExecutionError } = await import('../src/runner/executor.ts');
@@ -312,7 +312,7 @@ async function testClassifyExecutionErrorTable() {
 }
 
 async function testEgressGuardAndSsrf() {
-  console.log('--- Test 7: Egress guard, SSRF protection, and codeSafety (WP4) ---');
+  console.log('--- Test 7: Egress guard, SSRF protection, and codeSafety ---');
   const http = await import('node:http');
   const { assertPublicTarget } = await import('../src/security/netPolicy.ts');
   const { ensureEgressProxy, getBlockedCount, resetBlockedCount, stopEgressProxy } = await import('../src/security/egressProxy.ts');
@@ -472,7 +472,7 @@ test('ssrf attempt via request fixture', async ({ request }) => {
 }
 
 async function testCancelAndBudgetCorrectness() {
-  console.log('--- Test 8: Cancel and budget correctness (WP5: B2, B13, B14, B7, B9) ---');
+  console.log('--- Test 8: Cancel and budget correctness ---');
   const { tryReserveRun, resetReservationsForTest } = await import('../src/security/dailyBudget.ts');
   const { prisma } = await import('../src/db/client.ts');
   const { config } = await import('../src/config.ts');
@@ -553,10 +553,10 @@ async function testCancelAndBudgetCorrectness() {
   console.log('\n✓ Test 8 passed\n');
 }
 
-async function testUiAndDataCorrectnessWP6() {
-  console.log('--- Test 9: UI & Data Correctness (B15, B11, B17, B12, B10) ---');
+async function testUiAndDataCorrectness() {
+  console.log('--- Test 9: UI & Data Correctness ---');
 
-  // 1. B15: Crawl Cache normalization and alias eviction
+  // 1. Crawl Cache normalization and alias eviction
   const { rememberCrawl, takeFreshCrawl, clearCrawlCache, normalizeCrawlKey } = await import(
     '../src/crawler/crawlCache.ts'
   );
@@ -586,16 +586,16 @@ async function testUiAndDataCorrectnessWP6() {
   // Since takeFreshCrawl deletes both aliases, lookup by final URL should now return null
   const hit2 = takeFreshCrawl('https://example.com/app/dashboard');
   assert.equal(hit2, null, 'Taking crawl should remove both aliases');
-  console.log('✓ Crawl cache normalizes keys and takeFreshCrawl cleans up all aliases (B15)');
+  console.log('✓ Crawl cache normalizes keys and takeFreshCrawl cleans up all aliases');
 
-  // 2. B11: takeFreshCrawl maxAgeMs
+  // 2. takeFreshCrawl maxAgeMs
   rememberCrawl('https://example.com/app/fresh-test', dummyAppMap);
   // With maxAgeMs = -1, age > maxAgeMs is immediately true
   const expiredHit = takeFreshCrawl('https://example.com/app/fresh-test', -1);
   assert.equal(expiredHit, null, 'Crawl older than maxAgeMs must return null');
-  console.log('✓ takeFreshCrawl respects maxAgeMs for fresh crawl bypass (B11)');
+  console.log('✓ takeFreshCrawl respects maxAgeMs for fresh crawl bypass');
 
-  // 3. B17: MAX_AI_TEST_CASES
+  // 3. MAX_AI_TEST_CASES
   const { MAX_AI_TEST_CASES } = await import('../src/agent/run.config.ts');
   assert.equal(MAX_AI_TEST_CASES, 8, 'MAX_AI_TEST_CASES must equal 8');
 
@@ -610,19 +610,19 @@ async function testUiAndDataCorrectnessWP6() {
   };
   const capped = capAndRenumberTestPlan(dummyPlan);
   assert.equal(capped.testCases.length, 8, 'capAndRenumberTestPlan must cap to MAX_AI_TEST_CASES (8)');
-  console.log('✓ MAX_AI_TEST_CASES is 8 and capAndRenumberTestPlan slices to 8 (B17)');
+  console.log('✓ MAX_AI_TEST_CASES is 8 and capAndRenumberTestPlan slices to 8');
 
-  // 4. B12: NO_EXPORTABLE_TESTS error code
+  // 4. NO_EXPORTABLE_TESTS error code
   const { JobError } = await import('../src/api/jobErrors.ts');
   const expErr = new JobError('NO_EXPORTABLE_TESTS', 'No exportable tests');
   assert.equal(expErr.code, 'NO_EXPORTABLE_TESTS');
-  console.log('✓ JobError supports NO_EXPORTABLE_TESTS (B12)');
+  console.log('✓ JobError supports NO_EXPORTABLE_TESTS');
 
   console.log('\n✓ Test 9 passed\n');
 }
 
-async function testCostAndEgressWP7() {
-  console.log('--- Test 10: Cost and Egress (WP7: slim job detail, token budget, retention) ---');
+async function testSlimJobDetailAndTokenBudget() {
+  console.log('--- Test 10: Cost and Egress (slim job detail, token budget, retention) ---');
   const { config } = await import('../src/config.ts');
   const { prisma } = await import('../src/db/client.ts');
   const { getJobDetailView, getJobById } = await import('../src/db/jobs.ts');
@@ -636,7 +636,7 @@ async function testCostAndEgressWP7() {
   await prisma.job.create({
     data: {
       id: testJobId,
-      targetUrl: 'https://example.com/test-wp7',
+      targetUrl: 'https://example.com/test-slim-detail',
       status: 'completed',
       appMap: { url: 'https://example.com/test-wp7', elements: [] },
       generatedTests: {
@@ -678,9 +678,9 @@ async function testCostAndEgressWP7() {
 }
 
 async function testFollowups11_1C_2() {
-  console.log('--- Test 11: 11.1C.2 Follow-ups (B21, B22, B23, B24) ---');
+  console.log('--- Test 11: Error and Status Guard Follow-ups ---');
 
-  // 1. B21: correct() receives priorErrors that exclude its own errorText
+  // 1. correct() receives priorErrors that exclude its own errorText
   const { runRounds } = await import('../src/agent/rounds.ts');
   const testB21 = createDummyRoundTest('tc-b21', 'const bad = 1;', 'llm');
   const priorErrorsReceived: string[][] = [];
@@ -710,9 +710,9 @@ async function testFollowups11_1C_2() {
   assert.deepEqual(priorErrorsReceived[0], [], 'Attempt 1 must receive empty priorErrors');
   assert.equal(priorErrorsReceived[1].length, 1, 'Attempt 2 must receive attempt 1 error only');
   assert.ok(priorErrorsReceived[1][0].includes('Compile error attempt'));
-  console.log('✓ B21: corrector never receives current error as a prior error');
+  console.log('✓ Corrector never receives current error as a prior error');
 
-  // 2. B22: every job status transition in db/jobs.ts uses updateMany protecting cancelled jobs
+  // 2. every job status transition in db/jobs.ts uses updateMany protecting cancelled jobs
   const { prisma } = await import('../src/db/client.ts');
   const {
     markJobStarted,
@@ -754,16 +754,16 @@ async function testFollowups11_1C_2() {
   const b22Check = await prisma.job.findUnique({ where: { id: b22JobId }, select: { status: true } });
   assert.equal(b22Check?.status, 'cancelled', 'Job must remain cancelled');
   await prisma.job.delete({ where: { id: b22JobId } });
-  console.log('✓ B22: all db/jobs status transitions use updateMany protecting cancelled jobs');
+  console.log('✓ All db/jobs status transitions use updateMany protecting cancelled jobs');
 
-  // 3. B23: orderAddressesIpv4First
+  // 3. orderAddressesIpv4First
   const { orderAddressesIpv4First } = await import('../src/security/egressProxy.ts');
   const mixedIps = ['2001:db8::1', '93.184.216.34', '2606:2800:220:1::', '198.51.100.1'];
   const ordered = orderAddressesIpv4First(mixedIps);
   assert.deepEqual(ordered, ['93.184.216.34', '198.51.100.1', '2001:db8::1', '2606:2800:220:1::']);
-  console.log('✓ B23: orderAddressesIpv4First places IPv4 addresses first');
+  console.log('✓ orderAddressesIpv4First places IPv4 addresses first');
 
-  // 4. B24: codeSafety restrictions on @playwright/test and proxies
+  // 4. codeSafety restrictions on @playwright/test and proxies
   const { findUnsafeConstructs } = await import('../src/runner/codeSafety.ts');
   const safeSpec = `
     import { test, expect, Page, Locator } from '@playwright/test';
@@ -793,14 +793,14 @@ async function testFollowups11_1C_2() {
   const launchOptionsIssues = findUnsafeConstructs(launchOptionsSpec);
   assert.ok(launchOptionsIssues.some((i) => i.includes('"launchOptions"')), 'launchOptions property must be banned');
 
-  console.log('✓ B24: codeSafety forbids test.use, proxy/launchOptions properties, and raw request/chromium imports');
+  console.log('✓ codeSafety forbids test.use, proxy/launchOptions properties, and raw request/chromium imports');
 
   console.log('\n✓ Test 11 passed\n');
 }
 
 async function main() {
   console.log('====================================================');
-  console.log(' Phase 11.1C Regression Tests - WP1 to WP7          ');
+  console.log(' Self-Healing Rounds, SSRF & Slim Job DB Suite      ');
   console.log('====================================================\n');
   await testTscFailCorrectedNextRoundExec();
   await testAttemptNumbersStrictlyIncreasingNoDuplicates();
@@ -810,10 +810,10 @@ async function main() {
   await testClassifyExecutionErrorTable();
   await testEgressGuardAndSsrf();
   await testCancelAndBudgetCorrectness();
-  await testUiAndDataCorrectnessWP6();
-  await testCostAndEgressWP7();
+  await testUiAndDataCorrectness();
+  await testSlimJobDetailAndTokenBudget();
   await testFollowups11_1C_2();
-  console.log('All WP1 to WP7 and 11.1C.2 follow-up tests passed successfully!');
+  console.log('All regression and follow-up tests passed successfully!');
 }
 
 main()

@@ -8,7 +8,7 @@ import { findUnsafeConstructs } from '../src/runner/codeSafety.ts';
 import type { AppMap } from '../src/crawler/types.ts';
 
 async function main() {
-  console.log('=== Running Batch QF2 Verification Tests ===\n');
+  console.log('=== Running Bot-Wall, Link Filtering & Failure Summary Suite ===\n');
 
   // 1. summarizeFailure toHaveURL fixture (EXACT spec text)
   console.log('1. summarizeFailure toHaveURL fixture...');
@@ -260,7 +260,7 @@ Call log:
   console.log('   ✓ Group 7: isBotWall passed');
 
   // 8. Planner call cap with a REAL mock
-  // Phase 12.1: dual-call is the default for non-focus planning (no longer gated on
+  // Dual-call is the default for non-focus planning (no longer gated on
   // observations); Group 8 rewritten from single-call semantics.
   // Non-focus planning issues TWO parallel 'plan' calls — tier 'reasoning' (side A, core
   // cases) and tier 'fast' (side B, negative cases) — merged and deduped by normalized
@@ -378,7 +378,7 @@ Call log:
   assert.ok(axeViolations.some(v => v.includes('@axe-core/playwright') || v.includes('module')), 'Violation mentions module or axe-core');
   console.log('   ✓ Group 10: codeSafety successfully rejects @axe-core/playwright');
 
-  console.log('\n=== All 10 Batch QF2 Verification Tests Passed! ===');
+  console.log('\n=== All 10 Bot-Wall, Link Filtering & Failure Summary Suite Tests Passed! ===');
 }
 
 main().catch((err) => {

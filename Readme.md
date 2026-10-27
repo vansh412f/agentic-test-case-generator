@@ -14,7 +14,7 @@ Generates typed Playwright end-to-end test suites from live web applications usi
   <a href="https://www.prisma.io/"><img src="https://img.shields.io/badge/Prisma-6.19.3-2D3748?style=flat-square&logo=prisma&logoColor=white" alt="Prisma 6.19.3" /></a>
   <a href="https://supabase.com/"><img src="https://img.shields.io/badge/PostgreSQL-Supabase-3ECF8E?style=flat-square&logo=supabase&logoColor=white" alt="Supabase PostgreSQL" /></a>
   <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind_CSS-3.4.17-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind CSS 3.4.17" /></a>
-  <img src="https://img.shields.io/badge/License-not_yet_specified-lightgrey?style=flat-square" alt="License: not yet specified" />
+  <a href="https://github.com/vansh412f/agentic-test-case-generator/actions/workflows/ci.yml"><img src="https://github.com/vansh412f/agentic-test-case-generator/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
 </p>
 
 <p>
@@ -272,7 +272,7 @@ stateDiagram-v2
 - **Context:** Running a high-parameter reasoning model for small locator syntax adjustments is inefficient and exhausts request limits, while a single planning call tends to blur core journeys and negative edge cases.
 - **Decision:** Split LLM responsibilities into two tiers and use both during planning (**dual-call**): the high-reasoning tier (configured via environment variables `GROQ_REASONING_MODEL` / `GEMINI_REASONING_MODEL`) plans the **core** cases, and the fast low-latency tier (`GROQ_FAST_MODEL` / `GEMINI_FAST_MODEL`) plans the **negative** cases, with the two sides merged and capped at `MAX_AI_TEST_CASES` planned cases inside the `MAX_TEST_CASES` total ([backend/src/agent/run.config.ts](backend/src/agent/run.config.ts)). The fast tier also handles targeted locator repairs during correction. Route all calls through an ordered provider list (`LLM_PROVIDER_ORDER`, defaulting to `groq,gemini`) using standard `fetch` without vendor SDKs. When focus elements are supplied (via the `focus` field on `POST /api/generate`), or the dual-call token budget would be exceeded, the planner falls back to a single constrained call.
 - **Why:** Separating core from negative planning raises journey coverage while keeping each prompt narrow; the fast tier minimizes latency and token consumption during error recovery.
-- **Trade-off Accepted:** Prompts must be maintained and validated across multiple provider implementations, and dual-call planning consumes more tokens than a single planning call (measured: median fresh tokens 3,113 → 10,213 after Phase 12).
+- **Trade-off Accepted:** Prompts must be maintained and validated across multiple provider implementations, and dual-call planning consumes more tokens than a single planning call (measured: median fresh tokens 3,113 → 10,213 after introducing DOM observation and dual-call planning).
 - **Where in Code:** `backend/src/agent/steps/planner.ts` (`planTests`), `backend/src/agent/run.config.ts`, `backend/src/config.ts`, `backend/src/llm/client.ts` (`callLlm`), `backend/src/llm/providers/openAiCompatible.ts`.
 
 ### Decision 3: Plan Caching
@@ -377,7 +377,7 @@ stateDiagram-v2
 - **Decision:** In hosted mode (`LOCAL_AGENT_MODE=false`), offload all Chromium browser contexts (Crawl, Observe, and Test Execution) over authenticated `wss://` to a dedicated Google Cloud Run service (`cloud-browser/`, `us-west1` Always Free, `2 vCPU / 2 GiB`, `min-instances=0`, `max-instances=1`, `concurrency=1`, `gen2`), with **zero local Chromium fallback** on failure. In local mode (`LOCAL_AGENT_MODE=true`), continue using local Chromium directly so developer workstation targets (`localhost` / `127.0.0.1`) function out of the box.
 - **Live Flipkart Benchmark & Technical Rationale (`https://www.flipkart.com/`, 200 elements, 10 specs, `--trace on`):**
   1. **Why NOT Local Chromium on Render Free (`512 MB RAM / 0.1 CPU`) or a Second Render Service:**
-     - **512 MB Cgroup OOM (`SIGKILL`):** Even after Phase 1 container hardening (`--max-old-space-size=144` API, `112` runner, `HeavyOpGate(1)`, `EXECUTION_CHUNK_SIZE=3`, and blocking `image|media|font` during Crawl/Observe), live production testing on `flipkart.com` survived Crawl and Observe (`11.4s`) but triggered a kernel cgroup `SIGKILL` during Stage 4 execution when `chromium-headless-shell` rendered full commercial pages (unblocked CSS/images + `--trace on` DOM/network snapshots) alongside Node.
+     - **512 MB Cgroup OOM (`SIGKILL`):** Even after in-container memory and concurrency hardening (`--max-old-space-size=144` API, `112` runner, `HeavyOpGate(1)`, `EXECUTION_CHUNK_SIZE=3`, and blocking `image|media|font` during Crawl/Observe), live production testing on `flipkart.com` survived Crawl and Observe (`11.4s`) but triggered a kernel cgroup `SIGKILL` during Stage 4 execution when `chromium-headless-shell` rendered full commercial pages (unblocked CSS/images + `--trace on` DOM/network snapshots) alongside Node.
      - **Shared 750h/mo Workspace Ceiling:** Render's `750` free monthly hours are shared across the entire account workspace. Keeping the primary Express API awake 24/7 via UptimeRobot consumes `744 hours/month` (31-day month), leaving only `6 hours` margin — a second warm Render browser service would exhaust the quota mid-month while still suffering the same `512 MB` RAM ceiling.
   2. **Why NOT Browserless.io Free Tier (`1,000 units/month`, `120s` Hard Session Kill):**
      - Live benchmarked on `https://www.flipkart.com/`: **1 single job consumed `54 / 1,000` monthly units (`5.4%` -> cap of ~18 Flipkart jobs/month)**, took **`855.3s` (`14.25 min`)**, and **failed `8 / 10` specs as `gave_up` (`80%` infra failure)**.
@@ -484,7 +484,7 @@ The remote browser offload operates strictly within Google Cloud Run's permanent
 
 ## Measured Results
 
-Measurements recorded from a live 12-run verification matrix re-run after Phase 12 (Observe step + dual-call planning + success-only grounding):
+Measurements recorded from a live 12-run verification matrix re-run after introducing DOM observation and dual-call planning (Observe step + dual-call planning + success-only grounding):
 
 - **Commit:** `2563338`
 - **Date:** October 21, 2026
@@ -503,9 +503,9 @@ Measurements recorded from a live 12-run verification matrix re-run after Phase 
 | Median Fresh Run Tokens | 10,213 | Median token count without plan cache (n=11) |
 | Median Cached Run Tokens | 1,480 | 85.5% reduction in token consumption on cache hit |
 | Median Wall Time | 70.1s | Across crawl, observe, plan, compile, execution, and triage |
-| Median Observe Step Latency | 11.2s | New Phase 12 phase (per-run range 5.7–22.7s) |
+| Median Observe Step Latency | 11.2s | Dedicated DOM observation step (per-run range 5.7–22.7s) |
 
-**Previous measurement (`c89620e`, pre-Phase-12):** pass rate 66.7% (56/84), false-finding rate 100% (20/20), median fresh tokens 3,113, median wall time 62.8s.
+**Previous measurement (`c89620e`, prior single-pass planner baseline):** pass rate 66.7% (56/84), false-finding rate 100% (20/20), median fresh tokens 3,113, median wall time 62.8s.
 
 > [!WARNING]
 > **Known Pipeline Limitations Identified During Measurement**
@@ -1060,7 +1060,7 @@ Preset via `render.yaml`: single instance, `PIPELINE_CONCURRENCY=1`, `CRAWL_CONC
 
 ## Roadmap
 
-- **Scenario Accuracy & Negative Template Separation:** The dual-call planner split (Phase 12) separates core from negative planning, but the **fast/negative tier is still the driver of false findings** (5 of 10 false expectations in the latest 12-run measurement inject valid test data into a case titled "must fail"). Segregate negative cases from valid credentials in `backend/src/agent/steps/planner.ts` (`enforceTestData`) so a "must fail" case never binds the valid test-data values.
+- **Scenario Accuracy & Negative Template Separation:** The dual-call planner split separates core from negative planning, but the **fast/negative tier is still the driver of false findings** (5 of 10 false expectations in the latest 12-run measurement inject valid test data into a case titled "must fail"). Segregate negative cases from valid credentials in `backend/src/agent/steps/planner.ts` (`enforceTestData`) so a "must fail" case never binds the valid test-data values.
 - **Navigation-Aware Correction Guidance:** Supply post-navigation page URLs and visible interactive element snapshots directly to the correction prompt, preventing locator spin on vanished selectors (measured: correction success 30.0%, all heals on strict-mode locator collisions).
 - **Screenshot Artifacts:** Attach screenshot artifacts directly to test result cards for rapid debugging (owner-only Playwright trace replays already ship for every execution attempt; screenshots do not yet).
 - **Production Infrastructure Rollout:** Execute production deployment to Render, Cloud Run, and Vercel following the steps outlined in the [Deployment](#deployment) section.
@@ -1083,8 +1083,3 @@ Preset via `render.yaml`: single instance, `PIPELINE_CONCURRENCY=1`, `CRAWL_CONC
 | **Vector DBs / RAG** | Avoided | The application tests live DOM structures discovered in real time. Historical embeddings are inapplicable for testing fresh DOM layouts. |
 | **Paid Cloud Tiers** | Avoided | Purposefully designed to run continuously on free-tier allocations (Render, Google Cloud Run Always Free, Vercel, Supabase, Groq/Gemini free tiers) with zero hosting expenditure. |
 
----
-
-## License
-
-License: not yet specified

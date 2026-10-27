@@ -270,18 +270,26 @@ export async function listJobs(page: number, limit: number, visitorId?: string |
 
 export async function getLifetimeStats() {
   try {
-    const [jobsRun, testCasesGenerated, testsPassed, correctionsApplied] = await Promise.all([
-      prisma.job.count(),
-      prisma.generatedTest.count(),
-      prisma.generatedTest.count({ where: { finalStatus: 'passed' } }),
-      prisma.executionResult.count({ where: { corrected: true } }),
-    ]);
-
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{
+        jobsRun: number;
+        testCasesGenerated: number;
+        testsPassed: number;
+        correctionsApplied: number;
+      }>
+    >(`
+      SELECT
+        (SELECT COUNT(*)::int FROM "Job" WHERE status = 'completed') AS "jobsRun",
+        (SELECT COUNT(*)::int FROM "GeneratedTest") AS "testCasesGenerated",
+        (SELECT COUNT(*)::int FROM "GeneratedTest" WHERE "finalStatus" = 'passed') AS "testsPassed",
+        (SELECT COUNT(*)::int FROM "ExecutionResult" WHERE corrected = true) AS "correctionsApplied"
+    `);
+    const row = rows[0];
     return {
-      jobsRun,
-      testCasesGenerated,
-      testsPassed,
-      correctionsApplied,
+      jobsRun: Number(row?.jobsRun ?? 0),
+      testCasesGenerated: Number(row?.testCasesGenerated ?? 0),
+      testsPassed: Number(row?.testsPassed ?? 0),
+      correctionsApplied: Number(row?.correctionsApplied ?? 0),
     };
   } catch (cause) {
     throw new DatabaseError(cause);

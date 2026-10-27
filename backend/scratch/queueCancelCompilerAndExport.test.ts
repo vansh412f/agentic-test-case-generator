@@ -103,7 +103,7 @@ function parseZipEntries(buf: Buffer): Record<string, string> {
 }
 
 async function runTests() {
-  console.log('=== Running Phase 11C Test Suite ===\n');
+  console.log('=== Running Queue, Cancellation, Compiler & Export Suite ===\n');
 
   // =========================================================================
   // 1. Budgets: visitor 8, IP 20, global 40; parallel reservations; queued-cancelled refund; BYOK skip
@@ -858,77 +858,83 @@ test('login', async ({ page }) => {
     // 9.2 Fresh bypasses cache
     // Mock global fetch / callLlm to return fresh plan
     const originalFetch = globalThis.fetch;
+    const prevGroqKey = config.GROQ_API_KEY;
+    (config as any).GROQ_API_KEY = 'gsk_mock_plan_cache_key';
     let freshCalled = false;
 
-    globalThis.fetch = (async () => {
-      freshCalled = true;
-      const planPayload = {
-        testCases: [
-          {
-            id: 'tc-fresh-1',
-            title: 'Freshly generated test case',
-            description: 'Direct from LLM',
-            category: 'smoke',
-            steps: [
-              {
-                action: 'click',
-                elementId: 'elem-1',
-                target: null,
-                value: null,
-                description: 'Click fresh button',
-              },
-            ],
-          },
-        ],
-      };
-      return new Response(JSON.stringify({
-        choices: [{ message: { content: JSON.stringify(planPayload) } }],
-        usage: { prompt_tokens: 100, completion_tokens: 100 },
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
+    try {
+      globalThis.fetch = (async () => {
+        freshCalled = true;
+        const planPayload = {
+          testCases: [
+            {
+              id: 'tc-fresh-1',
+              title: 'Freshly generated test case',
+              description: 'Direct from LLM',
+              category: 'smoke',
+              steps: [
+                {
+                  action: 'click',
+                  elementId: 'elem-1',
+                  target: null,
+                  value: null,
+                  description: 'Click fresh button',
+                },
+              ],
+            },
+          ],
+        };
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(planPayload) } }],
+          usage: { prompt_tokens: 100, completion_tokens: 100 },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }) as typeof globalThis.fetch;
+
+      // Call with fresh: true -> must bypass cache
+      const freshPlan = await planTests(appMap, { fresh: true });
+      assert.equal(freshCalled, true, 'planTests with fresh=true must call LLM and bypass cache');
+      assert.equal(freshPlan.testCases[0].title, 'Freshly generated test case');
+
+      // Call without fresh -> should return cached plan if key matched, without calling LLM
+      freshCalled = false;
+      // Re-seed cache with the cachedTestPlan using exact toPlannerView
+      const plannerView = toPlannerView(appMap);
+      const plannerViewKey = buildPlanCacheKey({
+        view: plannerView,
+        data: undefined,
+        focus: undefined,
       });
-    }) as typeof globalThis.fetch;
+      setCachedPlan(plannerViewKey, cachedTestPlan);
 
-    // Call with fresh: true -> must bypass cache
-    const freshPlan = await planTests(appMap, { fresh: true });
-    assert.equal(freshCalled, true, 'planTests with fresh=true must call LLM and bypass cache');
-    assert.equal(freshPlan.testCases[0].title, 'Freshly generated test case');
+      // Call planTests without fresh
+      const fromCache = await planTests(appMap, { fresh: false });
+      assert.equal(fromCache.testCases[0].title, 'Cached test case');
+      assert.equal(freshCalled, false, 'planTests without fresh should hit cache and not call LLM');
 
-    // Call without fresh -> should return cached plan if key matched, without calling LLM
-    freshCalled = false;
-    // Re-seed cache with the cachedTestPlan using exact toPlannerView
-    const plannerView = toPlannerView(appMap);
-    const plannerViewKey = buildPlanCacheKey({
-      view: plannerView,
-      data: undefined,
-      focus: undefined,
-    });
-    setCachedPlan(plannerViewKey, cachedTestPlan);
+      // 9.3 Salvaged plan cache rule:
+      // Verify that the caching predicate !isSalvaged prevents caching
+      const isSalvaged = true;
+      const visibleCount = 5;
+      const canCacheSalvaged = !isSalvaged && !(cachedTestPlan.testCases.length < 3 && visibleCount > 3);
+      assert.equal(canCacheSalvaged, false, 'Salvaged plan must never be eligible for cache storage');
 
-    // Call planTests without fresh
-    const fromCache = await planTests(appMap, { fresh: false });
-    assert.equal(fromCache.testCases[0].title, 'Cached test case');
-    assert.equal(freshCalled, false, 'planTests without fresh should hit cache and not call LLM');
-
-    // 9.3 Salvaged plan cache rule:
-    // Verify that the caching predicate !isSalvaged prevents caching
-    const isSalvaged = true;
-    const visibleCount = 5;
-    const canCacheSalvaged = !isSalvaged && !(cachedTestPlan.testCases.length < 3 && visibleCount > 3);
-    assert.equal(canCacheSalvaged, false, 'Salvaged plan must never be eligible for cache storage');
-
-    globalThis.fetch = originalFetch;
-    clearPlanCache();
-    console.log('  ✓ Plan cache rules and fresh bypass verified');
+      console.log('  ✓ Plan cache rules and fresh bypass verified');
+    } finally {
+      globalThis.fetch = originalFetch;
+      (config as any).GROQ_API_KEY = prevGroqKey;
+      clearPlanCache();
+    }
   }
 
-  console.log('\n=== All 9 Phase 11C test suites PASSED ===');
+  console.log('\n=== All 9 Queue, Cancellation, Compiler & Export Suite test suites PASSED ===');
 }
 
 runTests()
   .catch((err) => {
-    console.error('\n❌ Phase 11C Test Failure:', err);
+    console.error('\n❌ Queue, Cancellation, Compiler & Export Suite Test Failure:', err);
     process.exit(1);
   })
   .finally(async () => {

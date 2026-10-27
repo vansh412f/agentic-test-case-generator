@@ -408,7 +408,7 @@ async function runPersistedPipeline(
     const tests: RoundTest[] = [];
 
     // Round 0: compileTest for every LLM case (CompileError → generateTest LLM fallback, origin 'llm');
-    // add baseline tests from WP7 if present (origin 'baseline').
+    // add baseline tests from baseline generator if present (origin 'baseline').
     for (const testCase of testPlan.testCases) {
       signal?.throwIfAborted();
       const referencedIds = new Set(

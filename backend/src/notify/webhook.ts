@@ -45,7 +45,7 @@ export function signWebhookBody(secret: string, body: string): string {
   return `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`;
 }
 
-// DNS-rebinding between this lookup and fetch's lookup is a known gap (Phase 9A pinned agent).
+// DNS-rebinding between this lookup and fetch's lookup is a known gap (mitigated via pinned lookup / egress policy).
 async function resolvesPublicly(url: URL): Promise<boolean> {
   if (allowPrivateTargets()) return true;
   try {

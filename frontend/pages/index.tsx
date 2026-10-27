@@ -301,6 +301,9 @@ export default function HomePage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  const handleCrawlRef = useRef(handleCrawl);
+  handleCrawlRef.current = handleCrawl;
+
   useEffect(() => {
     if (!router.isReady || autoCrawlDoneRef.current) return;
     const urlParam = router.query.url;
@@ -316,7 +319,7 @@ export default function HomePage() {
       setQueryUrl(targetUrl);
       if (!autoCrawlDoneRef.current) {
         autoCrawlDoneRef.current = true;
-        void handleCrawl(targetUrl);
+        void handleCrawlRef.current(targetUrl);
       }
     }
   }, [router.isReady, router.query]);

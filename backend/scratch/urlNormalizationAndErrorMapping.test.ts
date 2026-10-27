@@ -391,7 +391,7 @@ async function testBudgetQuotaExempt() {
 }
 
 async function main() {
-  console.log('=== Running Quick-Fix Batch Verification Suite ===\n');
+  console.log('=== Running URL Normalization & Error Mapping Suite ===\n');
   await testNormalizeTargetUrl();
   await testSchemasValidation();
   await testErrorMapping();
@@ -403,7 +403,7 @@ async function main() {
   await testPipelineErrorMessage();
   await testConfigGuard();
   await testBudgetQuotaExempt();
-  console.log('\n=== ALL QUICK-FIX SUITE TESTS PASSED ===');
+  console.log('\n=== ALL URL NORMALIZATION & ERROR MAPPING SUITE TESTS PASSED ===');
 }
 
 main()
@@ -411,7 +411,7 @@ main()
     process.exit(0);
   })
   .catch((err) => {
-    console.error('\n❌ Quick-fix suite failed:', err);
+    console.error('\n❌ URL Normalization & Error Mapping Suite failed:', err);
     process.exit(1);
   })
   .finally(async () => {

@@ -102,7 +102,7 @@ export function isAllowedOrigin(origin: string, options: IsAllowedOriginOptions)
 }
 
 // CORS middleware driven by FRONTEND_ORIGIN allowlist (comma-separated), preview regex, and localhost.
-// Needed in production for direct SSE stream fallback (WP6) and in local agent mode for PNA.
+// Needed in production for direct SSE stream fallback and in local agent mode for PNA.
 app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.header('origin');
   if (!origin) {

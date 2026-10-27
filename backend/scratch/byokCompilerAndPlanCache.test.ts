@@ -429,7 +429,7 @@ async function runTests() {
       };
 
       const capped = capAndRenumberTestPlan(excessivePlan);
-      // Phase 12: cap raised from 6 to 8 (MAX_AI_TEST_CASES = 8).
+      // Cap raised from 6 to 8 (MAX_AI_TEST_CASES = 8).
       assert.equal(capped.testCases.length, 8);
       assert.deepEqual(
         capped.testCases.map((tc) => tc.id),
@@ -643,7 +643,7 @@ async function runTests() {
       assert.equal(parsedBadId.success, false, 'Bad elementId regex must be rejected');
     }
 
-    console.log('\nAll 14 testPhase12 assertions passed successfully!\n');
+    console.log('\nAll 14 BYOK, Compiler & Plan Cache Suite assertions passed successfully!\n');
   } finally {
     globalThis.fetch = originalFetch;
   }

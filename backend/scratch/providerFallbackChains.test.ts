@@ -13,6 +13,7 @@ import { openAiCompatibleChat } from '../src/llm/providers/openAiCompatible.ts';
 import { callLlm } from '../src/llm/client.ts';
 import { LlmError } from '../src/llm/types.ts';
 import { withRequestLlmKeys } from '../src/llm/requestKeys.ts';
+import { extractPlaywrightSpec } from '../src/agent/steps/generator.ts';
 
 async function runTests() {
   console.log('=== RUNNING FALLBACK CHAINS & ROUTING VERIFICATION SUITE ===');
@@ -481,6 +482,91 @@ async function runTests() {
     console.log('  PASS: request.modelOverride single-element chain verified');
   } finally {
     globalThis.fetch = originalFetch;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 10. extractPlaywrightSpec & validateContent Fast-Provider Failover
+  // ---------------------------------------------------------------------------
+  console.log('\n--- 10. extractPlaywrightSpec & validateContent Fast-Provider Failover ---');
+  {
+    // (a) extractPlaywrightSpec extraction tests
+    const tsFence = "```typescript\nimport { test, expect } from '@playwright/test';\ntest('demo', async ({ page }) => {});\n```";
+    assert.equal(extractPlaywrightSpec(tsFence), "import { test, expect } from '@playwright/test';\ntest('demo', async ({ page }) => {});");
+
+    const tsxFence = "```tsx\nimport { test, expect } from '@playwright/test';\ntest('demo tsx', async ({ page }) => {});\n```";
+    assert.equal(extractPlaywrightSpec(tsxFence), "import { test, expect } from '@playwright/test';\ntest('demo tsx', async ({ page }) => {});");
+
+    const jsFence = "```javascript\nimport { test, expect } from '@playwright/test';\ntest('demo js', async ({ page }) => {});\n```";
+    assert.equal(extractPlaywrightSpec(jsFence), "import { test, expect } from '@playwright/test';\ntest('demo js', async ({ page }) => {});");
+
+    const bareFence = "```\nimport { test, expect } from '@playwright/test';\ntest('demo bare', async ({ page }) => {});\n```";
+    assert.equal(extractPlaywrightSpec(bareFence), "import { test, expect } from '@playwright/test';\ntest('demo bare', async ({ page }) => {});");
+
+    const unfencedRaw = "import { test, expect } from '@playwright/test';\ntest('demo raw', async ({ page }) => {});";
+    assert.equal(extractPlaywrightSpec(unfencedRaw), "import { test, expect } from '@playwright/test';\ntest('demo raw', async ({ page }) => {});");
+
+    const proseOnly = "Here is your requested Playwright test. Make sure you install playwright first!";
+    assert.equal(extractPlaywrightSpec(proseOnly), null);
+
+    console.log('  PASS: extractPlaywrightSpec fence formats and unfenced fallback verified');
+
+    // (b) callLlm with validateContent advances from Groq to Gemini when Groq returns prose without code
+    try {
+      const calledProviders: string[] = [];
+
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const body = JSON.parse(String(init?.body || '{}'));
+
+        if (urlStr.includes('api.groq.com')) {
+          calledProviders.push('groq');
+          // Groq returns 200 OK with prose only (no code fence or import)
+          return new Response(
+            JSON.stringify({
+              choices: [{ message: { content: 'I cannot generate that test right now.' } }],
+              model: body.model,
+              usage: { prompt_tokens: 10, completion_tokens: 10 },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+
+        calledProviders.push('gemini');
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: {
+                content: "```typescript\nimport { test, expect } from '@playwright/test';\ntest('gemini', async () => {});\n```",
+              },
+            }],
+            model: body.model,
+            usage: { prompt_tokens: 12, completion_tokens: 12 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }) as typeof globalThis.fetch;
+
+      const response = await withRequestLlmKeys({ groq: 'test-groq-key', gemini: 'test-gemini-key' }, async () => {
+        return callLlm({
+          messages: [{ role: 'user', content: 'generate test' }],
+          tier: 'fast',
+          task: 'generate',
+          validateContent: (content) => {
+            if (!extractPlaywrightSpec(content)) {
+              throw new LlmError('BAD_RESPONSE', 'Output missing Playwright spec');
+            }
+          },
+        });
+      });
+
+      assert.equal(response.provider, 'gemini', 'Must fail over to gemini when groq returns invalid content');
+      assert.ok(extractPlaywrightSpec(response.content) !== null, 'Gemini content must extract valid spec');
+      assert.deepEqual(calledProviders, ['groq', 'gemini'], 'Must attempt Groq first, then advance to Gemini');
+
+      console.log('  PASS: validateContent failover from Groq to Gemini verified');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   }
 
   console.log('\n=== ALL FALLBACK CHAIN VERIFICATION TESTS PASSED SUCCESSFULLY ===');

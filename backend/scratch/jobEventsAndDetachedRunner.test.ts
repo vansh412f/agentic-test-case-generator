@@ -7,7 +7,7 @@ import { llmKeyOverride } from '../src/llm/requestKeys.ts';
 import { GenerateRequestSchema } from '../src/api/schemas.ts';
 import { MAX_URLS_PER_RUN } from '../src/agent/run.config.ts';
 
-// --- 8B: event channel replay semantics ------------------------------------
+// --- Event channel replay semantics -----------------------------------------
 const jobA = '00000000-0000-4000-8000-00000000000a';
 assert.equal(subscribeJobEvents(jobA, undefined, () => {}), null, 'no channel -> null (DB snapshot only)');
 openJobChannel(jobA);
@@ -30,9 +30,9 @@ publishJobEvent(jobA, { type: 'job_finished', data: { status: 'completed', error
 publishJobEvent(jobA, { type: 'phase_change', data: { status: 'crawling' } });
 assert.deepEqual(live.map((e) => e.type), ['job_finished'], 'live delivery; nothing after job_finished');
 fresh.unsubscribe();
-console.log('[PASS] 8B channel replay + finish semantics');
+console.log('[PASS] Channel replay + finish semantics');
 
-// --- 8A: detached run keeps BYOK ALS context, releases gate exactly once ----
+// --- Detached run keeps BYOK ALS context, releases gate exactly once --------
 assert.equal(pipelineGate.tryAcquire(), true);
 const before = pipelineGate.activeCount;
 const seenKeys: Array<string | undefined> = [];
@@ -62,9 +62,7 @@ assert.deepEqual(seenKeys, ['gsk_test_key', 'gsk_test_key'], 'ALS context surviv
 assert.equal(settled, true, 'onSettled invoked');
 assert.equal(pipelineGate.activeCount, before - 1, 'gate released exactly once per group');
 assert.deepEqual(inFlightJobs(), []);
-console.log('[PASS] 8A detached run: ALS propagation, sequential group, gate release');
-
-// --- 8A: request schema ------------------------------------------------------
+// --- Detached run request schema ---------------------------------------------
 assert.equal(GenerateRequestSchema.safeParse({ url: 'https://x.example' }).success, true);
 assert.equal(GenerateRequestSchema.safeParse({ urls: ['https://x.example'] }).success, true);
 assert.equal(GenerateRequestSchema.safeParse({ url: 'https://x.example', urls: ['https://y.example'] }).success, false);
@@ -72,5 +70,5 @@ assert.equal(
   GenerateRequestSchema.safeParse({ urls: Array.from({ length: MAX_URLS_PER_RUN + 1 }, (_, i) => `https://x${i}.example`) }).success,
   false,
 );
-console.log('[PASS] 8A request schema');
-console.log('Phase 8 verification passed.');
+console.log('[PASS] Detached run request schema');
+console.log('SSE Job Events & Detached Runner verification passed.');

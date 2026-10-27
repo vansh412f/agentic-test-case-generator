@@ -66,6 +66,7 @@ export interface LlmRequest {
   task?: LlmTaskLabel | string;
   modelOverride?: string;
   signal?: AbortSignal;
+  validateContent?: (content: string) => void;
 }
 
 /** Normalised response returned to the caller regardless of provider. */

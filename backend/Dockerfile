@@ -59,8 +59,12 @@ COPY --from=builder /app/dist ./dist
 # Copy playwright-runner source files from builder
 COPY --from=builder /app/playwright-runner/package.json /app/playwright-runner/playwright.config.ts /app/playwright-runner/tsconfig.json /app/playwright-runner/netGuard.mjs /app/playwright-runner/agt-capture.ts ./playwright-runner/
 
-# Install chromium-headless-shell ONLY with OS dependencies
-RUN node playwright-runner/node_modules/@playwright/test/cli.js install --with-deps chromium-headless-shell
+# Optional local Chromium binary (false by default for hosted Cloud Run WS deployments;
+# pass --build-arg INSTALL_LOCAL_BROWSER=true for standalone single-container Docker runs)
+ARG INSTALL_LOCAL_BROWSER=false
+RUN if [ "$INSTALL_LOCAL_BROWSER" = "true" ]; then \
+      node playwright-runner/node_modules/@playwright/test/cli.js install --with-deps chromium-headless-shell; \
+    fi
 
 # Setup users and permissions
 # Group agt (1002), user agtrunner (1001), node added to agt
