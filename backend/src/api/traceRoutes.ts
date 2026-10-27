@@ -21,7 +21,7 @@ router.get('/:traceId', (req, res, next) => {
   const safeTestId = found.entry.testCaseId.replace(/[^\w-]/g, '');
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="trace-${safeTestId}-attempt-${found.entry.attemptNumber}.zip"`);
-  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Cache-Control', 'private, max-age=600, immutable');
   res.setHeader('Content-Length', found.entry.sizeBytes);
 
   const stream = createReadStream(found.filePath);

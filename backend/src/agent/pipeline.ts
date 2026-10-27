@@ -136,6 +136,7 @@ export async function executeChunkedBatch(
     chunkSize?: number;
     jobId?: string;
     traceOwnerId?: string;
+    onChunkResults?: (chunkResults: TestCaseResult[], chunkFilenames: string[]) => Promise<void>;
   },
 ): Promise<{ success: boolean; results: TestCaseResult[] }> {
   const chunkSize = options.chunkSize ?? EXECUTION_CHUNK_SIZE;
@@ -250,6 +251,8 @@ export async function executeChunkedBatch(
         throw err;
       }
     }
+    const chunkResultsForThisChunk = allResults.slice(allResults.length - chunkFiles.length);
+    await options.onChunkResults?.(chunkResultsForThisChunk, chunkFiles.map((f) => f.filename));
   }
 
   return {
@@ -510,7 +513,7 @@ async function runPersistedPipeline(
           batchLatencyMs,
         };
       },
-      executeBatch: async (validFiles, executionMeta) => {
+      executeBatch: async (validFiles, executionMeta, onChunkResults) => {
         return await executeChunkedBatch(runId, validFiles, {
           secrets: resolvedData?.secrets,
           signal,
@@ -518,6 +521,7 @@ async function runPersistedPipeline(
           executionMeta,
           jobId,
           traceOwnerId,
+          onChunkResults,
         });
       },
       correct: async ({ test, errorText, attemptNumber, failureContext }) => {

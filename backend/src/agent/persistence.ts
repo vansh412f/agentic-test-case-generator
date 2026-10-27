@@ -5,6 +5,7 @@ import { withLlmObserver } from '../llm/telemetry.ts';
 import { GEMINI_DEFAULT_MODEL, GROQ_DEFAULT_MODEL } from '../llm/providers.config.ts';
 import type { LlmProviderName } from '../llm/providers.config.ts';
 import { publishJobEvent } from './jobEvents.ts';
+import { sanitizeError } from '../runner/sanitizeError.ts';
 
 const PROVIDER_MODELS: Record<LlmProviderName, string> = {
   groq: GROQ_DEFAULT_MODEL,
@@ -27,6 +28,13 @@ export async function recordStep(input: AgentStepInput): Promise<void> {
       status: input.status,
       testCaseId: input.testCaseId ?? null,
       attemptNumber: input.attemptNumber ?? null,
+      latencyMs: input.latencyMs ?? null,
+      llmProvider: input.llmProvider ?? null,
+      llmModel: input.llmModel ?? null,
+      promptTokens: input.promptTokens ?? null,
+      completionTokens: input.completionTokens ?? null,
+      errorDetail: input.errorDetail ? sanitizeError(input.errorDetail) : null,
+      createdAt: (input.createdAt ?? new Date()).toISOString(),
     },
   });
 }

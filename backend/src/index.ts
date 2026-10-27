@@ -41,7 +41,16 @@ const app = express();
 // one IP bucket or trusts spoofable headers.
 app.set('trust proxy', config.TRUST_PROXY_HOPS);
 app.disable('x-powered-by');
-app.use(compression());
+app.use(
+  compression({
+    filter: (req, res) => {
+      if (req.path.startsWith('/api/traces/') || req.path.endsWith('/stream')) {
+        return false;
+      }
+      return compression.filter(req, res);
+    },
+  }),
+);
 
 // Middleware: Parse incoming JSON request bodies
 app.use(express.json());
@@ -156,7 +165,19 @@ try {
   // Viewer is optional; signed download still works without it.
 }
 if (traceViewerDir) {
-  app.use('/trace-viewer', express.static(traceViewerDir, { index: 'index.html', maxAge: '1h', immutable: false }));
+  app.use(
+    '/trace-viewer',
+    express.static(traceViewerDir, {
+      index: 'index.html',
+      setHeaders: (res, filePath) => {
+        if (/[\\/]assets[\\/]/.test(filePath)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+        }
+      },
+    }),
+  );
   logger.info(`serving /trace-viewer from ${traceViewerDir}`, { component: 'TraceViewer' });
 } else {
   logger.warn('bundled viewer not found; /trace-viewer disabled', { component: 'TraceViewer' });

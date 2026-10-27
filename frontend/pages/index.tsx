@@ -458,7 +458,10 @@ export default function HomePage() {
       dispatch({ type: 'JOBS_ACCEPTED', jobIds });
       trackJobs(jobIds, urls);
       void mutateBudget();
-      if (jobIds.length > 1) {
+      if (jobIds.length === 1) {
+        navigatedRef.current = jobIds[0];
+        void router.push(`/jobs/${jobIds[0]}`);
+      } else if (jobIds.length > 1) {
         toast.success(`${jobIds.length} jobs queued. They run one after another.`);
       }
     } catch (error) {

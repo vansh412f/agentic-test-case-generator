@@ -3,7 +3,7 @@ import useSWR from 'swr';
 import type { KeyedMutator } from 'swr';
 import { fetcher, apiBase } from '@/lib/api';
 import { isTerminalJobStatus } from '@/lib/utils';
-import type { JobDetail, JobStatus } from '@/types/api';
+import type { JobDetail, JobStatus, AgentStep } from '@/types/api';
 
 export type JobTransport = 'idle' | 'sse' | 'polling';
 
@@ -24,7 +24,7 @@ export interface JobStreamResult {
 }
 
 const POLL_INTERVAL_MS = 2000;
-const REFETCH_THROTTLE_MS = 750;
+const REFETCH_THROTTLE_MS = 250;
 const MAX_CONSECUTIVE_SSE_ERRORS = 3;
 
 const JOB_STATUSES: readonly JobStatus[] = [
@@ -106,7 +106,6 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     const source = new EventSource(`${streamOrigin}/api/jobs/${jobId}/stream`);
     let errors = 0;
     let timer: number | null = null;
-    let stepTimer: number | null = null;
     let closed = false;
 
     const scheduleRefetch = (): void => {
@@ -117,16 +116,7 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
       }, REFETCH_THROTTLE_MS);
     };
 
-    const scheduleStepRefetch = (): void => {
-      if (closed) return;
-      if (stepTimer !== null) window.clearTimeout(stepTimer);
-      stepTimer = window.setTimeout(() => {
-        stepTimer = null;
-        if (!closed) void mutateRef.current();
-      }, 5000);
-    };
-
-    const handleStatusEvent = (e: Event): void => {
+    const handleSnapshotEvent = (e: Event): void => {
       if (closed) return;
       const status = parseJobStatus(e);
       if (status) {
@@ -136,6 +126,86 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
         }
       }
       scheduleRefetch();
+    };
+
+    const handlePhaseChange = (e: Event): void => {
+      if (closed) return;
+      const status = parseJobStatus(e);
+      if (status) {
+        setLiveStatus(status);
+        if (status !== 'crawling' && status !== 'pending') {
+          setWakingInfo(null);
+        }
+        void mutateRef.current((prev) => (prev ? { ...prev, status } : prev), false);
+        if (status === 'planning' || status === 'generating' || !swr.data) {
+          scheduleRefetch();
+        }
+      } else {
+        scheduleRefetch();
+      }
+    };
+
+    const handleStepRecorded = (e: Event): void => {
+      if (closed) return;
+      if (!(e instanceof MessageEvent) || typeof e.data !== 'string') {
+        scheduleRefetch();
+        return;
+      }
+      try {
+        const payload = JSON.parse(e.data);
+        const data = payload?.data;
+        if (!data || typeof data.stepType !== 'string' || typeof data.status !== 'string') {
+          scheduleRefetch();
+          return;
+        }
+
+        const stepId = typeof (e as any).lastEventId === 'string' && (e as any).lastEventId.length > 0
+          ? (e as any).lastEventId
+          : `sse-${Date.now()}-${Math.random()}`;
+
+        const newStep: AgentStep = {
+          id: stepId,
+          jobId: jobId,
+          stepType: data.stepType,
+          status: data.status,
+          testCaseId: data.testCaseId ?? null,
+          attemptNumber: data.attemptNumber ?? null,
+          latencyMs: typeof data.latencyMs === 'number' ? data.latencyMs : null,
+          llmProvider: typeof data.llmProvider === 'string' ? data.llmProvider : null,
+          llmModel: typeof data.llmModel === 'string' ? data.llmModel : null,
+          promptTokens: typeof data.promptTokens === 'number' ? data.promptTokens : null,
+          completionTokens: typeof data.completionTokens === 'number' ? data.completionTokens : null,
+          errorDetail: typeof data.errorDetail === 'string' ? data.errorDetail : null,
+          createdAt: typeof data.createdAt === 'string' ? data.createdAt : new Date().toISOString(),
+        };
+
+        void mutateRef.current((prev) => {
+          if (!prev) {
+            scheduleRefetch();
+            return prev;
+          }
+          const promptDelta = typeof data.promptTokens === 'number' ? data.promptTokens : 0;
+          const compDelta = typeof data.completionTokens === 'number' ? data.completionTokens : 0;
+          const totalDelta = promptDelta + compDelta;
+
+          const updatedUsage = totalDelta > 0 && prev.tokenUsage
+            ? {
+                ...prev.tokenUsage,
+                totalTokens: prev.tokenUsage.totalTokens + totalDelta,
+                promptTokens: prev.tokenUsage.promptTokens + promptDelta,
+                completionTokens: prev.tokenUsage.completionTokens + compDelta,
+              }
+            : prev.tokenUsage;
+
+          return {
+            ...prev,
+            tokenUsage: updatedUsage,
+            agentSteps: [...prev.agentSteps, newStep],
+          };
+        }, false);
+      } catch {
+        scheduleRefetch();
+      }
     };
 
     const stop = (next: JobTransport): void => {
@@ -151,9 +221,9 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
       setTransport('sse');
     };
 
-    source.addEventListener('snapshot', handleStatusEvent);
-    source.addEventListener('phase_change', handleStatusEvent);
-    source.addEventListener('step_recorded', scheduleStepRefetch);
+    source.addEventListener('snapshot', handleSnapshotEvent);
+    source.addEventListener('phase_change', handlePhaseChange);
+    source.addEventListener('step_recorded', handleStepRecorded);
     source.addEventListener('test_completed', scheduleRefetch);
     source.addEventListener('budget_note', (e: Event) => {
       if (closed) return;
@@ -215,7 +285,6 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
     return () => {
       closed = true;
       if (timer !== null) window.clearTimeout(timer);
-      if (stepTimer !== null) window.clearTimeout(stepTimer);
       source.close();
     };
   }, [jobId, startTerminal]);

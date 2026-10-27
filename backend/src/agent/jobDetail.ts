@@ -7,15 +7,24 @@ import { isTerminal } from '../api/jobStream.ts';
 import { runQueue } from './runQueue.ts';
 import { sanitizeError } from '../runner/sanitizeError.ts';
 import { summarizeFailure, type FailureSummary } from '../report/failureSummary.ts';
-import { traceForAttempt } from '../runner/traceStore.ts';
+import { traceForAttempt, signTraceToken } from '../runner/traceStore.ts';
 import { config } from '../config.ts';
 
 type PersistedTest = LoadedJob['generatedTests'][number];
 type PersistedAttempt = PersistedTest['executionResults'][number];
 
+export interface TraceAttemptLinks {
+  traceId: string;
+  expiresAt: string;
+  tokenExpiresAt: string;
+  downloadPath: string;
+  viewerPath: string;
+}
+
 export interface JobDetailAttempt extends PersistedAttempt {
   failureSummary?: FailureSummary;
   traceExpiresAt?: string;
+  traceLinks?: TraceAttemptLinks;
 }
 
 export interface JobDetailTest extends Omit<PersistedTest, 'executionResults'> {
@@ -83,7 +92,7 @@ export function buildJobDetail(
       const lastAttempt = sortedAttempts[sortedAttempts.length - 1];
       const failureSummary = lastAttempt?.failureSummary;
 
-      // Add traceExpiresAt for EVERY attempt with a live trace (owner/local-unclaimed only)
+      // Add traceExpiresAt & traceLinks for EVERY attempt with a live trace (owner/local-unclaimed only)
       const isOwner = Boolean(visitorId && options?.viewerVisitorId && options.viewerVisitorId === visitorId);
       const isLocalUnclaimed = !visitorId && config.LOCAL_AGENT_MODE;
       if (isOwner || isLocalUnclaimed) {
@@ -92,6 +101,15 @@ export function buildJobDetail(
           const traceEntry = traceForAttempt(job.id, test.testCaseId, attempt.attemptNumber, effectiveOwner);
           if (traceEntry) {
             attempt.traceExpiresAt = new Date(traceEntry.expiresAt).toISOString();
+            const token = signTraceToken(traceEntry.traceId, effectiveOwner);
+            const downloadPath = `/api/traces/${traceEntry.traceId}?t=${token}`;
+            attempt.traceLinks = {
+              traceId: traceEntry.traceId,
+              expiresAt: new Date(traceEntry.expiresAt).toISOString(),
+              tokenExpiresAt: new Date(Date.now() + 9 * 60_000).toISOString(),
+              downloadPath,
+              viewerPath: `/trace-viewer/index.html?trace=${encodeURIComponent(downloadPath)}`,
+            };
           }
         }
       }

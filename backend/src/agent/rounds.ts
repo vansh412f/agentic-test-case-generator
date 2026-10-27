@@ -61,6 +61,7 @@ export interface RoundDeps {
   executeBatch: (
     files: Array<{ filename: string; code: string }>,
     executionMeta?: RoundExecutionMeta[],
+    onChunkResults?: (chunkResults: TestCaseResult[], chunkFilenames: string[]) => Promise<void>,
   ) => Promise<{
     success: boolean;
     results: TestCaseResult[];
@@ -294,104 +295,133 @@ export async function runRounds(
         attemptNumber: t.attempts.length + 1,
       }));
 
-      deps.signal?.throwIfAborted();
-      const executionResult = await deps.executeBatch(validFiles, executionMeta);
+      const processedInThisRound = new Set<string>();
 
-      for (const test of testsToExecute) {
-        deps.signal?.throwIfAborted();
-        const testCaseIdFromFilename = test.filename.replace(/\.spec\.ts$/, '');
-        const matched = executionResult.results.find(
-          (r) =>
-            r.testCaseId === test.testCase.id ||
-            r.testCaseId === testCaseIdFromFilename,
-        );
+      const processExecutedSubset = async (
+        subset: RoundTest[],
+        reportedResults: TestCaseResult[],
+      ): Promise<void> => {
+        for (const test of subset) {
+          if (processedInThisRound.has(test.filename)) continue;
+          processedInThisRound.add(test.filename);
+          deps.signal?.throwIfAborted();
 
-        // B20: Never fall back to results[0]
-        const result: TestCaseResult = matched ?? {
-          testCaseId: test.testCase.id,
-          passed: false,
-          durationMs: 0,
-          error: 'Test case was not reported by Playwright',
-          failureClass: 'other',
-        };
+          const testCaseIdFromFilename = test.filename.replace(/\.spec\.ts$/, '');
+          const matched = reportedResults.find(
+            (r) =>
+              r.testCaseId === test.testCase.id ||
+              r.testCaseId === testCaseIdFromFilename,
+          );
 
-        const execPassed = Boolean(result.passed);
-        const execError = result.error;
-        const failureClass = result.failureClass;
-        const failureContext = result.failureContext;
-        const durationMs = result.durationMs ?? 0;
+          // Never fall back to results[0]
+          const result: TestCaseResult = matched ?? {
+            testCaseId: test.testCase.id,
+            passed: false,
+            durationMs: 0,
+            error: 'Test case was not reported by Playwright',
+            failureClass: 'other',
+          };
 
-        const attempt = pushAttempt(test, {
-          code: test.code,
-          validationPassed: true,
-          executionPassed: execPassed,
-          ...(execError ? { executionError: execError } : {}),
-          ...(failureClass ? { failureClass } : {}),
-          ...(failureContext ? { failureContext } : {}),
-          durationMs,
-          corrected: test.origin === 'corrected',
-        });
+          const execPassed = Boolean(result.passed);
+          const execError = result.error;
+          const failureClass = result.failureClass;
+          const failureContext = result.failureContext;
+          const durationMs = result.durationMs ?? 0;
 
-        await deps.recordStep?.({
-          testCaseId: test.testCase.id,
-          attemptNumber: attempt.attemptNumber,
-          stepType: 'execute',
-          status: execPassed ? 'success' : 'failure',
-          latencyMs: durationMs,
-          errorDetail: execPassed ? undefined : (execError ?? 'Execution failed'),
-        });
+          const attempt = pushAttempt(test, {
+            code: test.code,
+            validationPassed: true,
+            executionPassed: execPassed,
+            ...(execError ? { executionError: execError } : {}),
+            ...(failureClass ? { failureClass } : {}),
+            ...(failureContext ? { failureContext } : {}),
+            durationMs,
+            corrected: test.origin === 'corrected',
+          });
 
-        if (execPassed) {
-          test.status = 'passed';
-        } else if (failureClass === 'finding') {
-          // Real finding: never corrected
-          test.status = 'failed';
-        } else if (
-          test.origin !== 'baseline' &&
-          isStaleExpectation({
-            failureClass,
-            failureContext,
-            error: execError,
-            appMap: deps.appMap,
-            startUrl: deps.startUrl,
-            isBaseline: false,
-          })
-        ) {
-          test.status = 'needs_review';
-        } else if (test.origin === 'baseline') {
-          // Baselines: never corrected
-          test.status = 'gave_up';
-        } else if (round < maxRounds) {
-          const canProceed = deps.canCorrect ? deps.canCorrect(test) : true;
-          if (!canProceed) {
-            attempt.gaveUpReason = 'token_budget';
-            attempt.executionError = (attempt.executionError ? attempt.executionError + ' ' : '') + '[gaveUpReason: token_budget]';
-            markGaveUpOrNeedsReview(test);
-          } else {
-            const errorText = execError || 'Test execution failed';
+          await deps.recordStep?.({
+            testCaseId: test.testCase.id,
+            attemptNumber: attempt.attemptNumber,
+            stepType: 'execute',
+            status: execPassed ? 'success' : 'failure',
+            latencyMs: durationMs,
+            errorDetail: execPassed ? undefined : (execError ?? 'Execution failed'),
+          });
 
-            const correction = await deps.correct({
-              test,
-              errorText,
-              attemptNumber: attempt.attemptNumber,
+          if (execPassed) {
+            test.status = 'passed';
+          } else if (failureClass === 'finding') {
+            // Real finding: never corrected
+            test.status = 'failed';
+          } else if (
+            test.origin !== 'baseline' &&
+            isStaleExpectation({
+              failureClass,
               failureContext,
-            });
-            test.priorErrors.push(errorText);
-            if (test.priorErrors.length > 2) {
-              test.priorErrors.splice(0, test.priorErrors.length - 2);
-            }
-            if (correction?.code) {
-              test.code = correction.code;
-              test.codeVersion += 1;
-              test.origin = 'corrected';
-              // Test stays open; validatedVersion is old so it will be validated in round + 1
-            } else {
+              error: execError,
+              appMap: deps.appMap,
+              startUrl: deps.startUrl,
+              isBaseline: false,
+            })
+          ) {
+            test.status = 'needs_review';
+          } else if (test.origin === 'baseline') {
+            // Baselines: never corrected
+            test.status = 'gave_up';
+          } else if (round < maxRounds) {
+            const canProceed = deps.canCorrect ? deps.canCorrect(test) : true;
+            if (!canProceed) {
+              attempt.gaveUpReason = 'token_budget';
+              attempt.executionError = (attempt.executionError ? attempt.executionError + ' ' : '') + '[gaveUpReason: token_budget]';
               markGaveUpOrNeedsReview(test);
+            } else {
+              const errorText = execError || 'Test execution failed';
+
+              const correction = await deps.correct({
+                test,
+                errorText,
+                attemptNumber: attempt.attemptNumber,
+                failureContext,
+              });
+              test.priorErrors.push(errorText);
+              if (test.priorErrors.length > 2) {
+                test.priorErrors.splice(0, test.priorErrors.length - 2);
+              }
+              if (correction?.code) {
+                test.code = correction.code;
+                test.codeVersion += 1;
+                test.origin = 'corrected';
+                // Test stays open; validatedVersion is old so it will be validated in round + 1
+              } else {
+                markGaveUpOrNeedsReview(test);
+              }
+            }
+          } else {
+            markGaveUpOrNeedsReview(test);
+          }
+        }
+      };
+
+      deps.signal?.throwIfAborted();
+      const executionResult = await deps.executeBatch(
+        validFiles,
+        executionMeta,
+        async (chunkResults, chunkFilenames) => {
+          const chunkTests = testsToExecute.filter(
+            (t) => chunkFilenames.includes(t.filename) && !processedInThisRound.has(t.filename),
+          );
+          await processExecutedSubset(chunkTests, chunkResults);
+          for (const test of chunkTests) {
+            if (test.status !== 'open' && !test.recorded) {
+              await deps.emitTerminal?.(test);
             }
           }
-        } else {
-          markGaveUpOrNeedsReview(test);
-        }
+        },
+      );
+
+      const remainingTests = testsToExecute.filter((t) => !processedInThisRound.has(t.filename));
+      if (remainingTests.length > 0) {
+        await processExecutedSubset(remainingTests, executionResult.results);
       }
     }
 

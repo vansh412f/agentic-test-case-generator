@@ -20,6 +20,7 @@ export interface ReplayItem {
   error?: string | null;
   failureSummary?: ExecutionResult['failureSummary'];
   traceExpiresAt?: string;
+  traceLinks?: ExecutionResult['traceLinks'];
   hasLiveTrace: boolean;
 }
 
@@ -64,6 +65,7 @@ export function ReplayPanel({
             error: att.executionError,
             failureSummary: att.failureSummary,
             traceExpiresAt: att.traceExpiresAt,
+            traceLinks: att.traceLinks,
             hasLiveTrace,
           });
         }
@@ -148,12 +150,23 @@ export function ReplayPanel({
 
   useEffect(() => {
     if (activeTestCaseId && activeAttemptNumber !== null) {
-      void fetchLinks(activeTestCaseId, activeAttemptNumber);
+      if (
+        activeItem?.hasLiveTrace &&
+        activeItem.traceLinks &&
+        Date.parse(activeItem.traceLinks.tokenExpiresAt) > Date.now()
+      ) {
+        setTraceLinks(activeItem.traceLinks);
+        setLoadedKey(activeKey);
+        setLoading(false);
+        setErrorMsg(null);
+      } else {
+        void fetchLinks(activeTestCaseId, activeAttemptNumber);
+      }
     } else {
       setTraceLinks(null);
       setLoadedKey(null);
     }
-  }, [activeTestCaseId, activeAttemptNumber, fetchLinks]);
+  }, [activeTestCaseId, activeAttemptNumber, activeKey, activeItem, fetchLinks]);
 
   const visibleLinks = loadedKey === activeKey ? traceLinks : null;
 

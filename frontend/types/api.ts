@@ -211,6 +211,13 @@ export interface ExecutionResult {
   corrected: boolean;
   createdAt: string;
   traceExpiresAt?: string;
+  traceLinks?: {
+    traceId: string;
+    expiresAt: string;
+    tokenExpiresAt: string;
+    downloadPath: string;
+    viewerPath: string;
+  };
 }
 
 export interface PersistedGeneratedTest {

@@ -5,7 +5,19 @@ export type JobEventPayload =
   | { type: 'phase_change'; data: { status: JobStatus } }
   | {
       type: 'step_recorded';
-      data: { stepType: StepType; status: StepStatus; testCaseId: string | null; attemptNumber: number | null };
+      data: {
+        stepType: StepType;
+        status: StepStatus;
+        testCaseId: string | null;
+        attemptNumber: number | null;
+        latencyMs?: number | null;
+        llmProvider?: string | null;
+        llmModel?: string | null;
+        promptTokens?: number | null;
+        completionTokens?: number | null;
+        errorDetail?: string | null;
+        createdAt?: string;
+      };
     }
   | { type: 'test_completed'; data: { testCaseId: string; status: TestStatus; totalAttempts: number } }
   | { type: 'job_finished'; data: { status: 'completed' | 'failed' | 'cancelled'; errorCode: string | null } }
