@@ -144,6 +144,7 @@ export async function executeChunkedBatch(
 
   for (let i = 0; i < validFiles.length; i += chunkSize) {
     options.signal?.throwIfAborted();
+    const chunkStartIndex = allResults.length;
     const chunkFiles = validFiles.slice(i, i + chunkSize);
     const chunkMeta = options.executionMeta?.filter((m) =>
       chunkFiles.some((f) => f.filename === m.filename),
@@ -251,7 +252,7 @@ export async function executeChunkedBatch(
         throw err;
       }
     }
-    const chunkResultsForThisChunk = allResults.slice(allResults.length - chunkFiles.length);
+    const chunkResultsForThisChunk = allResults.slice(chunkStartIndex);
     await options.onChunkResults?.(chunkResultsForThisChunk, chunkFiles.map((f) => f.filename));
   }
 

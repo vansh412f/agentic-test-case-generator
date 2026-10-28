@@ -2,7 +2,7 @@ import type { z } from 'zod';
 import { callLlm } from '../../llm/client.ts';
 import { LlmError } from '../../llm/types.ts';
 import type { LlmMessage } from '../../llm/types.ts';
-import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt, TestPlanSchema, type PlanStep, type TestCase } from '../prompts/plannerPrompt.ts';
+import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt, TestPlanSchema, TestCaseSchema, type PlanStep, type TestCase } from '../prompts/plannerPrompt.ts';
 import type { TestPlan } from '../prompts/plannerPrompt.ts';
 import type { AppMap, InteractiveElement, Observation } from '../../crawler/types.ts';
 import type { ElementRef, TestDataEntry } from '../../api/schemas.ts';
@@ -181,6 +181,43 @@ export function validateAndNormalizePlan(
     capAndRenumberTestPlan(result.data);
   }
   return { ok: true, plan: result.data };
+}
+
+export function salvageValidSchemaCases(
+  content: string,
+  knownIds: Set<string>,
+  appMapUrl: string,
+): TestCase[] {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.testCases)) {
+    return [];
+  }
+
+  normalizeLocatorLessAssertText(parsed);
+
+  const salvaged: TestCase[] = [];
+  for (const rawCandidate of parsed.testCases) {
+    const singleParse = TestCaseSchema.safeParse(rawCandidate);
+    if (!singleParse.success) {
+      continue;
+    }
+    const singlePlanStr = JSON.stringify({ testCases: [rawCandidate] });
+    const singlePlanRes = validateAndNormalizePlan(singlePlanStr, knownIds, appMapUrl, { cap: false });
+    if (singlePlanRes.ok && singlePlanRes.plan.testCases.length > 0) {
+      salvaged.push(singlePlanRes.plan.testCases[0]);
+    }
+  }
+
+  salvaged.forEach((tc, idx) => {
+    tc.id = `tc-${idx + 1}`;
+  });
+
+  return salvaged;
 }
 
 function isNavigationOnlyTest(tc: TestCase, elementsMap: Map<string, InteractiveElement>): boolean {
@@ -609,6 +646,16 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
         console.warn(`[Planner] Dual-call ${side} references error; salvaged ${validCases.length} cases`);
         return { cases: validCases, salvaged: true, content: settled.value.content, res };
       }
+      if (!res.ok && res.kind === 'schema') {
+        const salvagedCases = salvageValidSchemaCases(settled.value.content, knownIds, appMap.url);
+        if (salvagedCases.length > 0) {
+          for (const tc of salvagedCases) {
+            tc.intent = side === 'B' ? 'negative' : 'positive';
+          }
+          console.warn(`[Planner] Dual-call ${side} schema error; salvaged ${salvagedCases.length} valid case(s): ${res.detail.slice(0, 200)}`);
+          return { cases: salvagedCases, salvaged: true, content: settled.value.content, res };
+        }
+      }
       console.warn(`[Planner] Dual-call ${side} failed (${res.kind}): ${res.detail.slice(0, 300)}`);
       return { cases: [], salvaged: false, content: settled.value.content, res };
     }
@@ -616,40 +663,46 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     let { cases: casesA, salvaged: salvagedA, content: contentA, res: resA } = extractCases(settledA, 'A');
     const { cases: casesB, salvaged: salvagedB } = extractCases(settledB, 'B');
 
-    if (casesA.length === 0 && casesB.length === 0) {
-      if (contentA && resA && !resA.ok) {
-        console.warn(`[Planner] Both sides empty. Attempting self-repair on reasoning side A (${resA.kind})...`);
-        const repairMessages: LlmMessage[] = [
-          { role: 'system', content: PLANNER_SYSTEM_PROMPT },
-          { role: 'user', content: promptA },
-          { role: 'assistant', content: contentA },
-          {
-            role: 'user',
-            content: `Your previous response failed validation.\n\nErrors (${resA.kind}):\n${resA.detail}\n\nReturn ONLY the corrected JSON object. No prose, no markdown, no code fences.`,
-          },
-        ];
-        try {
-          const repairResponse = await doCallLlm({
-            messages: repairMessages,
-            jsonMode: true,
-            maxTokens: 3000,
-            tier: 'reasoning',
-            purpose: 'repair',
-            task: 'plan-repair',
-            signal: options?.signal,
-          });
-          const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, { cap: false });
-          if (repairResult.ok) {
-            casesA = repairResult.plan.testCases;
-            for (const tc of casesA) tc.intent = 'positive';
-          } else if (repairResult.kind === 'references') {
-            casesA = repairResult.plan.testCases.filter((_, idx) => !repairResult.badCaseIndexes.has(idx));
+    const budgetAllowsRepair = !options?.tokenBudget || options.tokenBudget <= 0 || !options?.consumedTokens || options.consumedTokens() < options.tokenBudget * 0.75;
+    if (casesA.length === 0 && contentA && resA && !resA.ok && budgetAllowsRepair) {
+      console.warn(`[Planner] Side A produced 0 cases. Attempting self-repair on reasoning side A (${resA.kind})...`);
+      const repairMessages: LlmMessage[] = [
+        { role: 'system', content: PLANNER_SYSTEM_PROMPT },
+        { role: 'user', content: promptA },
+        { role: 'assistant', content: contentA },
+        {
+          role: 'user',
+          content: `Your previous response failed validation.\n\nErrors (${resA.kind}):\n${resA.detail}\n\nReturn ONLY the corrected JSON object. No prose, no markdown, no code fences.`,
+        },
+      ];
+      try {
+        const repairResponse = await doCallLlm({
+          messages: repairMessages,
+          jsonMode: true,
+          maxTokens: 3000,
+          tier: 'reasoning',
+          purpose: 'repair',
+          task: 'plan-repair',
+          signal: options?.signal,
+        });
+        const repairResult = validateAndNormalizePlan(repairResponse.content, knownIds, appMap.url, { cap: false });
+        if (repairResult.ok) {
+          casesA = repairResult.plan.testCases;
+          for (const tc of casesA) tc.intent = 'positive';
+        } else if (repairResult.kind === 'references') {
+          casesA = repairResult.plan.testCases.filter((_, idx) => !repairResult.badCaseIndexes.has(idx));
+          for (const tc of casesA) tc.intent = 'positive';
+          salvagedA = true;
+        } else if (repairResult.kind === 'schema') {
+          const salvaged = salvageValidSchemaCases(repairResponse.content, knownIds, appMap.url);
+          if (salvaged.length > 0) {
+            casesA = salvaged;
             for (const tc of casesA) tc.intent = 'positive';
             salvagedA = true;
           }
-        } catch (repairErr) {
-          console.warn('[Planner] Self-repair failed:', repairErr);
         }
+      } catch (repairErr) {
+        console.warn('[Planner] Self-repair failed:', repairErr);
       }
     }
 
@@ -717,11 +770,19 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     return finalizePlan(repairResult.plan, false, repairResponse.content, false);
   }
 
-  // Graceful degradation for reference-only errors after repair
+  // Graceful degradation for reference-only or schema errors after repair
   if (repairResult.kind === 'references') {
     const salvaged = salvagePlan(repairResult);
     if (salvaged) {
       return finalizePlan(salvaged, true, undefined, false);
+    }
+  }
+
+  if (repairResult.kind === 'schema') {
+    const salvagedCases = salvageValidSchemaCases(repairResponse.content, knownIds, appMap.url);
+    if (salvagedCases.length > 0) {
+      console.warn(`[Planner] Single-call repair schema error; salvaged ${salvagedCases.length} valid case(s)`);
+      return finalizePlan({ testCases: salvagedCases }, true, undefined, false);
     }
   }
 

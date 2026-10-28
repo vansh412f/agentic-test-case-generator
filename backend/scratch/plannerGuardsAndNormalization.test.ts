@@ -8,6 +8,8 @@ import {
   enforceTestData,
   enforceUnprovidedPasswordGuard,
   validateAndNormalizePlan,
+  salvageValidSchemaCases,
+  planTests,
 } from '../src/agent/steps/planner.ts';
 import type { Observation } from '../src/crawler/types.ts';
 import type { TestPlan } from '../src/agent/prompts/plannerPrompt.ts';
@@ -586,6 +588,104 @@ async function main(): Promise<void> {
       assert.equal(result.plan.testCases[0].steps[0].elementId, null);
     }
     pass('P17 Mixed plan: converted step survives while hallucinated case triggers references kind');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P18: salvageValidSchemaCases salvages valid cases from schema-corrupted testCases array
+  // ──────────────────────────────────────────────────
+  await run('P18 salvageValidSchemaCases salvages valid cases from schema-corrupted array', async () => {
+    const rawContent = JSON.stringify({
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Valid Case 1',
+          description: 'Valid steps',
+          steps: [
+            {
+              action: 'click',
+              elementId: 'btn-1',
+              value: null,
+              description: 'Click button 1',
+            },
+          ],
+        },
+        {
+          id: 'tc-2',
+          title: 'Corrupted Case 2',
+          description: 'Invalid action',
+          steps: [
+            {
+              action: 'invalid_action_foo',
+              elementId: 'btn-1',
+              value: null,
+              description: 'Invalid step',
+            },
+          ],
+        },
+        {
+          id: 'tc-3',
+          title: 'Valid Case 3',
+          description: 'Valid navigation',
+          steps: [
+            {
+              action: 'navigate',
+              elementId: null,
+              value: 'https://example.com/pricing',
+              description: 'Go to pricing',
+            },
+          ],
+        },
+      ],
+    });
+
+    const knownIds = new Set(['btn-1']);
+    const salvaged = salvageValidSchemaCases(rawContent, knownIds, 'https://example.com');
+    assert.equal(salvaged.length, 2, 'Should salvage exactly 2 valid cases');
+    assert.equal(salvaged[0].id, 'tc-1');
+    assert.equal(salvaged[0].title, 'Valid Case 1');
+    assert.equal(salvaged[1].id, 'tc-2');
+    assert.equal(salvaged[1].title, 'Valid Case 3');
+    pass('P18 salvageValidSchemaCases successfully salvages valid cases from schema-corrupted array');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P19: salvageValidSchemaCases returns empty array on invalid JSON or missing testCases
+  // ──────────────────────────────────────────────────
+  await run('P19 salvageValidSchemaCases returns empty array on invalid JSON or missing testCases', async () => {
+    const knownIds = new Set(['btn-1']);
+    assert.deepEqual(salvageValidSchemaCases('Not valid JSON', knownIds, 'https://example.com'), []);
+    assert.deepEqual(salvageValidSchemaCases(JSON.stringify({ notCases: [] }), knownIds, 'https://example.com'), []);
+    assert.deepEqual(salvageValidSchemaCases(JSON.stringify({ testCases: 'not-an-array' }), knownIds, 'https://example.com'), []);
+    pass('P19 salvageValidSchemaCases handles malformed JSON and missing testCases safely');
+  });
+
+  // ──────────────────────────────────────────────────
+  // P20: salvageValidSchemaCases applies normalizeLocatorLessAssertText before salvage
+  // ──────────────────────────────────────────────────
+  await run('P20 salvageValidSchemaCases applies normalizeLocatorLessAssertText before salvage', async () => {
+    const rawContent = JSON.stringify({
+      testCases: [
+        {
+          id: 'tc-1',
+          title: 'Banner visibility case',
+          description: 'Locator-less assert_text converted to assert_visible',
+          steps: [
+            {
+              action: 'assert_text',
+              elementId: null,
+              value: 'Welcome back!',
+              description: 'Banner text check',
+            },
+          ],
+        },
+      ],
+    });
+
+    const knownIds = new Set<string>();
+    const salvaged = salvageValidSchemaCases(rawContent, knownIds, 'https://example.com');
+    assert.equal(salvaged.length, 1, 'Should salvage the converted case');
+    assert.equal(salvaged[0].steps[0].action, 'assert_visible', 'Action must be converted to assert_visible');
+    pass('P20 salvageValidSchemaCases normalizes locator-less assert_text before validating candidate cases');
   });
 
   // ──────────────────────────────────────────────────

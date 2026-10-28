@@ -136,8 +136,14 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
         if (status !== 'crawling' && status !== 'pending') {
           setWakingInfo(null);
         }
-        void mutateRef.current((prev) => (prev ? { ...prev, status } : prev), false);
-        if (status === 'planning' || status === 'generating' || !swr.data) {
+        void mutateRef.current((prev) => {
+          if (!prev) {
+            scheduleRefetch();
+            return prev;
+          }
+          return { ...prev, status };
+        }, false);
+        if (status === 'planning' || status === 'generating') {
           scheduleRefetch();
         }
       } else {
@@ -153,7 +159,7 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
       }
       try {
         const payload = JSON.parse(e.data);
-        const data = payload?.data;
+        const data = (payload && typeof payload === 'object' && 'data' in payload && payload.data) ? payload.data : payload;
         if (!data || typeof data.stepType !== 'string' || typeof data.status !== 'string') {
           scheduleRefetch();
           return;
@@ -182,6 +188,9 @@ export function useJobStream(jobId: string | null, fallbackData?: JobDetail): Jo
         void mutateRef.current((prev) => {
           if (!prev) {
             scheduleRefetch();
+            return prev;
+          }
+          if (!stepId.startsWith('sse-') && prev.agentSteps.some((s) => s.id === stepId)) {
             return prev;
           }
           const promptDelta = typeof data.promptTokens === 'number' ? data.promptTokens : 0;
