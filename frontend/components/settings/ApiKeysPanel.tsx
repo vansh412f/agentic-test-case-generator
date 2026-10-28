@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Key,
   Check,
@@ -31,6 +31,7 @@ export function ApiKeysPanel({
   const [geminiKey, setGeminiKey] = useState('');
   const [groqStatus, setGroqStatus] = useState<ValidationStatus>('idle');
   const [geminiStatus, setGeminiStatus] = useState<ValidationStatus>('idle');
+  const backdropMouseDownRef = useRef(false);
 
   useEffect(() => {
     if (open) {
@@ -111,6 +112,15 @@ export function ApiKeysPanel({
     <div
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm overflow-y-auto"
+      onMouseDown={(e) => {
+        backdropMouseDownRef.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (backdropMouseDownRef.current && e.target === e.currentTarget) {
+          onClose();
+        }
+        backdropMouseDownRef.current = false;
+      }}
       role="dialog"
     >
       <div className="relative w-full max-w-2xl bg-[#f7f8f4] border border-[#dde2da] rounded-[14px] p-6 sm:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto my-auto">
@@ -140,7 +150,7 @@ export function ApiKeysPanel({
             </span>
             <div>
               <h2>Groq provider key</h2>
-              <p>High-speed Llama models for fast test planning and spec generation.</p>
+              <p>High-speed open-weight models for fast test planning and spec generation.</p>
               <label>
                 GROQ API KEY
                 <input

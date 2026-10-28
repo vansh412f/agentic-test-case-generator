@@ -663,8 +663,11 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     let { cases: casesA, salvaged: salvagedA, content: contentA, res: resA } = extractCases(settledA, 'A');
     const { cases: casesB, salvaged: salvagedB } = extractCases(settledB, 'B');
 
+    const hasProvidedTestData = Boolean(resolvedData && resolvedData.fills.size > 0);
+    let didAttemptRepairA = false;
     const budgetAllowsRepair = !options?.tokenBudget || options.tokenBudget <= 0 || !options?.consumedTokens || options.consumedTokens() < options.tokenBudget * 0.75;
-    if (casesA.length === 0 && contentA && resA && !resA.ok && budgetAllowsRepair) {
+    if (casesA.length === 0 && (casesB.length === 0 || hasProvidedTestData) && contentA && resA && !resA.ok && budgetAllowsRepair) {
+      didAttemptRepairA = true;
       console.warn(`[Planner] Side A produced 0 cases. Attempting self-repair on reasoning side A (${resA.kind})...`);
       const repairMessages: LlmMessage[] = [
         { role: 'system', content: PLANNER_SYSTEM_PROMPT },
@@ -726,7 +729,7 @@ export async function planTests(appMap: AppMap, options?: PlanTestsOptions): Pro
     }
 
     const isAnySalvaged = salvagedA || salvagedB;
-    return finalizePlan({ testCases: mergedCases }, isAnySalvaged, JSON.stringify({ testCases: mergedCases }), true);
+    return finalizePlan({ testCases: mergedCases }, isAnySalvaged, JSON.stringify({ testCases: mergedCases }), !didAttemptRepairA);
   }
 
   // Single-call attempt (focus mode or fallback)

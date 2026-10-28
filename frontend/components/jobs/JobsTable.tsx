@@ -1,6 +1,7 @@
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { formatRunTiming } from '@/lib/utils';
+import { formatLiveDurationMs, formatRunTiming, isTerminalJobStatus } from '@/lib/utils';
 import type { JobSummary } from '@/types/api';
 
 interface JobsTableProps {
@@ -17,6 +18,15 @@ function cleanDomain(urlStr: string): string {
 }
 
 export function JobsTable({ jobs }: JobsTableProps) {
+  const hasActiveJob = jobs.some((j) => !isTerminalJobStatus(j.status));
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!hasActiveJob) return;
+    const interval = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(interval);
+  }, [hasActiveJob]);
+
   return (
     <div className="history-card">
       <div className="table-head table-grid">
@@ -33,7 +43,10 @@ export function JobsTable({ jobs }: JobsTableProps) {
         const dateObj = new Date(job.createdAt);
         const dateStr = dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' });
         const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const { ran, waited } = formatRunTiming(job);
+        const isTerminal = isTerminalJobStatus(job.status);
+        const { ran: terminalRan, waited } = formatRunTiming(job);
+        const startMs = Date.parse(String(job.startedAt ?? job.createdAt));
+        const ran = !isTerminal ? formatLiveDurationMs(now - startMs) : terminalRan;
 
         return (
           <Link

@@ -39,6 +39,17 @@ export function formatDurationMs(value: number | null): string {
   return `${minutes}m ${remainder}s`;
 }
 
+export function formatLiveDurationMs(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return '—';
+  const ms = Math.max(0, value);
+  if (ms < 60_000) {
+    return `${(ms / 1000).toFixed(1)} s`;
+  }
+  const minutes = Math.floor(ms / 60_000);
+  const remSec = (ms % 60_000) / 1000;
+  return `${minutes}m ${remSec.toFixed(1)}s`;
+}
+
 export function formatJobDuration(
   startedAt: string | null,
   completedAt: string | null,

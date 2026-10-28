@@ -22,7 +22,7 @@ import { useJobStream } from '@/hooks/useJobStream';
 import { useApiBase } from '@/hooks/useApiBase';
 import { ApiError, cancelJob } from '@/lib/api';
 import { toast } from 'sonner';
-import { formatRunTiming, isTerminalJobStatus } from '@/lib/utils';
+import { formatLiveDurationMs, formatRunTiming, isTerminalJobStatus } from '@/lib/utils';
 import { PipelineProgress } from '@/components/home/PipelineProgress';
 import type { JobDetail } from '@/types/api';
 
@@ -110,6 +110,45 @@ function cleanDomain(urlStr: string): string {
   }
 }
 
+function useAnimatedNumber(target: number, shouldAnimate: boolean, durationMs = 650): number {
+  const [displayed, setDisplayed] = useState(() => (shouldAnimate ? 0 : target));
+  const currentRef = useRef(displayed);
+
+  useEffect(() => {
+    if (!shouldAnimate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || target === currentRef.current) {
+      currentRef.current = target;
+      setDisplayed(target);
+      return;
+    }
+
+    const startVal = currentRef.current;
+    const diff = target - startVal;
+    const startTime = performance.now();
+    let rafId: number;
+
+    const tick = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / durationMs);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      const nextVal = startVal + diff * ease;
+      currentRef.current = nextVal;
+      setDisplayed(Math.round(nextVal));
+
+      if (progress < 1) {
+        rafId = requestAnimationFrame(tick);
+      } else {
+        currentRef.current = target;
+        setDisplayed(target);
+      }
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [target, shouldAnimate, durationMs]);
+
+  return shouldAnimate ? displayed : target;
+}
+
 function JobDetailContent({ initialJob, jobId }: JobPageProps) {
   const router = useRouter();
   const isShareView = router.query.share === '1';
@@ -120,6 +159,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
     isLoading,
     mutate,
     transport,
+    liveStatus,
     wakingInfo,
     budgetNote,
   } = useJobStream(jobId, initialJob ?? undefined);
@@ -181,6 +221,33 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
   const stepsCount = job?.agentSteps.length ?? 0;
   const prevStepsCountRef = useRef(stepsCount);
   const isTerminal = job ? isTerminalJobStatus(job.status) : false;
+
+  const [liveNow, setLiveNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!job || isTerminal) return;
+    const interval = window.setInterval(() => setLiveNow(Date.now()), 100);
+    return () => window.clearInterval(interval);
+  }, [job, isTerminal]);
+
+  const firstLoadedStatusRef = useRef<'unknown' | 'active' | 'terminal'>('unknown');
+  const prevJobIdRef = useRef(jobId);
+  if (prevJobIdRef.current !== jobId) {
+    prevJobIdRef.current = jobId;
+    firstLoadedStatusRef.current = 'unknown';
+  }
+  if (job && firstLoadedStatusRef.current === 'unknown') {
+    firstLoadedStatusRef.current = isTerminalJobStatus(job.status) ? 'terminal' : 'active';
+  }
+  const shouldAnimateTokens = firstLoadedStatusRef.current === 'active';
+
+  const totalTokens =
+    job?.tokenUsage?.totalTokens ??
+    job?.agentSteps.reduce(
+      (sum, s) => sum + (s.promptTokens ?? 0) + (s.completionTokens ?? 0),
+      0,
+    ) ??
+    0;
+  const animatedTokens = useAnimatedNumber(totalTokens, shouldAnimateTokens, 650);
 
   useEffect(() => {
     if (!job || isTerminal) return;
@@ -270,6 +337,8 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
   const terminal = isTerminal;
 
   const { ran, waited } = formatRunTiming(job);
+  const activeStartMs = Date.parse(String(job.startedAt ?? job.createdAt));
+  const displayRan = !terminal ? formatLiveDurationMs(liveNow - activeStartMs) : ran;
 
   const passedCount = job.generatedTests.filter(
     (t) => t.finalStatus === 'passed',
@@ -292,13 +361,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
       ? `${Math.round((passedCount / job.generatedTests.length) * 100)}%`
       : '—';
 
-  const totalTokens =
-    job.tokenUsage?.totalTokens ??
-    job.agentSteps.reduce(
-      (sum, s) => sum + (s.promptTokens ?? 0) + (s.completionTokens ?? 0),
-      0,
-    );
-  const tokensStr = totalTokens > 0 ? totalTokens.toLocaleString() : '—';
+  const tokensStr = totalTokens > 0 || animatedTokens > 0 ? animatedTokens.toLocaleString() : '—';
 
   return (
     <>
@@ -551,9 +614,10 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           <PipelineProgress
             job={job}
             jobId={job.id}
-            liveStatus={job.status}
+            liveStatus={liveStatus ?? job.status}
             startedAt={job.startedAt ? Date.parse(job.startedAt) : Date.parse(job.createdAt)}
             submittedUrls={[job.targetUrl]}
+            transport={transport}
           />
         )}
 
@@ -564,7 +628,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
           </div>
           <div>
             <strong>
-              {ran}
+              {displayRan}
               {waited && (
                 <small style={{ display: 'block', fontSize: '11px', fontWeight: 'normal', color: 'var(--ink-subtle)' }}>
                   waited {waited} in queue
@@ -587,7 +651,7 @@ function JobDetailContent({ initialJob, jobId }: JobPageProps) {
                 <h2>Execution timeline</h2>
               </div>
               <span>
-                {job.agentSteps.length} steps · ran {ran}{waited ? ` · waited ${waited} in queue` : ''}
+                {job.agentSteps.length} steps · ran {displayRan}{waited ? ` · waited ${waited} in queue` : ''}
               </span>
             </div>
 

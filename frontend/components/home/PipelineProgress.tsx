@@ -1,6 +1,6 @@
 import { Check, Clock } from '@phosphor-icons/react';
 import { useEffect, useState } from 'react';
-import { formatDurationMs } from '@/lib/utils';
+import { formatLiveDurationMs } from '@/lib/utils';
 import type { JobDetail, JobStatus } from '@/types/api';
 import type { JobTransport } from '@/hooks/useJobStream';
 
@@ -25,7 +25,7 @@ export function PipelineProgress({
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    const interval = window.setInterval(() => setNow(Date.now()), 100);
     return () => window.clearInterval(interval);
   }, []);
 
@@ -59,7 +59,7 @@ export function PipelineProgress({
             </span>
           )}
           <Clock aria-hidden="true" className="h-3.5 w-3.5" />
-          {formatDurationMs(elapsed)} elapsed
+          {formatLiveDurationMs(elapsed)} elapsed
         </span>
       </div>
 

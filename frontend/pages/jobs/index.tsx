@@ -6,6 +6,7 @@ import { Seo } from '@/components/common/Seo';
 import { JobsPagination } from '@/components/jobs/JobsPagination';
 import { JobsTable } from '@/components/jobs/JobsTable';
 import { fetcher, apiBase } from '@/lib/api';
+import { isTerminalJobStatus } from '@/lib/utils';
 import type { JobsListResponse } from '@/types/api';
 
 const PAGE_SIZE = 20;
@@ -19,6 +20,7 @@ export default function JobsPage() {
       fetcher,
       {
         keepPreviousData: true,
+        refreshInterval: (latest) => (latest?.jobs.some((j) => !isTerminalJobStatus(j.status)) ? 3000 : 0),
       },
     );
 
